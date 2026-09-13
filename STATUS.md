@@ -13,7 +13,7 @@ Protected local release candidate — 13 September 2026. Product owner: Jawahir 
 | Backup and restore | Offline encrypted package with authenticated extraction and integrity checks. Restore revokes sessions, clears setup capabilities, disables accounts for access review and cancels old jobs. |
 | Incident workflow | Cases, reviews, tasks, outcomes, closure/reopening, audit and manager-approved local template exports. Demo observations remain synthetic. |
 | Launcher | Foreground owned API/model supervision, checksum/preflight checks, bounded restart and explicit recovery after sleep. Does not adopt or stop unrelated services. |
-| Windows/Mac support | Native runtime selection and unsigned packaging. Mac local inference/executable smoke exercised; current remote results recorded in release verification. Actual branch laptop inventory is missing. |
+| Windows/Mac support | All nine required CI jobs passed for source `c6c0b20`, including native Windows runtime startup and actual Windows x64/Mac arm64 executable journeys. Unsigned packages and checksums produced. Actual branch laptop inventory and acceptance remain missing. |
 | Testing coordinator | Six-slot reports, versioned/hash-checked evidence intake and per-branch gates. All six real branches are NOT_RUN; no remote laptop access or invented signoff. |
 | Commercial offer | EUR 60 monthly per pharmacy branch; no new hardware. Creating a branch does not bill or activate a subscription. |
 
