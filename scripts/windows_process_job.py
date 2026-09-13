@@ -25,6 +25,8 @@ WAIT_TIMEOUT = 258
 INFINITE = 0xFFFFFFFF
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D
+PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
+STARTF_USESTDHANDLES = 0x00000100
 EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 CREATE_UNICODE_ENVIRONMENT = 0x00000400
 CREATE_NO_WINDOW = 0x08000000
@@ -66,6 +68,10 @@ class ProcessInformation(C.Structure):
     _fields_ = [("hProcess", HANDLE), ("hThread", HANDLE), ("dwProcessId", DWORD), ("dwThreadId", DWORD)]
 
 
+class SecurityAttributes(C.Structure):
+    _fields_ = [("nLength", DWORD), ("lpSecurityDescriptor", C.c_void_p), ("bInheritHandle", BOOL)]
+
+
 def kernel_api():
     if os.name != "nt":
         raise OSError("Windows job containment is available only on Windows 10 or newer.")
@@ -83,6 +89,7 @@ def kernel_api():
         "WaitForSingleObject": ([HANDLE, DWORD], DWORD),
         "GetExitCodeProcess": ([HANDLE, C.POINTER(DWORD)], BOOL),
         "TerminateProcess": ([HANDLE, C.c_uint], BOOL),
+        "CreateFileW": ([C.c_wchar_p, DWORD, DWORD, C.POINTER(SecurityAttributes), DWORD, DWORD, HANDLE], HANDLE),
     }
     for name, (arguments, result) in signatures.items():
         function = getattr(api, name)
@@ -168,23 +175,39 @@ class WindowsProcessJob:
             if self.handle is None:
                 raise OSError("The Windows process job is already closed.")
             size = SIZE_T()
-            self.api.InitializeProcThreadAttributeList(None, 1, 0, C.byref(size))
+            self.api.InitializeProcThreadAttributeList(None, 2, 0, C.byref(size))
             if not size.value:
                 raise C.WinError(C.get_last_error())
             attributes = C.create_string_buffer(size.value)
-            checked(self.api.InitializeProcThreadAttributeList(attributes, 1, 0, C.byref(size)))
+            checked(self.api.InitializeProcThreadAttributeList(attributes, 2, 0, C.byref(size)))
             information = ProcessInformation()
+            null_handle = None
             try:
                 jobs = (HANDLE * 1)(self.handle)
                 checked(self.api.UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
                                                           C.byref(jobs), C.sizeof(jobs), None, None))
+                security = SecurityAttributes(C.sizeof(SecurityAttributes), None, True)
+                # A no-console Python child otherwise has stdout/stderr=None;
+                # uvicorn's logging setup and native model diagnostics still
+                # require valid streams. Inherit only this harmless NUL handle.
+                null_handle = self.api.CreateFileW("NUL", 0xC0000000, 3, C.byref(security), 3, 0x80, None)
+                if null_handle in (None, C.c_void_p(-1).value):
+                    null_handle = None
+                    raise C.WinError(C.get_last_error())
+                inherited = (HANDLE * 1)(null_handle)
+                checked(self.api.UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                                          C.byref(inherited), C.sizeof(inherited), None, None))
                 startup = StartupInfoEx()
                 startup.StartupInfo.cb = C.sizeof(startup)
+                startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES
+                startup.StartupInfo.hStdInput = null_handle
+                startup.StartupInfo.hStdOutput = null_handle
+                startup.StartupInfo.hStdError = null_handle
                 startup.lpAttributeList = C.cast(attributes, C.c_void_p)
                 command_line = C.create_unicode_buffer(subprocess.list2cmdline(command))
                 environment = C.create_unicode_buffer("\0".join(f"{key}={value}" for key, value in sorted(env.items(), key=lambda item: item[0].upper())) + "\0\0")
                 flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW
-                checked(self.api.CreateProcessW(command[0], command_line, None, None, False, flags,
+                checked(self.api.CreateProcessW(command[0], command_line, None, None, True, flags,
                                                 environment, str(cwd), C.byref(startup), C.byref(information)))
                 checked(self.api.CloseHandle(information.hThread))
                 information.hThread = None
@@ -206,6 +229,8 @@ class WindowsProcessJob:
                     checked(self.api.CloseHandle(information.hThread))
                 if information.hProcess:
                     checked(self.api.CloseHandle(information.hProcess))
+                if null_handle:
+                    checked(self.api.CloseHandle(null_handle))
                 self.api.DeleteProcThreadAttributeList(attributes)
 
     def close(self):

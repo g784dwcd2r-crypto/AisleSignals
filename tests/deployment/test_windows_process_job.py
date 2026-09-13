@@ -19,6 +19,7 @@ def test_windows_structure_layout_is_explicit_for_64_bit_handles():
         assert ctypes.sizeof(jobs.StartupInfo) == 104
         assert ctypes.sizeof(jobs.StartupInfoEx) == 112
         assert ctypes.sizeof(jobs.ProcessInformation) == 24
+        assert ctypes.sizeof(jobs.SecurityAttributes) == 24
 
 
 native = pytest.mark.skipif(os.name != "nt", reason="Requires Windows kernel Job Objects")
@@ -108,5 +109,41 @@ def test_graceful_close_reaps_child_and_closed_job_cannot_spawn(tmp_path):
         assert child.wait(timeout=10) is not None
         with pytest.raises(OSError, match="closed"):
             job.spawn([sys.executable, "-c", "pass"], cwd=tmp_path, env=os.environ.copy())
+    finally:
+        job.close()
+
+
+@native
+def test_no_console_child_has_valid_null_streams_and_can_configure_uvicorn(tmp_path):
+    script = tmp_path / "synthetic_logging_child.py"
+    marker = tmp_path / "logging-ready.json"
+    script.write_text("""
+import json, logging.config, sys, time
+from pathlib import Path
+from uvicorn.config import LOGGING_CONFIG
+assert sys.stdin is not None and sys.stdout is not None and sys.stderr is not None
+assert sys.stdin.read() == ''
+assert isinstance(sys.stdout.isatty(), bool) and isinstance(sys.stderr.isatty(), bool)
+sys.stdout.write('Synthetic stdout check\\n'); sys.stdout.flush()
+sys.stderr.write('Synthetic stderr check\\n'); sys.stderr.flush()
+logging.config.dictConfig(LOGGING_CONFIG)
+marker = Path(sys.argv[1])
+temporary = marker.with_suffix('.pending')
+temporary.write_text(json.dumps({'uvicorn_logging_ready': True}))
+temporary.replace(marker)
+while True: time.sleep(1)
+""")
+    job = jobs.WindowsProcessJob()
+    child = job.spawn([sys.executable, str(script), str(marker)], cwd=tmp_path, env=os.environ.copy())
+    try:
+        deadline = time.monotonic() + 15
+        while not marker.exists() and time.monotonic() < deadline:
+            assert child.poll() is None, "No-console child could not configure its standard streams/logging"
+            time.sleep(.05)
+        assert marker.exists() and json.loads(marker.read_text())["uvicorn_logging_ready"]
+        # This also proves HANDLE_LIST did not pass the private job handle:
+        # otherwise closing its parent handle could not terminate this child.
+        job.close()
+        assert child.wait(timeout=10) is not None
     finally:
         job.close()
