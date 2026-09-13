@@ -1,10 +1,12 @@
 """Release archive checks reject altered bytes and accidental external links."""
 import json
+import socket
 from pathlib import Path
 
 import pytest
 
 from scripts.package_bundle import MANIFEST, inventory, verify_inventory
+from scripts.smoke_bundle import wait_for_server_exit
 
 
 def sealed(tmp_path: Path):
@@ -37,3 +39,14 @@ def test_manifest_rejects_external_symlinks(tmp_path):
         pytest.skip("This host does not grant symlink creation")
     with pytest.raises(ValueError, match="Unsafe bundle link"):
         inventory(bundle)
+
+
+def test_packaged_shutdown_check_refuses_a_lingering_server_without_stopping_it():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+        with pytest.raises(AssertionError, match="still running"):
+            wait_for_server_exit(port, timeout=0.05)
+        assert listener.fileno() >= 0
+    wait_for_server_exit(port, timeout=1)

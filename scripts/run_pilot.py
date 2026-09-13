@@ -135,6 +135,8 @@ class Supervisor:
         self.last_state = "STARTING"
         self.last_wall = time.time()
         self.last_monotonic = time.monotonic()
+        self.windows_job = None
+        self.stopped = False
 
     def status(self, state: str, detail: str) -> None:
         self.last_state = state
@@ -157,13 +159,22 @@ class Supervisor:
         return self.rearm_required
 
     def start(self, service: OwnedService) -> bool:
-        if self.stop_event.is_set() or not port_available(service.port):
+        if self.stopped or self.stop_event.is_set() or not port_available(service.port):
             return False
         try:
-            service.process = subprocess.Popen(service.command, cwd=self.config.root, env=self.env,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=os.name != "nt")
-        except OSError:
+            if os.name == "nt":
+                if self.windows_job is None:
+                    try:
+                        from windows_process_job import WindowsProcessJob
+                    except ModuleNotFoundError:
+                        from scripts.windows_process_job import WindowsProcessJob
+                    self.windows_job = WindowsProcessJob()
+                service.process = self.windows_job.spawn(service.command, cwd=self.config.root, env=self.env)
+            else:
+                service.process = subprocess.Popen(service.command, cwd=self.config.root, env=self.env,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True)
+        except (OSError, ValueError):
             return False
         if service not in self.services:
             self.services.append(service)
@@ -210,8 +221,15 @@ class Supervisor:
         service.process = None
 
     def shutdown(self) -> None:
-        for service in reversed(self.services):
-            self.stop_service(service)
+        self.stopped = True
+        try:
+            for service in reversed(self.services):
+                self.stop_service(service)
+        finally:
+            # On Windows the OS also closes this non-inherited handle if the
+            # launcher is killed abruptly, terminating only its contained tree.
+            if self.windows_job is not None:
+                self.windows_job.close()
 
     def restart_failed(self, service: OwnedService) -> bool:
         if service.disabled or service.restarts >= self.config.restart_limit:
@@ -339,7 +357,10 @@ def main() -> int:
         token_path = ensure_token(config) if config.vision_enabled else None
         env = service_environment(config, token_path)
         supervisor = Supervisor(config, env)
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        shutdown_signals = [signal.SIGINT, signal.SIGTERM]
+        if os.name != "nt" and hasattr(signal, "SIGHUP"):
+            shutdown_signals.append(signal.SIGHUP)
+        for sig in shutdown_signals:
             signal.signal(sig, lambda *_: supervisor.stop_event.set())
         if os.name != "nt":
             os.umask(0o077)

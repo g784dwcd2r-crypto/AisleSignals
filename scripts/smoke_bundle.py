@@ -23,6 +23,18 @@ from uuid import uuid4
 from PIL import Image
 
 
+def wait_for_server_exit(port: int, timeout: float = 10) -> None:
+    """An exited launcher must not leave its API serving from the temp bundle."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with socket.socket() as probe:
+            probe.settimeout(0.2)
+            if probe.connect_ex(("127.0.0.1", port)) != 0:
+                return
+        time.sleep(0.1)
+    raise AssertionError("The packaged launcher exited but its API is still running")
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, "Local redirects are not allowed", headers, fp)
@@ -202,6 +214,7 @@ def main() -> None:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
+                wait_for_server_exit(port)
 
 
 if __name__ == "__main__":
