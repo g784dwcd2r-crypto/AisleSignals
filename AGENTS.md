@@ -16,3 +16,6 @@
 - Mandatory no-new-hardware scope: local companion on the existing pharmacy laptop. Do not purchase or design a required new appliance, camera, GPU, capture card, relay or wiring installation. Unsupported existing equipment produces an explicit limitation. Handle sleep/resume, sign-in startup, workload guards and existing speaker tests.
 
 - The first pilot includes one Windows laptop and one Mac. Treat both platform installers and startup/sleep/permissions/audio tests as required for pilot readiness; inventory exact OS and architecture before freezing targets.
+
+- Latest rollout instruction (13 September 2026): target six pharmacies using existing MacBooks and Windows laptops for Tuesday, 15 September. Exact branch/device inventory remains unknown. The owner requested ten specialist workstreams; run them in bounded waves within available concurrency. Development is no longer constrained by the EUR 60 subscription price. Do not silently change the subscription offer or purchase paid services.
+- The testing agent coordinates automated checks and readiness reports. It cannot certify unobserved customer-camera quality, physical speaker audibility or access to laptops that are not connected. Record those checks as NOT_RUN until there is actual evidence. A successful build is not a guarantee of theft-detection accuracy.

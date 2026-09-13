@@ -68,6 +68,58 @@ async function releaseAnalysisSeeks(page: Page) {
   });
 }
 
+// Hold delivery of the first real compositor callback, without faking pixels,
+// currentTime, media events, or the video decoder. loadeddata alone is too early.
+async function holdFirstPresentedFrame(page: Page) {
+  await page.evaluate(() => {
+    const request = HTMLVideoElement.prototype.requestVideoFrameCallback;
+    const draw = CanvasRenderingContext2D.prototype.drawImage;
+    const probe = { hold: true, draws: 0, releases: [] as (() => void)[] };
+    (window as any).__presentationProbe = probe;
+    HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+      return request.call(this, (now, metadata) => {
+        if (probe.hold) {
+          probe.hold = false;
+          probe.releases.push(() => callback(now, metadata));
+        } else callback(now, metadata);
+      });
+    };
+    CanvasRenderingContext2D.prototype.drawImage = function (...args: any[]) {
+      if (args[0] instanceof HTMLVideoElement) probe.draws++;
+      return (draw as any).apply(this, args);
+    };
+  });
+}
+
+for (const cancel of [false, true]) {
+  test(`analysis waits for actual frame presentation; ${cancel ? 'cancel discards late callback' : 'release preserves exact activity timestamps'}`, async ({ page }) => {
+    await openVideoTest(page);
+    await chooseFixture(page);
+    await holdFirstPresentedFrame(page);
+    await page.getByRole('button', { name: 'Analyse video', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__presentationProbe.releases.length)).toBe(1);
+    expect(await page.evaluate(() => (window as any).__presentationProbe.draws)).toBe(0);
+    if (cancel) await page.getByRole('button', { name: 'Cancel analysis', exact: true }).click();
+    await page.evaluate(async () => {
+      for (const resume of (window as any).__presentationProbe.releases.splice(0)) resume();
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    });
+    if (cancel) {
+      await expect(page.getByText('Analysis cancelled', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => (window as any).__presentationProbe.draws)).toBe(0);
+      await expect(page.getByText('Analysis complete', { exact: true })).toHaveCount(0);
+    } else {
+      await expect(page.getByText('Analysis complete', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => (window as any).__presentationProbe.draws)).toBe(12);
+      const downloaded = page.waitForEvent('download');
+      await page.getByRole('button', { name: 'Download test summary', exact: true }).click();
+      const summary = JSON.parse(await readFile((await (await downloaded).path())!, 'utf8'));
+      expect(summary.activity_segments).toEqual([{ start: 1, end: 4.5, peakChangedRatio: expect.any(Number),
+        classification: { code: 'SUSTAINED_VISUAL_ACTIVITY', label: 'Sustained visual activity', detail: expect.any(String) } }]);
+    }
+  });
+}
+
 test('local video analysis finds timestamped activity without uploads or live records', async ({ page }) => {
   await observeBlobURLs(page);
   await openVideoTest(page);

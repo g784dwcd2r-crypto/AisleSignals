@@ -57,15 +57,32 @@ function mediaStep(
       reject(new DOMException("Analysis cancelled", "AbortError"));
       return;
     }
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      reject(
+        new Error(
+          "This browser cannot confirm decoded video frames. Use a current Chrome, Edge, Firefox or Safari browser.",
+        ),
+      );
+      return;
+    }
+    let mediaReady = false;
+    let frameReady = false;
+    let frameCallback: number | null = null;
     const cleanup = () => {
       clearTimeout(timer);
+      if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback);
       video.removeEventListener(event, done);
       video.removeEventListener("error", error);
       signal.removeEventListener("abort", abort);
     };
-    const done = () => {
+    const finish = () => {
+      if (!mediaReady || !frameReady) return;
       cleanup();
       resolve();
+    };
+    const done = () => {
+      mediaReady = true;
+      finish();
     };
     const error = () => {
       cleanup();
@@ -87,6 +104,14 @@ function mediaStep(
     video.addEventListener("error", error, { once: true });
     signal.addEventListener("abort", abort, { once: true });
     try {
+      // loadeddata/seeked can precede the decoded frame becoming available to
+      // drawImage. Register before loading/seeking and require both boundaries;
+      // otherwise stale pixels get labelled with the new requested timestamp.
+      frameCallback = video.requestVideoFrameCallback(() => {
+        frameCallback = null;
+        frameReady = true;
+        finish();
+      });
       action();
     } catch {
       error();

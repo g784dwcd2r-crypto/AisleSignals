@@ -1,5 +1,31 @@
 # Implementation status
 
+Protected local release candidate — 13 September 2026. Product owner: Jawahir Q. Target: six pharmacies, Tuesday 15 September. Development team: nine specialist agents and the coordinating lead.
+
+| Area | Current implementation and limit |
+|---|---|
+| Administration | Browser first-owner setup using a private, expiring local code. Managers create branches/users, assign roles, disable/re-enable and reset passphrases. Backend reauthentication, branch authority, last-manager protection, session revocation and stale-edit rejection. |
+| Protected identity | Separate initially empty pilot database; named passwords, branch switching, current session authority and no public demo accounts. Local accounts only; no MFA, email invitations or hosted group synchronisation. |
+| LIVE DETECTION | Explicit screen/device/recording input, pose boxes/keypoints and experimental observable-action signals. Restart monitoring after source loss, hidden tabs, sleep or stalled frames. |
+| Product interactions | Local pretrained Qwen3-VL sampled-frame analysis for pickup, return, basket placement, possible concealment and uncertainty; evidence and human review. Actual inference exercised locally. No measured client-pharmacy accuracy or theft determination. |
+| Attention alarms | Speaker commissioning, explicit arming, fresh source/results, duplicate suppression, visual feedback, acknowledgement and bounded sound. Physical audibility at the six branches is untested. |
+| Evidence | Authenticated encryption of pilot JPEGs bound to branch/job/frame. Rolling bounded storage, 24-hour expiry and scoped retrieval/deletion. Database metadata relies on OS file protections/disk encryption. No continuous video archive. |
+| Backup and restore | Offline encrypted package with authenticated extraction and integrity checks. Restore revokes sessions, clears setup capabilities, disables accounts for access review and cancels old jobs. |
+| Incident workflow | Cases, reviews, tasks, outcomes, closure/reopening, audit and manager-approved local template exports. Demo observations remain synthetic. |
+| Launcher | Foreground owned API/model supervision, checksum/preflight checks, bounded restart and explicit recovery after sleep. Does not adopt or stop unrelated services. |
+| Windows/Mac support | Native runtime selection and unsigned packaging. Mac local inference/executable smoke exercised; current remote results recorded in release verification. Actual branch laptop inventory is missing. |
+| Testing coordinator | Six-slot reports, versioned/hash-checked evidence intake and per-branch gates. All six real branches are NOT_RUN; no remote laptop access or invented signoff. |
+| Commercial offer | EUR 60 monthly per pharmacy branch; no new hardware. Creating a branch does not bill or activate a subscription. |
+
+See [release verification](docs/release/verification.md), [administration](docs/release/pilot-administration.md), [installation](deployment/README.md) and [six-branch coordination](docs/release/rollout-coordination.md).
+
+This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, automatic grid/RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
+
+## Historical prototype record
+
+The following record predates the protected release above; its counts and CI links apply only to that earlier source.
+
+
 Prototype 0.1 — 13 September 2026. Product owner: Jawahir Q.
 
 | Area | Status | Evidence / boundary |

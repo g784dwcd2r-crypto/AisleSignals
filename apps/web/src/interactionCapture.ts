@@ -45,6 +45,84 @@ export type SampledFrame = {
 };
 export const INTERACTION_FRESH_MS = 15_000;
 
+/** A browser audio callback is not evidence that a member of staff heard it. */
+export class InteractionAlarmCommission {
+  private revision = 0;
+  private context = "";
+  private testedAt: number | null = null;
+  private confirmed = false;
+  private armed = false;
+  private recordedAllowed = false;
+  private delivered = new Set<string>();
+
+  invalidate() {
+    this.revision++;
+    this.context = "";
+    this.testedAt = null;
+    this.confirmed = false;
+    this.armed = false;
+    this.recordedAllowed = false;
+    // Never replay a delivered job after disarming or recommissioning.
+  }
+  beginTest(context: string) {
+    this.invalidate();
+    this.context = context;
+    return this.revision;
+  }
+  finishTest(revision: number, context: string, now: number) {
+    if (
+      revision !== this.revision ||
+      !context ||
+      context !== this.context ||
+      !Number.isFinite(now)
+    )
+      return false;
+    this.testedAt = now;
+    return true;
+  }
+  confirm(context: string, now: number) {
+    if (
+      !context ||
+      context !== this.context ||
+      this.testedAt === null ||
+      !Number.isFinite(now) ||
+      now < this.testedAt ||
+      now - this.testedAt > 60_000
+    )
+      return false;
+    this.confirmed = true;
+    return true;
+  }
+  arm(context: string, recordedAllowed: boolean) {
+    this.armed = this.confirmed && !!context && context === this.context;
+    this.recordedAllowed = recordedAllowed;
+    return this.armed;
+  }
+  matches(context: string) {
+    return !!this.context && this.context === context;
+  }
+  currentTest(revision: number, context: string) {
+    return revision === this.revision && this.matches(context);
+  }
+  get active() {
+    return !!this.context;
+  }
+  claim(context: string, id: string, source: LiveSourceKind) {
+    if (
+      !this.armed ||
+      !this.confirmed ||
+      !this.matches(context) ||
+      !id ||
+      this.delivered.has(id) ||
+      this.delivered.size >= 1000 ||
+      (source === "RECORDED_VIDEO" && !this.recordedAllowed)
+    )
+      return false;
+    this.delivered.add(id);
+    return true;
+  }
+}
+
 /** Bounded ephemeral history. Discontinuities discard sequences rather than joining unrelated moments. */
 export class InteractionFrameBuffer {
   private frames: SampledFrame[] = [];

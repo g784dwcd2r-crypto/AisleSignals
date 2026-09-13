@@ -15,11 +15,12 @@ async function open(page: Page) {
 
 // Provider responses below are explicit fixtures for workflow tests. They do not
 // demonstrate model accuracy. Actual pretrained inference is tested separately.
-async function modelWorkflow(page: Page, { concealment = false, delayed = false } = {}) {
+async function modelWorkflow(page: Page, { concealment = false, delayed = false, reviewConflict = false } = {}) {
   let submitted: any = null;
   let item: any = null;
   let cancelled = 0;
   let deleted = false;
+  let reviews = 0;
   await page.addInitScript(() => {
     (window as any).__interactionAudioStarts = 0;
     const start = OscillatorNode.prototype.start;
@@ -39,7 +40,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false 
     }
     (window as any).Worker = EmptyPoseWorker;
   });
-  await page.route('**/api/interactions/status', route => route.fulfill({ json: { ready: true, model: 'qwen3-vl:4b', mode: 'experimental', message: 'Controlled test provider; no accuracy claim.' } }));
+  await page.route('**/api/interactions/status', route => route.fulfill({ json: { ready: true, model: 'qwen3-vl:4b', mode: 'experimental', message: 'Controlled test provider; no accuracy claim.', evidence_policy: { retention_seconds: 86400, site_limit: 100, installation_limit: 600, encryption: 'AES-256-GCM', rolling_cleanup: 'Oldest unreviewed ordinary results roll off at capacity. Reviewed samples and possible concealment expire after 24 hours or explicit deletion.' } } }));
   await page.route('**/api/interactions', route => route.fulfill({ json: { items: item && !deleted ? [item] : [] } }));
   await page.route('**/api/interactions/jobs', async route => {
     submitted = route.request().postDataJSON();
@@ -71,7 +72,15 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false 
     await route.fulfill({ contentType: 'image/jpeg', body: Buffer.from(submitted.frames[index].jpeg_base64, 'base64') });
   });
   await page.route(`**/api/interactions/${resultId}/review`, async route => {
-    item.review = route.request().postDataJSON();
+    const request = route.request().postDataJSON();
+    expect(request.expected_version).toBe(item.version);
+    reviews++;
+    if (reviewConflict && reviews === 1) {
+      item = { ...item, version: 2, review: { outcome: 'USEFUL', note: 'Another reviewer' } };
+      await route.fulfill({ status: 409, json: { error: { code: 'VERSION_CONFLICT', message: 'Review was changed', current_version: 2 } } });
+      return;
+    }
+    item = { ...item, version: item.version + 1, review: { outcome: request.outcome, note: request.note } };
     await route.fulfill({ json: item });
   });
   await page.route(`**/api/interactions/${resultId}`, async route => {
@@ -82,10 +91,23 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false 
   return { submitted: () => submitted, cancelled: () => cancelled };
 }
 
-async function collect(page: Page) {
+async function commission(page: Page) {
+  const alarm = page.getByLabel('Experimental product attention alarm', { exact: true });
+  await expect(alarm).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Test product alarm sound', exact: true }).click();
+  await expect(alarm).toBeDisabled();
+  await page.getByRole('button', { name: 'I heard the test tone', exact: true }).click();
+  await expect(alarm).toBeDisabled();
+  await page.getByLabel('Allow alarm during this recorded-video test', { exact: true }).check();
+  await alarm.check();
+}
+
+async function collect(page: Page, arm = false) {
   await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
   await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  if (arm) await commission(page);
   await expect(page.getByRole('button', { name: 'Analyse recent sequence', exact: true })).toBeEnabled({ timeout: 12000 });
 }
 
@@ -119,12 +141,15 @@ test('product analysis samples actual video without pose gates, displays evidenc
 test('explicit experimental alarm requests audio only for a fresh eligible result', async ({ page }) => {
   await modelWorkflow(page, { concealment: true });
   await open(page);
-  await collect(page);
-  await page.getByLabel('Experimental product attention alarm', { exact: true }).check();
+  await collect(page, true);
   await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
   await expect(page.locator('.interaction-alert')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(1);
+  await expect.poll(() => page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(2);
   await page.getByRole('button', { name: 'Silence product alarm', exact: true }).click();
+  await page.getByRole('button', { name: 'Acknowledge attention', exact: true }).click();
+  await expect(page.locator('.interaction-alert')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Refresh model & history', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(2);
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
 });
@@ -132,15 +157,14 @@ test('explicit experimental alarm requests audio only for a fresh eligible resul
 test('stopping cancels the pending job and a late concealment response cannot sound', async ({ page }) => {
   const probe = await modelWorkflow(page, { concealment: true, delayed: true });
   await open(page);
-  await collect(page);
-  await page.getByLabel('Experimental product attention alarm', { exact: true }).check();
+  await collect(page, true);
   await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
   await expect.poll(() => probe.submitted()).not.toBeNull();
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
   await expect.poll(() => probe.cancelled()).toBeGreaterThan(0);
   await expect(page.getByRole('button', { name: 'Analysing…', exact: true })).toHaveCount(0);
   await expect(page.locator('.interaction-alert')).toHaveCount(0);
-  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(1);
 });
 
 test('camera-area selection crops sampled source pixels and changing the area clears pending context', async ({ page }) => {
@@ -152,6 +176,7 @@ test('camera-area selection crops sampled source pixels and changing the area cl
   await page.getByLabel('Analysis width %', { exact: true }).fill('50');
   await page.getByLabel('Analysis height %', { exact: true }).fill('50');
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  await commission(page);
   await expect(page.getByRole('button', { name: 'Analyse recent sequence', exact: true })).toBeEnabled({ timeout: 12000 });
   const source = await page.locator('video').first().evaluate(video => ({ width: video.videoWidth, height: video.videoHeight }));
   await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
@@ -161,8 +186,60 @@ test('camera-area selection crops sampled source pixels and changing the area cl
   const image = page.locator('.interaction-result img').first();
   await expect.poll(() => image.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(Math.round(source.width / 2));
   await expect.poll(() => image.evaluate(element => (element as HTMLImageElement).naturalHeight)).toBe(Math.round(source.height / 2));
-  await page.getByLabel('Experimental product attention alarm', { exact: true }).check();
   await page.getByLabel('Analysis left %', { exact: true }).fill('10');
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('fresh concealment shows visual attention while uncommissioned sound remains off', async ({ page }) => {
+  await modelWorkflow(page, { concealment: true });
+  await open(page);
+  await collect(page);
+  await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
+  await expect(page.locator('.interaction-alert')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
+  await page.getByRole('button', { name: 'Acknowledge attention', exact: true }).click();
+  await expect(page.locator('.interaction-alert')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('review conflicts reload the latest version before a second staff decision', async ({ page }) => {
+  await modelWorkflow(page, { reviewConflict: true });
+  await open(page);
+  await expect(page.getByText('Frames are encrypted locally with AES-256-GCM.', { exact: false })).toBeVisible();
+  await collect(page);
+  await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
+  const item = page.locator('.interaction-result');
+  await item.getByRole('button', { name: 'Normal shopping', exact: true }).click();
+  await expect(page.getByText('Another reviewer changed this result.', { exact: false })).toBeVisible();
+  await expect(item.getByRole('button', { name: 'Useful', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await item.getByRole('button', { name: 'Normal shopping', exact: true }).click();
+  await expect(item.getByRole('button', { name: 'Normal shopping', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Another reviewer changed this result.', { exact: false })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('disarming during pending audio activation prevents a late test tone', async ({ page }) => {
+  await modelWorkflow(page);
+  await page.addInitScript(() => {
+    const resume = AudioContext.prototype.resume;
+    AudioContext.prototype.resume = function () {
+      return resume.call(this).then(() => new Promise<void>(resolve => setTimeout(() => {
+        (window as any).__productAudioResumeDelivered = true;
+        resolve();
+      }, 500)));
+    };
+  });
+  await open(page);
+  await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
+  await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
+  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  await page.getByRole('button', { name: 'Test product alarm sound', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop sound & disarm product alarm', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__productAudioResumeDelivered)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
+  await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
 });

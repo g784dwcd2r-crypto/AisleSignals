@@ -212,10 +212,12 @@
   background: #7eecad;
   box-shadow: 0 0 0 4px #7eecad18;
 }
+.ld-state-degraded,
 .ld-state-loading,
 .ld-state-preparing {
   color: #ffdc8e;
 }
+.ld-state-degraded i,
 .ld-state-loading i,
 .ld-state-preparing i {
   background: #ffdc8e;

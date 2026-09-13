@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "rollout_id": "six-pharmacy-september-2026",
+  "max_evidence_age_hours": 72,
+  "slots": [
+    {
+      "slot_id": "slot-01",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    },
+    {
+      "slot_id": "slot-02",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    },
+    {
+      "slot_id": "slot-03",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    },
+    {
+      "slot_id": "slot-04",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    },
+    {
+      "slot_id": "slot-05",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    },
+    {
+      "slot_id": "slot-06",
+      "context": {
+        "site_id": null,
+        "device_id": null,
+        "platform": null,
+        "source_version": null,
+        "app_revision": null,
+        "model_sha256": null,
+        "prompt_version": null
+      },
+      "evidence": {
+        "preflight": null,
+        "software": null,
+        "acceptance_plan": null,
+        "evaluation": null,
+        "onsite": null,
+        "signoff": null
+      }
+    }
+  ]
+}

@@ -74,6 +74,7 @@ test('real local model processes decoded video with no people or fabricated alar
 test('temporal zone event creates an automatic alarm, scoped log and acknowledgement', async ({ page }) => {
   await syntheticPoseWorker(page);
   await open(page);
+  await page.getByLabel('Sound on movement-rule alerts', { exact: true }).check();
   await page.getByLabel('Alert on restricted-zone entry').check();
   await page.getByLabel('Left %', { exact: true }).fill('0');
   await page.getByLabel('Top %', { exact: true }).fill('0');

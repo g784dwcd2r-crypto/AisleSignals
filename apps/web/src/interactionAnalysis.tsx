@@ -10,13 +10,14 @@ import {
   Trash2,
   VolumeX,
 } from "lucide-react";
-import { api, forgetAction, idempotencyKey } from "./api";
+import { api, ApiError, forgetAction, idempotencyKey } from "./api";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import type { DetectionRect, LiveSourceKind } from "./liveDetectionTypes";
 import {
   captureInteractionFrame,
   freshInteractionAlarm,
   InteractionFrameBuffer,
+  InteractionAlarmCommission,
   interactionLabels,
   interactionCropPixels,
   safeInteractionFrameUrl,
@@ -35,6 +36,13 @@ type ModelStatus = {
   model: string;
   mode: string;
   message: string;
+  evidence_policy?: {
+    retention_seconds: number;
+    site_limit: number;
+    installation_limit: number;
+    encryption: string;
+    rolling_cleanup: string;
+  };
 };
 type Job = {
   id: string;
@@ -79,6 +87,12 @@ export default function InteractionAnalysis({
   const [enabled, setEnabled] = useState(false);
   const [automatic, setAutomatic] = useState(false);
   const [alarmEnabled, setAlarmEnabled] = useState(false);
+  const [commissionStage, setCommissionStage] = useState<
+    "off" | "testing" | "confirm" | "confirmed"
+  >("off");
+  const [recordedAlarmAllowed, setRecordedAlarmAllowed] = useState(false);
+  const [sourceReady, setSourceReady] = useState(false);
+  const [recordedSource, setRecordedSource] = useState(false);
   const [cropEnabled, setCropEnabled] = useState(false);
   const [crop, setCrop] = useState<DetectionRect>({
     x: 0,
@@ -103,6 +117,9 @@ export default function InteractionAnalysis({
     "Product interaction alarm is off.",
   );
   const mounted = useRef(true);
+  const commission = useRef(new InteractionAlarmCommission());
+  const historyRevision = useRef(0);
+  const refreshRevision = useRef(0);
   const cropPreview = useRef<HTMLCanvasElement>(null);
   const options = useRef({
     enabled,
@@ -141,7 +158,98 @@ export default function InteractionAnalysis({
   const lastProgress = useRef({ media: -1, wall: 0 });
   const submitRef = useRef<() => Promise<void>>(async () => {});
 
+  function contextKey() {
+    const current = options.current.readSession();
+    const video = videoRef.current;
+    if (
+      !current.running ||
+      !current.source ||
+      !video ||
+      video.paused ||
+      video.seeking ||
+      video.playbackRate !== 1 ||
+      document.hidden
+    )
+      return "";
+    return JSON.stringify([
+      branchName,
+      current.runId,
+      current.generation,
+      current.source.kind,
+      current.source.label,
+      options.current.cropEnabled ? options.current.crop : null,
+    ]);
+  }
+  function disarmAlarm(
+    message = "Product interaction alarm is off. Test the sound again before arming.",
+  ) {
+    commission.current.invalidate();
+    sound.current?.disarm();
+    options.current.alarmEnabled = false;
+    if (mounted.current) {
+      setAlarmEnabled(false);
+      setCommissionStage("off");
+      setRecordedAlarmAllowed(false);
+      setSoundStatus(message);
+    }
+  }
+  async function testSound() {
+    const context = contextKey();
+    if (!context || options.current.muted || options.current.volume <= 0)
+      return;
+    disarmAlarm();
+    const revision = commission.current.beginTest(context);
+    setCommissionStage("testing");
+    const speaker = (sound.current ??= new BrowserAttentionSound());
+    const activation = await speaker.arm();
+    if (
+      !mounted.current ||
+      !commission.current.currentTest(revision, contextKey()) ||
+      context !== contextKey()
+    )
+      return;
+    if (!activation.ok) {
+      disarmAlarm(activation.message);
+      return;
+    }
+    const played = speaker.play({
+      volume: options.current.volume,
+      durationSeconds: 2,
+    });
+    if (
+      !played.ok ||
+      !commission.current.finishTest(revision, contextKey(), performance.now())
+    ) {
+      disarmAlarm(played.message);
+      return;
+    }
+    setCommissionStage("confirm");
+    setSoundStatus(
+      "Two-second test tone requested. A member of staff must confirm it was clearly audible at this laptop.",
+    );
+  }
+
+  function confirmSound() {
+    if (!commission.current.confirm(contextKey(), performance.now())) {
+      disarmAlarm(
+        "Sound confirmation expired or the source changed. Run the sound test again.",
+      );
+      return;
+    }
+    sound.current?.stop();
+    setCommissionStage("confirmed");
+    setSoundStatus(
+      "Staff confirmed hearing the test tone for this run and volume. Choose whether to arm the product attention alarm.",
+    );
+  }
+
   function silence() {
+    if (!options.current.alarmEnabled) {
+      disarmAlarm(
+        "Product sound stopped. Run the sound check again before arming.",
+      );
+      return;
+    }
     sound.current?.stop();
     if (mounted.current) setSoundStatus("Product interaction alarm silenced.");
   }
@@ -160,16 +268,11 @@ export default function InteractionAnalysis({
         );
     }
     // Keep the request slot occupied until its polling loop exits; no overlapping submission.
-    sound.current?.disarm();
-    options.current.alarmEnabled = false;
+    disarmAlarm();
     if (mounted.current) {
-      setAlarmEnabled(false);
       setCount(0);
       setHighlight(null);
       setStatus("Analysis stopped. Pending results cannot trigger an alarm.");
-      setSoundStatus(
-        "Product interaction alarm is off. Enable it again for a new run.",
-      );
     }
   }
 
@@ -212,21 +315,37 @@ export default function InteractionAnalysis({
     changeCrop(true, next);
   }
 
-  async function refresh() {
+  async function refresh(preserveError = false) {
+    const requestRevision = ++refreshRevision.current;
+    const startingHistory = historyRevision.current;
     setRefreshing(true);
     const results = await Promise.allSettled([
       api<ModelStatus>("/interactions/status"),
       api<{ items: SavedInteraction[] }>("/interactions"),
     ]);
-    if (!mounted.current) return;
-    if (results[0].status === "fulfilled") setModel(results[0].value);
-    else {
+    if (!mounted.current || requestRevision !== refreshRevision.current) return;
+    if (results[0].status === "fulfilled") {
+      setModel(results[0].value);
+      if (!results[0].value.ready)
+        disarmAlarm(
+          "The model is unavailable. Check the service and repeat the sound check before arming.",
+        );
+    } else {
       setModel(null);
+      disarmAlarm(
+        "The local service could not be verified. Product alarm is off.",
+      );
       setError(failureText(results[0].reason));
     }
-    if (results[1].status === "fulfilled") setHistory(results[1].value.items);
-    else setError(failureText(results[1].reason));
-    if (results.every((result) => result.status === "fulfilled")) setError("");
+    if (results[1].status === "fulfilled") {
+      if (startingHistory === historyRevision.current)
+        setHistory(results[1].value.items);
+    } else setError(failureText(results[1].reason));
+    if (
+      !preserveError &&
+      results.every((result) => result.status === "fulfilled")
+    )
+      setError("");
     setRefreshing(false);
   }
 
@@ -307,6 +426,7 @@ export default function InteractionAnalysis({
         setElapsed(age);
         if (result.status === "completed" && result.result) {
           const saved = result.result;
+          historyRevision.current++;
           setHistory((previous) =>
             [saved, ...previous.filter((item) => item.id !== saved.id)].slice(
               0,
@@ -315,15 +435,15 @@ export default function InteractionAnalysis({
           );
           const latest = options.current.readSession();
           const now = performance.now();
-          const eligible = freshInteractionAlarm({
-            enabled:
-              options.current.alarmEnabled &&
-              !options.current.muted &&
-              options.current.volume > 0,
+          const visibleAttention = freshInteractionAlarm({
+            enabled: true,
             sameRun:
               latest.runId === current.runId &&
               latest.generation === current.generation &&
-              saved.run_id === current.runId,
+              saved.run_id === current.runId &&
+              latest.source?.kind === current.source.kind &&
+              latest.source?.label === current.source.label &&
+              saved.source_kind === current.source.kind,
             running: latest.running,
             visible: !document.hidden,
             playing: !video.paused,
@@ -332,12 +452,19 @@ export default function InteractionAnalysis({
             now,
             lastFrameAt: frames.at(-1)!.capturedAt,
             lastProgressAt: lastProgress.current.wall,
-            lastAlarmAt: lastAlarm.current,
+            lastAlarmAt: -Infinity,
             result: saved,
           });
+          if (visibleAttention) setHighlight(saved.id);
+          const eligible =
+            visibleAttention &&
+            options.current.alarmEnabled &&
+            !options.current.muted &&
+            options.current.volume > 0 &&
+            now - lastAlarm.current >= 30_000 &&
+            commission.current.claim(contextKey(), saved.id, saved.source_kind);
           if (eligible) {
             lastAlarm.current = now;
-            setHighlight(saved.id);
             const played = sound.current?.play({
               volume: options.current.volume,
               durationSeconds: 8,
@@ -349,7 +476,7 @@ export default function InteractionAnalysis({
           }
           const delay = Math.round((now - frames.at(-1)!.capturedAt) / 1000);
           setStatus(
-            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${eligible ? "Attention requested; review the sampled frames." : delay > 15 ? "Delayed result saved for review; no alarm." : "Saved for review."}`,
+            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${eligible ? "Attention requested; review the sampled frames." : delay > 15 ? "Delayed result saved for review; no alarm." : visibleAttention ? "Visual attention requested; sound was not triggered." : "Saved for review."}`,
           );
           return;
         }
@@ -383,6 +510,9 @@ export default function InteractionAnalysis({
         active.generation === generation.current
       ) {
         setError(failureText(failure));
+        disarmAlarm(
+          "Analysis failed. Product alarm is off; check the service before recommissioning.",
+        );
         setAutomatic(false);
         options.current.automatic = false;
         setStatus(
@@ -400,7 +530,9 @@ export default function InteractionAnalysis({
   submitRef.current = submit;
 
   async function review(item: SavedInteraction, outcome: InteractionReview) {
+    historyRevision.current++;
     setMutation(item.id);
+    setError("");
     if (highlight === item.id) {
       silence();
       setHighlight(null);
@@ -411,17 +543,32 @@ export default function InteractionAnalysis({
         "POST",
         { outcome, note: "", expected_version: item.version },
       );
-      if (mounted.current)
+      if (mounted.current) {
+        historyRevision.current++;
         setHistory((previous) =>
-          previous.map((row) => (row.id === item.id ? updated : row)),
+          previous.map((row) =>
+            row.id === item.id && row.version <= updated.version
+              ? updated
+              : row,
+          ),
         );
+      }
     } catch (failure) {
-      if (mounted.current) setError(failureText(failure));
+      if (mounted.current) {
+        setError(
+          failure instanceof ApiError && failure.status === 409
+            ? "Another reviewer changed this result. The latest review has been loaded; check it before choosing an outcome again."
+            : failureText(failure),
+        );
+        if (failure instanceof ApiError && failure.status === 409)
+          await refresh(true);
+      }
     } finally {
       if (mounted.current) setMutation(null);
     }
   }
   async function remove(item: SavedInteraction) {
+    historyRevision.current++;
     setMutation(item.id);
     if (highlight === item.id) {
       silence();
@@ -429,8 +576,10 @@ export default function InteractionAnalysis({
     }
     try {
       await api(`/interactions/${item.id}`, "DELETE");
-      if (mounted.current)
+      if (mounted.current) {
+        historyRevision.current++;
         setHistory((previous) => previous.filter((row) => row.id !== item.id));
+      }
     } catch (failure) {
       if (mounted.current) setError(failureText(failure));
     } finally {
@@ -453,6 +602,24 @@ export default function InteractionAnalysis({
       const configuration = options.current;
       const current = configuration.readSession();
       const video = videoRef.current;
+      const ready =
+        !!current.running &&
+        !!current.source &&
+        !!video &&
+        !video.paused &&
+        !video.seeking &&
+        video.playbackRate === 1 &&
+        video.readyState >= 2 &&
+        !document.hidden;
+      setSourceReady(ready);
+      setRecordedSource(current.source?.kind === "RECORDED_VIDEO");
+      if (
+        commission.current.active &&
+        !commission.current.matches(contextKey())
+      )
+        disarmAlarm(
+          "Source context changed. Test the product alarm sound again before arming.",
+        );
       if (
         !configuration.enabled ||
         configuration.cropError ||
@@ -533,8 +700,12 @@ export default function InteractionAnalysis({
   }, []);
 
   useEffect(() => {
-    if (muted || volume === 0) sound.current?.stop();
-    else sound.current?.setVolume(volume);
+    disarmAlarm(
+      "Test the current volume and confirm it is audible before arming.",
+    );
+    sound.current?.setVolume(volume);
+    // A previous confirmation applies only to the sound settings actually tested.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, volume]);
 
   return (
@@ -602,37 +773,93 @@ export default function InteractionAnalysis({
           <input
             type="checkbox"
             checked={alarmEnabled}
-            disabled={!enabled || !model?.ready}
+            disabled={
+              !enabled ||
+              !model?.ready ||
+              !sourceReady ||
+              commissionStage !== "confirmed" ||
+              (recordedSource && !recordedAlarmAllowed)
+            }
             onChange={(event) => {
               const next = event.target.checked;
-              options.current.alarmEnabled = next;
-              setAlarmEnabled(next);
               if (!next) {
-                sound.current?.disarm();
-                setSoundStatus("Product interaction alarm is off.");
+                disarmAlarm();
                 return;
               }
-              const currentGeneration = generation.current;
-              const activation = (sound.current ??=
-                new BrowserAttentionSound()).arm();
-              void activation.then((result) => {
-                if (
-                  !mounted.current ||
-                  generation.current !== currentGeneration ||
-                  !options.current.alarmEnabled
-                )
-                  return;
-                setSoundStatus(result.message);
-                if (!result.ok) {
-                  setAlarmEnabled(false);
-                  options.current.alarmEnabled = false;
-                }
-              });
+              const armed = commission.current.arm(
+                contextKey(),
+                recordedAlarmAllowed,
+              );
+              options.current.alarmEnabled = armed;
+              setAlarmEnabled(armed);
+              setSoundStatus(
+                armed
+                  ? recordedSource
+                    ? "RECORDED TEST alarm armed for this run. Fresh test observations may request an eight-second tone."
+                    : "Product attention alarm armed for this run. Fresh eligible observations may request an eight-second tone."
+                  : "The source changed. Test the sound again before arming.",
+              );
             }}
           />
           Experimental product attention alarm
         </label>
       </div>
+      <fieldset className="interaction-commission">
+        <legend>Product alarm · staff sound check</legend>
+        <p>
+          Start detection, test the laptop speakers, then confirm that you heard
+          the tone. This check applies to the current source, area, run and
+          volume. Physical audibility is confirmed by staff; browser audio
+          activation alone cannot verify it.
+        </p>
+        <div className="interaction-commission-actions">
+          <button
+            type="button"
+            disabled={
+              !enabled ||
+              !model?.ready ||
+              !sourceReady ||
+              muted ||
+              volume <= 0 ||
+              commissionStage === "testing"
+            }
+            onClick={() => void testSound()}
+          >
+            Test product alarm sound
+          </button>
+          <button
+            type="button"
+            disabled={commissionStage !== "confirm" || !sourceReady}
+            onClick={confirmSound}
+          >
+            I heard the test tone
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              disarmAlarm("Sound check cancelled. Product alarm is off.")
+            }
+          >
+            Stop sound & disarm product alarm
+          </button>
+        </div>
+        {recordedSource && (
+          <label className="ld-inline-check">
+            <input
+              type="checkbox"
+              checked={recordedAlarmAllowed}
+              disabled={commissionStage !== "confirmed" || alarmEnabled}
+              onChange={(event) =>
+                setRecordedAlarmAllowed(event.target.checked)
+              }
+            />
+            Allow alarm during this recorded-video test
+          </label>
+        )}
+        <p className="interaction-sound-status" role="status">
+          {soundStatus}
+        </p>
+      </fieldset>
       <div className="interaction-crop">
         <label className="ld-inline-check">
           <input
@@ -743,30 +970,55 @@ export default function InteractionAnalysis({
       </p>
       <p className="ld-hint">
         Four frames cover about four seconds. They are sent to the local service
-        and saved with the result for up to 24 hours; you can delete them below.
-        No continuous clip is saved. Automatic analysis keeps one job in flight,
-        with no queue; events between sampled frames or jobs can be missed. This
-        model has not been validated for pharmacy theft detection.
+        and saved with the result under the retention policy below; you can
+        delete them here. No continuous clip is saved. Automatic analysis keeps
+        one job in flight, with no queue; events between sampled frames or jobs
+        can be missed. This model has not been validated for pharmacy theft
+        detection.
       </p>
+      <div className="interaction-evidence-policy">
+        <strong>Sampled evidence storage</strong>
+        {model?.evidence_policy ? (
+          <>
+            <p>
+              Maximum retention:{" "}
+              {Math.round(model.evidence_policy.retention_seconds / 3600)}{" "}
+              hours. Capacity: {model.evidence_policy.site_limit} jobs per
+              branch, {model.evidence_policy.installation_limit} per
+              installation.{" "}
+              {model.evidence_policy.encryption === "AES-256-GCM"
+                ? "Frames are encrypted locally with AES-256-GCM."
+                : "Synthetic workspace: sampled frames are not encrypted. Use pilot mode for client evidence."}
+            </p>
+            <p>{model.evidence_policy.rolling_cleanup}</p>
+          </>
+        ) : (
+          <p>
+            Evidence policy could not be verified. Refresh the local service
+            before collecting client footage. Earlier ordinary samples may roll
+            off at capacity; this is not an archive.
+          </p>
+        )}
+      </div>
       <p className="ld-hint">
         The product alarm is separate from the movement-rule alarm above. It
         requires a clear, product-visible concealment sequence and a result
         within 15 seconds of the last sample. It shares the laptop volume/mute
         setting. Delayed or historical results never sound.
       </p>
-      <p className="interaction-sound-status">{soundStatus}</p>
       {error && (
         <p className="ld-error" role="alert">
           {error}
         </p>
       )}
       {highlight && (
-        <div className="interaction-alert" role="alert">
+        <div className="interaction-alert" role="alert" aria-atomic="true">
           <BellRing size={23} />
           <div>
             <strong>Possible product concealment — review required</strong>
             <p>
-              {readSession().source?.kind === "RECORDED_VIDEO"
+              {history.find((item) => item.id === highlight)?.source_kind ===
+              "RECORDED_VIDEO"
                 ? "Recorded-video test. "
                 : ""}
               Check the sampled frames before responding.
@@ -775,6 +1027,18 @@ export default function InteractionAnalysis({
           <button type="button" onClick={silence}>
             <VolumeX size={16} />
             Silence product alarm
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              silence();
+              setHighlight(null);
+              setStatus(
+                "Attention acknowledged. Review the sampled frames and record Useful, Normal shopping or Unclear below.",
+              );
+            }}
+          >
+            <Check size={16} /> Acknowledge attention
           </button>
         </div>
       )}

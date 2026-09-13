@@ -16,6 +16,7 @@ import { api } from "./api";
 import InteractionAnalysis from "./interactionAnalysis";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import { createPoseDetector } from "./poseDetector";
+import { watchVideoContinuity } from "./monitoringContinuity";
 import { LiveBehaviourEngine, POSE_CONNECTIONS } from "./liveBehaviour";
 import { validateVideoFile, validateVideoMetadata } from "./videoActivity";
 import { LIVE_MODEL_VERSION, LIVE_RULE_VERSION } from "./liveDetectionTypes";
@@ -45,7 +46,14 @@ type PendingEvent = {
   saving: boolean;
   error: string;
 };
-type Phase = "empty" | "preparing" | "ready" | "loading" | "running" | "error";
+type Phase =
+  | "empty"
+  | "preparing"
+  | "ready"
+  | "loading"
+  | "running"
+  | "degraded"
+  | "error";
 const intervalMs = 250;
 const maxResultAgeMs = 1000;
 const sourceNames: Record<LiveSourceKind, string> = {
@@ -95,7 +103,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const [deviceId, setDeviceId] = useState("");
   const [volume, setVolume] = useState(0.65);
   const [muted, setMuted] = useState(false);
-  const [movementAlarmEnabled, setMovementAlarmEnabled] = useState(true);
+  const [movementAlarmEnabled, setMovementAlarmEnabled] = useState(false);
   const [soundStatus, setSoundStatus] = useState(
     "Test this laptop’s speakers before monitoring.",
   );
@@ -125,6 +133,9 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const runningRef = useRef(false);
   const mounted = useRef(true);
   const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const continuityRef = useRef<ReturnType<typeof watchVideoContinuity> | null>(
+    null,
+  );
   const preparationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const soundTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const alarmEvent = useRef<string | null>(null);
@@ -133,7 +144,8 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const saveInFlight = useRef(new Set<string>());
   const unsavedCount = useRef(0);
   const runId = useRef("");
-  const busy = phase === "loading" || phase === "running";
+  const busy =
+    phase === "loading" || phase === "running" || phase === "degraded";
   soundOptions.current = { muted, volume, movementAlarmEnabled };
 
   function sound() {
@@ -152,6 +164,9 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   }
   function stop(reason = "Detection stopped.", releaseCapture = true) {
     interactionCancel.current?.();
+    interactionSilence.current?.();
+    continuityRef.current?.close();
+    continuityRef.current = null;
     sourceGeneration.current++;
     runningRef.current = false;
     loadingRef.current = false;
@@ -178,6 +193,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       sourceGeneration.current++;
       current.stream.getTracks().forEach((track) => {
         track.onended = null;
+        track.onmute = null;
         track.stop();
       });
       if (video) video.srcObject = null;
@@ -185,6 +201,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       if (mounted.current) setSource(null);
     }
     if (mounted.current) {
+      setMetrics((previous) => ({ ...previous, fps: 0, latency: 0 }));
       setStatus(reason);
       setPhase(sourceRef.current?.ready ? "ready" : "empty");
     }
@@ -262,7 +279,8 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     }
   }
   function trigger(event: LiveBehaviourEvent, current: Source, offset: number) {
-    if (!runningRef.current) return;
+    if (!runningRef.current || !continuityRef.current?.isFresh(maxResultAgeMs))
+      return;
     if (unsavedCount.current >= 100) {
       stop("Detection stopped: 100 event records are waiting to be saved.");
       setError(
@@ -288,6 +306,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         const playBurst = () => {
           if (
             !runningRef.current ||
+            !continuityRef.current?.isFresh(maxResultAgeMs) ||
             episode !== runGeneration.current ||
             alarmEvent.current !== eventId ||
             document.hidden ||
@@ -583,11 +602,26 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         }
       }, 8000);
       track.onended = () => {
+        if (sourceRef.current !== next) return;
         stop(
           "The video source disconnected or sharing ended. Reconnect to continue.",
         );
         setError("No live frames are being analysed.");
       };
+      track.onmute = () => {
+        if (sourceRef.current !== next) return;
+        stop(
+          "The video input stopped delivering frames. Reconnect the source to continue.",
+        );
+        setError(
+          "Detection stopped: the camera or shared window is unavailable.",
+        );
+      };
+      if (track.readyState !== "live" || track.muted) {
+        stop("The selected video input is unavailable. Reconnect to continue.");
+        setError("No live frames are being analysed.");
+        return;
+      }
       const video = videoRef.current;
       if (video) {
         video.srcObject = stream;
@@ -686,10 +720,25 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       if (current.kind === "RECORDED_VIDEO" && video.ended)
         video.currentTime = 0;
       video.playbackRate = 1;
+      const continuity = watchVideoContinuity(video, (problem) => {
+        if (!mounted.current || generation !== runGeneration.current) return;
+        stop(
+          problem === "clock_gap"
+            ? "Monitoring stopped after a laptop sleep or processing gap. Check the source and start again."
+            : problem === "media_jump"
+              ? "Video continuity changed. Check the source and start detection again."
+              : "Video frames stopped arriving. Reconnect or restart playback.",
+        );
+        setError(
+          "Detection is stopped. No frames or alarms are being processed.",
+        );
+      });
+      continuityRef.current = continuity;
+      setStatus("Checking fresh video frames before monitoring…");
       let playbackTimeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          video.play(),
+          Promise.all([video.play(), continuity.firstFrame]),
           new Promise<never>((_, reject) => {
             playbackTimeout = setTimeout(
               () =>
@@ -710,8 +759,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       runningRef.current = true;
       setPhase("running");
       setStatus("Analysing frames. Waiting for a clear body pose…");
-      let lastTime = -1,
-        lastProgress = performance.now(),
+      let lastSequence = -1,
         lastSample = performance.now(),
         frames = 0,
         slowFrames = 0;
@@ -723,11 +771,6 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         )
           return;
         const now = performance.now();
-        if (now - lastProgress > 3500) {
-          stop("Video frames stopped arriving. Reconnect or restart playback.");
-          setError("Detection stopped: the source is stalled.");
-          return;
-        }
         if (video.paused || video.seeking || video.playbackRate !== 1) {
           stop(
             "Playback paused or changed. Start detection again to continue.",
@@ -735,23 +778,18 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           );
           return;
         }
-        const mediaTime = video.currentTime;
-        if (video.readyState < 2 || mediaTime === lastTime) {
+        const presented = continuity.latest();
+        if (
+          video.readyState < 2 ||
+          !presented ||
+          presented.sequence === lastSequence ||
+          !continuity.isFresh(maxResultAgeMs)
+        ) {
           tickTimer.current = setTimeout(() => void tick(), intervalMs);
           return;
         }
-        if (
-          lastTime >= 0 &&
-          (mediaTime < lastTime ||
-            mediaTime - lastTime > 1.2 ||
-            now - lastProgress > 1200)
-        ) {
-          engineRef.current?.reset();
-          clearOverlay();
-          silence("Video continuity changed. Alarm reset.");
-        }
-        lastTime = mediaTime;
-        lastProgress = now;
+        const mediaTime = presented.mediaTime;
+        lastSequence = presented.sequence;
         try {
           const poses = await detector!.detect(video, now);
           if (
@@ -762,8 +800,16 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             video.seeking
           )
             return;
-          const age = performance.now() - now;
+          if (!continuity.isFresh(maxResultAgeMs)) {
+            stop(
+              "Fresh video continuity was lost while processing. Check the source and start again.",
+            );
+            setError("Detection stopped: delayed results were discarded.");
+            return;
+          }
+          const age = performance.now() - presented.observedAt;
           if (age > maxResultAgeMs) {
+            setPhase("degraded");
             engineRef.current?.reset();
             clearOverlay();
             silence(
@@ -783,6 +829,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
               return;
             }
           } else {
+            setPhase("running");
             slowFrames = 0;
             const result = engineRef.current!.update(
               poses,
@@ -990,11 +1037,13 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             <i />
             {phase === "running"
               ? "DETECTION RUNNING"
-              : phase === "loading"
-                ? "LOADING MODEL"
-                : phase === "preparing"
-                  ? "CONNECTING"
-                  : "DETECTION STOPPED"}
+              : phase === "degraded"
+                ? "POSE ANALYSIS DELAYED"
+                : phase === "loading"
+                  ? "LOADING MODEL"
+                  : phase === "preparing"
+                    ? "CONNECTING"
+                    : "DETECTION STOPPED"}
           </span>
           <span>
             {source ? sourceNames[source.kind] : "No source connected"}
@@ -1011,7 +1060,27 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             controls={source?.kind === "RECORDED_VIDEO"}
             aria-label="CCTV detection video"
             onLoadedData={mediaReady}
-            onResize={mediaReady}
+            onResize={() => {
+              const video = videoRef.current;
+              if (
+                runningRef.current &&
+                video &&
+                (video.videoWidth !== dimensions.width ||
+                  video.videoHeight !== dimensions.height)
+              ) {
+                mediaReady();
+                stop(
+                  "Video dimensions changed. Check the camera area and start detection again.",
+                  false,
+                );
+                return;
+              }
+              mediaReady();
+            }}
+            onEmptied={() => {
+              if (runningRef.current || loadingRef.current)
+                stop("The video source was removed. Reconnect to continue.");
+            }}
             onEnded={() =>
               stop(
                 "Recording finished. All generated events are listed below.",
@@ -1187,10 +1256,14 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             </p>
             <p>
               Detection runs only while this page is visible and the laptop is
-              awake. Stopping detection releases the model and live capture.
-              Start again after a pause, seek, sleep or disconnection. This
-              prototype also stops monitoring when its 15-minute login session
-              expires; sign in again to continue.
+              awake. Fresh browser frames are checked continuously; a gap,
+              disconnected source or laptop sleep stops both analyses and sound.
+              If a CCTV viewer itself shows a frozen picture while its shared
+              window keeps refreshing, check its camera timestamp and reconnect
+              the viewer. Stopping detection releases the model and live
+              capture. Start again after a pause, seek, sleep or disconnection.
+              This prototype also stops monitoring when its 15-minute login
+              session expires; sign in again to continue.
             </p>
           </details>
         </section>
@@ -1292,7 +1365,9 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         readSession={() => ({
           runId: runId.current,
           generation: runGeneration.current,
-          running: runningRef.current,
+          running:
+            runningRef.current &&
+            (continuityRef.current?.isFresh(maxResultAgeMs) ?? false),
           source: sourceRef.current,
         })}
         muted={muted}

@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
+import "./pilot.css";
 import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
@@ -40,6 +49,8 @@ import type {
   Incident,
   Outcome,
   Page,
+  Runtime,
+  Session,
   User,
 } from "./types";
 import {
@@ -48,8 +59,9 @@ import {
   clearSession,
   isViewLocked,
   lockView,
+  onSessionInvalidated,
   safeEvidenceUrl,
-  setCsrf,
+  setSessionContext,
 } from "./api";
 import { date, getAlertCount, label, money } from "./format";
 
@@ -57,6 +69,8 @@ import { buildCasePatch, caseFields } from "./caseForm";
 import type { CaseForm } from "./caseForm";
 import VideoTest from "./VideoTest";
 import LiveDetection from "./LiveDetection";
+import PharmacyAdmin from "./PharmacyAdmin";
+import PharmacySetup from "./PharmacySetup";
 
 type ActionOptions = {
   method?: string;
@@ -79,6 +93,7 @@ const navItems: { id: Page; name: string; icon: typeof Activity }[] = [
   { id: "video-test", name: "Video test", icon: Film },
   { id: "activity", name: "Activity log", icon: Activity },
   { id: "settings", name: "Branch settings", icon: Settings2 },
+  { id: "administration", name: "Administration", icon: ShieldCheck },
 ];
 
 function Mark() {
@@ -225,9 +240,19 @@ function Modal({
     </div>
   );
 }
-function Login({ onLogin }: { onLogin: (user: User) => void }) {
-  const [email, setEmail] = useState("manager@harbour.demo");
-  const [password, setPassword] = useState("AisleDemo!2026");
+const PilotContext = createContext(false);
+function Login({
+  runtime,
+  onLogin,
+  onSetupCreated,
+}: {
+  runtime: Runtime;
+  onLogin: (session: Session) => void;
+  onSetupCreated: () => Promise<void>;
+}) {
+  const pilot = runtime.mode === "pilot";
+  const [email, setEmail] = useState(pilot ? "" : "manager@harbour.demo");
+  const [password, setPassword] = useState(pilot ? "" : "AisleDemo!2026");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent) {
@@ -235,14 +260,10 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
     setError("");
     setBusy(true);
     try {
-      const result = await api<{ user: User; csrf_token: string }>(
-        "/login",
-        "POST",
-        { email, password },
-      );
-      setCsrf(result.csrf_token);
+      const result = await api<Session>("/login", "POST", { email, password });
+      setPassword("");
       lockView(false);
-      onLogin(result.user);
+      onLogin(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -287,74 +308,103 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
       <main className="login-main">
         <div className="login-card">
           <div className="prototype-label">
-            <span /> SYNTHETIC PROTOTYPE · 0.1
+            <span />{" "}
+            {pilot ? "LOCAL PHARMACY WORKSPACE" : "SYNTHETIC PROTOTYPE · 0.1"}
           </div>
           <h2>Welcome to your workspace.</h2>
           <p className="lead">
-            Explore the complete review-to-record workflow with clearly labelled
-            demonstration data.
+            {pilot
+              ? "Sign in with your individual account to access your assigned pharmacy branches on this laptop."
+              : "Explore the complete review-to-record workflow with clearly labelled demonstration data."}
           </p>
-          <form onSubmit={submit}>
-            <label>
-              Demo account
-              <select value={email} onChange={(e) => setEmail(e.target.value)}>
-                <option value="manager@harbour.demo">
-                  Harbour Pharmacy · Manager
-                </option>
-                <option value="reviewer@harbour.demo">
-                  Harbour Pharmacy · Reviewer
-                </option>
-                <option value="manager@liffey.demo">
-                  Liffey Pharmacy · Manager
-                </option>
-                <option value="manager@marimina.demo">
-                  Mari Mina Pharmacy · Manager
-                </option>
-              </select>
-            </label>
-            <label>
-              Email address
-              <input
-                autoComplete="username"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                autoComplete="current-password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </label>
-            {error && (
-              <div className="inline-error" role="alert">
-                {error}
-              </div>
-            )}
-            <button className="button primary full" disabled={busy}>
-              {busy ? "Opening workspace…" : "Open demo workspace"}
-              <ArrowRight size={18} />
-            </button>
-          </form>
-          <div className="demo-credentials">
-            <ShieldCheck size={19} />
-            <div>
-              <strong>Public demo credentials</strong>
-              <span>{email}</span>
-              <code>AisleDemo!2026</code>
+          {pilot && runtime.setup_required ? (
+            <PharmacySetup onCreated={onSetupCreated} />
+          ) : (
+            <form onSubmit={submit}>
+              {!pilot && (
+                <label>
+                  Demo account
+                  <select
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  >
+                    <option value="manager@harbour.demo">
+                      Harbour Pharmacy · Manager
+                    </option>
+                    <option value="reviewer@harbour.demo">
+                      Harbour Pharmacy · Reviewer
+                    </option>
+                    <option value="manager@liffey.demo">
+                      Liffey Pharmacy · Manager
+                    </option>
+                    <option value="manager@marimina.demo">
+                      Mari Mina Pharmacy · Manager
+                    </option>
+                  </select>
+                </label>
+              )}
+              <label>
+                Email address
+                <input
+                  autoComplete="username"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Password
+                <input
+                  autoComplete="current-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </label>
+              {error && (
+                <div className="inline-error" role="alert">
+                  {error}
+                </div>
+              )}
+              <button
+                className="button primary full"
+                disabled={busy || (pilot && runtime.setup_required)}
+              >
+                {busy
+                  ? "Opening workspace…"
+                  : pilot
+                    ? "Sign in"
+                    : "Open demo workspace"}
+                <ArrowRight size={18} />
+              </button>
+            </form>
+          )}
+          {pilot ? (
+            <div className="pilot-login-note">
+              <ShieldCheck size={19} />
               <p>
-                Demo accounts and synthetic workflow records. LIVE DETECTION
-                processes an explicitly selected video locally, with laptop
-                attention sounds. No external alarms or billing.
+                Individual local accounts. Records stay in this installation;
+                branch access does not synchronise other laptops. Contact your
+                setup operator for account access or a password reset.
               </p>
             </div>
-          </div>
+          ) : (
+            <div className="demo-credentials">
+              <ShieldCheck size={19} />
+              <div>
+                <strong>Public demo credentials</strong>
+                <span>{email}</span>
+                <code>AisleDemo!2026</code>
+                <p>
+                  Demo accounts and synthetic workflow records. LIVE DETECTION
+                  processes an explicitly selected video locally, with laptop
+                  attention sounds. No external alarms or billing.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>
@@ -362,6 +412,10 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
 }
 
 export default function App() {
+  const [runtime, setRuntime] = useState<Runtime | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [startupError, setStartupError] = useState("");
+  const [switching, setSwitching] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<Bootstrap | null>(null);
   const [starting, setStarting] = useState(true);
@@ -385,12 +439,17 @@ export default function App() {
   const mounted = useRef(true);
   const requestEpoch = useRef(0);
   const authGeneration = useRef(0);
+  const tabId = useRef(crypto.randomUUID());
+  const siteRef = useRef("");
   const userRef = useRef<User | null>(null);
   userRef.current = user;
   const endSession = useCallback(() => {
     authGeneration.current++;
     requestEpoch.current++;
     userRef.current = null;
+    siteRef.current = "";
+    setSession(null);
+    setSwitching(false);
     setBusy(false);
     setToast("");
     setMenu(false);
@@ -414,6 +473,15 @@ export default function App() {
         !userRef.current
       )
         return;
+      if (siteRef.current && result.site.id !== siteRef.current) {
+        endSession();
+        setError({
+          message:
+            "The active branch changed in another tab. Sign in again to continue in the correct branch.",
+          conflict: false,
+        });
+        return;
+      }
       setData(result);
       setOffline(false);
     } catch (err) {
@@ -438,40 +506,125 @@ export default function App() {
       }
     }
   }, [endSession]);
+  const acceptSession = useCallback((result: Session) => {
+    authGeneration.current++;
+    requestEpoch.current++;
+    userRef.current = result.user;
+    siteRef.current = result.current_site_id;
+    setSessionContext(result.csrf_token, result.current_site_id);
+    setSession(result);
+    setUser(result.user);
+    setBusy(false);
+    setError(null);
+    setOffline(false);
+  }, []);
+  useEffect(() => {
+    onSessionInvalidated(() => {
+      endSession();
+      setError({
+        message:
+          "Your session or branch access changed. Monitoring stopped and this view was cleared. Sign in again to continue.",
+        conflict: false,
+      });
+    });
+    return () => onSessionInvalidated();
+  }, [endSession]);
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
-    if (isViewLocked()) {
-      setStarting(false);
-      return () => {
-        cancelled = true;
-        mounted.current = false;
-      };
-    }
-    api<{ user: User; csrf_token: string }>("/session")
-      .then((result) => {
-        if (!cancelled) {
-          authGeneration.current++;
-          userRef.current = result.user;
-          setCsrf(result.csrf_token);
-          setUser(result.user);
+    async function start() {
+      try {
+        const config = await api<Runtime>("/runtime");
+        if (cancelled) return;
+        setRuntime(config);
+        if (!isViewLocked()) {
+          try {
+            const existing = await api<Session>("/session");
+            if (!cancelled) acceptSession(existing);
+          } catch (err) {
+            if (!(err instanceof ApiError && err.status === 401)) throw err;
+          }
         }
-      })
-      .catch(() => {})
-      .finally(() => {
+      } catch {
+        if (!cancelled)
+          setStartupError(
+            "The local service is unavailable. Start AisleSignals on this laptop, then retry.",
+          );
+      } finally {
         if (!cancelled) setStarting(false);
-      });
+      }
+    }
+    void start();
     return () => {
       cancelled = true;
       mounted.current = false;
     };
-  }, []);
+  }, [acceptSession]);
   useEffect(() => {
-    if (!user) return;
+    if (runtime?.mode !== "pilot" || typeof BroadcastChannel === "undefined")
+      return;
+    const channel = new BroadcastChannel("aislesignals-local-session");
+    channel.onmessage = (event) => {
+      if (event.data?.tabId === tabId.current || !userRef.current) return;
+      endSession();
+      setError({
+        message:
+          "The session changed in another tab. Monitoring stopped and this view was cleared. Sign in again to continue.",
+        conflict: false,
+      });
+    };
+    return () => channel.close();
+  }, [runtime?.mode, endSession]);
+  function notifyOtherTabs() {
+    if (runtime?.mode !== "pilot" || typeof BroadcastChannel === "undefined")
+      return;
+    const channel = new BroadcastChannel("aislesignals-local-session");
+    channel.postMessage({ tabId: tabId.current });
+    channel.close();
+  }
+  async function switchBranch(siteId: string) {
+    if (busy || switching || offline || !session || siteId === siteRef.current)
+      return;
+    const generation = ++authGeneration.current;
+    requestEpoch.current++;
+    // Tear down capture, pending review forms and media before changing server scope.
+    flushSync(() => {
+      setSwitching(true);
+      setBusy(true);
+      setData(null);
+      setModal(null);
+      setCandidateId(null);
+      setIncidentId(null);
+      setToast("");
+      setError(null);
+      setPage("overview");
+    });
+    try {
+      const next = await api<Session>("/session/site", "POST", {
+        site_id: siteId,
+      });
+      if (!mounted.current || generation !== authGeneration.current) return;
+      notifyOtherTabs();
+      acceptSession(next);
+      setSwitching(false);
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+    } catch {
+      if (!mounted.current || generation !== authGeneration.current) return;
+      lockView(true);
+      endSession();
+      setError({
+        message:
+          "The branch switch could not be confirmed. Monitoring stopped and this view was cleared. Sign in again to select the correct branch.",
+        conflict: false,
+      });
+    }
+  }
+  useEffect(() => {
+    if (!user || switching) return;
     void refresh();
     const timer = setInterval(() => void refresh(), 10000);
     return () => clearInterval(timer);
-  }, [user, refresh]);
+  }, [user, switching, refresh]);
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 5500);
@@ -549,6 +702,18 @@ export default function App() {
         <p>Opening AisleSignals…</p>
       </div>
     );
+  if (startupError || !runtime)
+    return (
+      <div className="startup">
+        <Mark />
+        <p role="alert">
+          {startupError || "Unable to identify this installation."}
+        </p>
+        <button className="button primary" onClick={() => location.reload()}>
+          Retry local service
+        </button>
+      </div>
+    );
   if (!user)
     return (
       <>
@@ -558,429 +723,494 @@ export default function App() {
           </div>
         )}
         <Login
-          onLogin={(u) => {
-            authGeneration.current++;
-            requestEpoch.current++;
-            userRef.current = u;
-            setBusy(false);
-            setError(null);
-            setOffline(false);
-            setUser(u);
+          key={`${runtime.mode}:${runtime.setup_required}`}
+          runtime={runtime}
+          onSetupCreated={async () => {
+            const config = await api<Runtime>("/runtime");
+            setRuntime(config);
+            setError({
+              message:
+                "Owner account created. Sign in with the individual account you just created.",
+              conflict: false,
+            });
+          }}
+          onLogin={(result) => {
+            notifyOtherTabs();
+            acceptSession(result);
           }}
         />
       </>
     );
-  const disabled = offline || busy;
+  const pilot = runtime.mode === "pilot";
+  const disabled = offline || busy || switching;
   const manager = user.role === "MANAGER";
   const title = navItems.find((item) => item.id === page)!.name;
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main-content">
-        Skip to content
-      </a>
-      {menu && (
-        <button
-          className="sidebar-scrim"
-          aria-label="Close navigation"
-          onClick={() => setMenu(false)}
-        />
-      )}
-      <aside className={`sidebar ${menu ? "sidebar-open" : ""}`}>
-        <a
-          className="brand"
-          href="#overview"
-          onClick={(e) => {
-            e.preventDefault();
-            navigate("overview");
-          }}
-        >
-          <Mark />
-          <span>
-            AisleSignals<span className="brand-dot">.</span>
-          </span>
+    <PilotContext.Provider value={pilot}>
+      <div className="app-shell">
+        <a className="skip-link" href="#main-content">
+          Skip to content
         </a>
-        <div className="branch-switch">
-          <div className="branch-avatar">{data?.site.name[0] ?? "P"}</div>
-          <div>
-            <strong>{data?.site.name ?? "Your pharmacy"}</strong>
-            <span>Pharmacy workspace</span>
-          </div>
-          <ShieldCheck size={16} />
-        </div>
-        <span className="nav-section-label">WORKSPACE</span>
-        <nav aria-label="Main navigation">
-          {navItems.map(({ id, name, icon: Icon }) => (
-            <button
-              key={id}
-              className={`nav-item ${page === id ? "active" : ""}`}
-              aria-current={page === id ? "page" : undefined}
-              onClick={() => navigate(id)}
-            >
-              <Icon size={19} />
-              <span>{name}</span>
-              {id === "review" &&
-                data &&
-                getAlertCount(data.candidates) > 0 && (
-                  <span className="nav-count">
-                    {getAlertCount(data.candidates)}
-                  </span>
-                )}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-note">
-          <div className="leaf-icon">
-            <ShieldCheck size={21} />
-          </div>
-          <strong>People make the decisions.</strong>
-          <p>
-            Observations support your team. Every case is reviewed by a person.
-          </p>
-        </div>
-        <div className="sidebar-bottom">
-          <span className="prototype-label">
-            <span /> SYNTHETIC PROTOTYPE
-          </span>
-          <div className="user-box">
-            <div className="user-avatar">
-              {user.name
-                .split(" ")
-                .map((s) => s[0])
-                .slice(0, 2)
-                .join("")}
-            </div>
+        {menu && (
+          <button
+            className="sidebar-scrim"
+            aria-label="Close navigation"
+            onClick={() => setMenu(false)}
+          />
+        )}
+        <aside className={`sidebar ${menu ? "sidebar-open" : ""}`}>
+          <a
+            className="brand"
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("overview");
+            }}
+          >
+            <Mark />
+            <span>
+              AisleSignals<span className="brand-dot">.</span>
+            </span>
+          </a>
+          <div className="branch-switch">
+            <div className="branch-avatar">{data?.site.name[0] ?? "P"}</div>
             <div>
-              <strong>{user.name}</strong>
-              <span>{label(user.role)}</span>
+              <strong>{data?.site.name ?? "Your pharmacy"}</strong>
+              <span>Pharmacy workspace</span>
             </div>
-            <button
-              className="icon-button"
-              title="Sign out"
-              aria-label="Sign out"
-              disabled={busy}
-              onClick={async () => {
-                if (offline) {
-                  lockView(true);
-                  endSession();
-                  setError({
-                    message:
-                      "View locked and local records cleared. The server session could not be revoked while offline; sign in explicitly when connected.",
-                    conflict: false,
-                  });
-                  return;
-                }
-                const generation = authGeneration.current;
-                const result = await act("/logout", {}, { refresh: false });
-                if (generation !== authGeneration.current) return;
-                lockView(!result);
-                endSession();
-                if (!result)
-                  setError({
-                    message:
-                      "View locked and local records cleared. Server session revocation was not confirmed.",
-                    conflict: false,
-                  });
-              }}
-            >
-              <LogOut size={18} />
-            </button>
+            <ShieldCheck size={16} />
           </div>
-        </div>
-      </aside>
-      <div className="workspace">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              className="icon-button mobile-menu"
-              aria-label="Open navigation"
-              onClick={() => setMenu(true)}
-            >
-              <Menu size={22} />
-            </button>
-            <span>Workspace</span>
-            <ChevronRight size={14} />
-            <strong>{title}</strong>
+          {pilot && session && (
+            <div className="pilot-branch-picker">
+              <label htmlFor="active-pharmacy">Active pharmacy branch</label>
+              <select
+                id="active-pharmacy"
+                value={session.current_site_id}
+                disabled={disabled}
+                onChange={(event) => void switchBranch(event.target.value)}
+              >
+                {session.allowed_sites.map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.name} · {label(site.role)}
+                  </option>
+                ))}
+              </select>
+              <p>Switching stops monitoring and clears unsaved work.</p>
+            </div>
+          )}
+          <span className="nav-section-label">WORKSPACE</span>
+          <nav aria-label="Main navigation">
+            {navItems
+              .filter(
+                (item) => item.id !== "administration" || (pilot && manager),
+              )
+              .map(({ id, name, icon: Icon }) => (
+                <button
+                  key={id}
+                  className={`nav-item ${page === id ? "active" : ""}`}
+                  aria-current={page === id ? "page" : undefined}
+                  onClick={() => navigate(id)}
+                >
+                  <Icon size={19} />
+                  <span>{name}</span>
+                  {id === "review" &&
+                    data &&
+                    getAlertCount(data.candidates) > 0 && (
+                      <span className="nav-count">
+                        {getAlertCount(data.candidates)}
+                      </span>
+                    )}
+                </button>
+              ))}
+          </nav>
+          <div className="sidebar-note">
+            <div className="leaf-icon">
+              <ShieldCheck size={21} />
+            </div>
+            <strong>People make the decisions.</strong>
+            <p>
+              Observations support your team. Every case is reviewed by a
+              person.
+            </p>
           </div>
-          <div className="topbar-right">
-            <span className={`coverage-status ${offline ? "unknown" : ""}`}>
-              <span />
-              {offline
-                ? "Connection lost · coverage unknown"
-                : page === "live-detection"
-                  ? "Local pose analysis · experimental rules"
-                  : page === "video-test"
-                    ? "Playback test · no live monitoring"
-                    : "Synthetic data · no live monitoring"}
+          <div className="sidebar-bottom">
+            <span className="prototype-label">
+              <span /> {pilot ? "LOCAL PILOT" : "SYNTHETIC PROTOTYPE"}
             </span>
-            <button
-              className="icon-button"
-              aria-label="Refresh workspace"
-              title="Refresh workspace"
-              onClick={() => void refresh()}
-            >
-              <RefreshCw size={17} />
-            </button>
-            <span className="topbar-divider" />
-            <span className="timezone">
-              Ireland <span>·</span>{" "}
-              {new Intl.DateTimeFormat("en-IE", {
-                timeZone: "Europe/Dublin",
-                day: "numeric",
-                month: "short",
-              }).format(new Date())}
-            </span>
-          </div>
-        </header>
-        <main id="main-content" tabIndex={-1} className="main-content">
-          {error && (
-            <div
-              className={`error-banner ${error.conflict ? "conflict-banner" : ""}`}
-              role="alert"
-            >
-              <div>
-                {offline ? <WifiOff size={19} /> : <CircleHelp size={19} />}
-                <span>
-                  <strong>
-                    {error.conflict
-                      ? "This record has changed. "
-                      : offline
-                        ? "Connection unavailable. "
-                        : ""}
-                  </strong>
-                  {error.message}
-                  {error.conflict &&
-                    " Refresh to view the latest record. Your unsaved fields remain until you choose to load that record."}
-                </span>
+            <div className="user-box">
+              <div className="user-avatar">
+                {user.name
+                  .split(" ")
+                  .map((s) => s[0])
+                  .slice(0, 2)
+                  .join("")}
               </div>
-              <button className="text-button" onClick={() => void refresh()}>
-                Retry connection
-              </button>
+              <div>
+                <strong>{user.name}</strong>
+                <span>{label(user.role)}</span>
+              </div>
               <button
                 className="icon-button"
-                aria-label="Dismiss message"
-                onClick={() => setError(null)}
+                title="Sign out"
+                aria-label="Sign out"
+                disabled={busy}
+                onClick={async () => {
+                  if (offline) {
+                    lockView(true);
+                    endSession();
+                    setError({
+                      message:
+                        "View locked and local records cleared. The server session could not be revoked while offline; sign in explicitly when connected.",
+                      conflict: false,
+                    });
+                    return;
+                  }
+                  const generation = authGeneration.current;
+                  const result = await act("/logout", {}, { refresh: false });
+                  if (generation !== authGeneration.current) return;
+                  lockView(!result);
+                  notifyOtherTabs();
+                  endSession();
+                  if (!result)
+                    setError({
+                      message:
+                        "View locked and local records cleared. Server session revocation was not confirmed.",
+                      conflict: false,
+                    });
+                }}
               >
-                <X size={17} />
+                <LogOut size={18} />
               </button>
             </div>
-          )}
-          {offline && (
-            <div className="notice amber">
-              Actions are paused. Last loaded records may be out of date;
-              simulated camera coverage is unknown.
+          </div>
+        </aside>
+        <div className="workspace">
+          <header className="topbar">
+            <div className="breadcrumb">
+              <button
+                className="icon-button mobile-menu"
+                aria-label="Open navigation"
+                onClick={() => setMenu(true)}
+              >
+                <Menu size={22} />
+              </button>
+              <span>Workspace</span>
+              <ChevronRight size={14} />
+              <strong>{title}</strong>
             </div>
-          )}
-          {page !== "live-detection" && (
-            <div className="page-heading">
-              <div>
-                <div className="eyebrow">
-                  {page === "overview"
-                    ? "YOUR PHARMACY, IN FOCUS"
-                    : page === "review"
-                      ? "OBSERVE · REVIEW · DECIDE"
-                      : "A CLEARER WORKING DAY"}
-                </div>
-                <h1 ref={headingRef} tabIndex={-1}>
-                  {page === "overview"
-                    ? "Every detail, thoughtfully handled."
-                    : title}
-                </h1>
-                <p>
-                  {
-                    {
-                      overview:
-                        "A clear view of what needs attention, and a record of what happens next.",
-                      review:
-                        "An observation is a prompt to review. Your team determines the outcome.",
-                      incidents:
-                        "One place for reviewed facts, follow-up tasks and recorded outcomes.",
-                      assistance:
-                        "Ask a colleague for support and track their response.",
-                      cameras:
-                        "Understand the connection before relying on the coverage.",
-                      "video-test":
-                        "Try a recording locally and review a timeline of visual activity.",
-                      "live-detection":
-                        "Connect your CCTV video. Follow activity. Receive an automatic attention alarm.",
-                      activity:
-                        "A traceable record of actions within this pharmacy branch.",
-                      settings:
-                        "Your branch, subscription terms and prototype boundaries.",
-                    }[page]
-                  }
-                </p>
-              </div>
-              <div className="page-actions">
-                {page !== "assistance" && page !== "video-test" && (
-                  <button
-                    className="button secondary"
-                    disabled={disabled}
-                    onClick={() => setModal("assistance")}
-                  >
-                    <Bell size={17} />
-                    Ask for assistance
-                  </button>
-                )}
-                {page === "incidents" || page === "overview" ? (
-                  <button
-                    className="button primary"
-                    disabled={disabled}
-                    onClick={() => setModal("manual")}
-                  >
-                    <Plus size={17} />
-                    New manual case
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          )}
-          {!data ? (
-            <div className="panel">
-              <Empty
-                title={
-                  offline ? "Waiting for connection" : "Loading your workspace"
-                }
-                detail={
-                  offline
-                    ? "Your session is signed in. Retry when the local service is available."
-                    : "Fetching this pharmacy’s records…"
-                }
-              />
-            </div>
-          ) : (
-            <>
-              {page === "overview" && (
-                <Overview
-                  data={data}
-                  manager={manager}
-                  disabled={disabled}
-                  act={act}
-                  navigate={navigate}
-                  openCandidate={openCandidate}
-                  openIncident={openIncident}
-                  simulator={() => setModal("simulator")}
-                />
-              )}
-              {page === "review" && (
-                <Review
-                  data={data}
-                  selectedId={candidateId}
-                  select={setCandidateId}
-                  openIncident={openIncident}
-                  disabled={disabled}
-                  act={act}
-                  manager={manager}
-                  simulator={() => setModal("simulator")}
-                />
-              )}
-              {page === "incidents" && (
-                <Casebook
-                  data={data}
-                  selectedId={incidentId}
-                  select={setIncidentId}
-                  disabled={disabled}
-                  act={act}
-                  manager={manager}
-                  openCandidate={openCandidate}
-                  create={() => setModal("manual")}
-                />
-              )}
-              {page === "assistance" && (
-                <AssistancePage
-                  data={data}
-                  disabled={disabled}
-                  act={act}
-                  create={() => setModal("assistance")}
-                />
-              )}
-              {page === "cameras" && (
-                <Cameras
-                  data={data}
-                  manager={manager}
-                  disabled={disabled}
-                  simulator={() => setModal("simulator")}
-                />
-              )}
-              {page === "video-test" && (
-                <VideoTest
-                  key={`${user.id}:${data.site.id}`}
-                  branchName={data.site.name}
-                />
-              )}
-              {page === "live-detection" && (
-                <LiveDetection
-                  key={`${user.id}:${data.site.id}`}
-                  branchName={data.site.name}
-                />
-              )}
-              {page === "activity" && <ActivityPage data={data} />}
-              {page === "settings" && <Settings data={data} />}
-              <div className="workspace-footnote">
-                <ShieldCheck size={14} />
-                <span>
-                  {page === "live-detection"
-                    ? "Video stays on this laptop · Review every alert · Stop detection before leaving the CCTV view"
+            <div className="topbar-right">
+              <span className={`coverage-status ${offline ? "unknown" : ""}`}>
+                <span />
+                {offline
+                  ? "Connection lost · coverage unknown"
+                  : page === "live-detection"
+                    ? "Local pose analysis · experimental rules"
                     : page === "video-test"
-                      ? "Local recording test · Timestamps are offsets within the video · No live monitoring"
-                      : "Pharmacy-only prototype · Synthetic records · All displayed times Europe/Dublin"}
-                </span>
-                <span className="footnote-version">AisleSignals 0.1</span>
+                      ? "Playback test · no live monitoring"
+                      : pilot
+                        ? "Local workspace · open LIVE DETECTION to monitor"
+                        : "Synthetic data · no live monitoring"}
+              </span>
+              <button
+                className="icon-button"
+                aria-label="Refresh workspace"
+                title="Refresh workspace"
+                onClick={() => void refresh()}
+              >
+                <RefreshCw size={17} />
+              </button>
+              <span className="topbar-divider" />
+              <span className="timezone">
+                Ireland <span>·</span>{" "}
+                {new Intl.DateTimeFormat("en-IE", {
+                  timeZone: "Europe/Dublin",
+                  day: "numeric",
+                  month: "short",
+                }).format(new Date())}
+              </span>
+            </div>
+          </header>
+          <main id="main-content" tabIndex={-1} className="main-content">
+            {error && (
+              <div
+                className={`error-banner ${error.conflict ? "conflict-banner" : ""}`}
+                role="alert"
+              >
+                <div>
+                  {offline ? <WifiOff size={19} /> : <CircleHelp size={19} />}
+                  <span>
+                    <strong>
+                      {error.conflict
+                        ? "This record has changed. "
+                        : offline
+                          ? "Connection unavailable. "
+                          : ""}
+                    </strong>
+                    {error.message}
+                    {error.conflict &&
+                      " Refresh to view the latest record. Your unsaved fields remain until you choose to load that record."}
+                  </span>
+                </div>
+                <button className="text-button" onClick={() => void refresh()}>
+                  Retry connection
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Dismiss message"
+                  onClick={() => setError(null)}
+                >
+                  <X size={17} />
+                </button>
               </div>
-            </>
-          )}
-        </main>
-      </div>
-      {toast && (
-        <div className="toast" role="status">
-          <Check size={18} />
-          {toast}
+            )}
+            {offline && (
+              <div className="notice amber">
+                Actions are paused. Last loaded records may be out of date;
+                coverage is unknown.
+              </div>
+            )}
+            {page !== "live-detection" && (
+              <div className="page-heading">
+                <div>
+                  <div className="eyebrow">
+                    {page === "overview"
+                      ? "YOUR PHARMACY, IN FOCUS"
+                      : page === "review"
+                        ? "OBSERVE · REVIEW · DECIDE"
+                        : "A CLEARER WORKING DAY"}
+                  </div>
+                  <h1 ref={headingRef} tabIndex={-1}>
+                    {page === "overview"
+                      ? "Every detail, thoughtfully handled."
+                      : title}
+                  </h1>
+                  <p>
+                    {
+                      {
+                        overview:
+                          "A clear view of what needs attention, and a record of what happens next.",
+                        review:
+                          "An observation is a prompt to review. Your team determines the outcome.",
+                        incidents:
+                          "One place for reviewed facts, follow-up tasks and recorded outcomes.",
+                        assistance:
+                          "Ask a colleague for support and track their response.",
+                        cameras:
+                          "Understand the connection before relying on the coverage.",
+                        "video-test":
+                          "Try a recording locally and review a timeline of visual activity.",
+                        "live-detection":
+                          "Connect your CCTV video. Follow activity. Receive an automatic attention alarm.",
+                        activity:
+                          "A traceable record of actions within this pharmacy branch.",
+                        settings: pilot
+                          ? "Your branch, account access and local installation details."
+                          : "Your branch, subscription terms and prototype boundaries.",
+                        administration:
+                          "Manage individual accounts and branch access on this installation.",
+                      }[page]
+                    }
+                  </p>
+                </div>
+                <div className="page-actions">
+                  {page !== "assistance" && page !== "video-test" && (
+                    <button
+                      className="button secondary"
+                      disabled={disabled}
+                      onClick={() => setModal("assistance")}
+                    >
+                      <Bell size={17} />
+                      Ask for assistance
+                    </button>
+                  )}
+                  {page === "incidents" || page === "overview" ? (
+                    <button
+                      className="button primary"
+                      disabled={disabled}
+                      onClick={() => setModal("manual")}
+                    >
+                      <Plus size={17} />
+                      New manual case
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+            {!data ? (
+              <div className="panel">
+                <Empty
+                  title={
+                    switching
+                      ? "Switching pharmacy branch"
+                      : offline
+                        ? "Waiting for connection"
+                        : "Loading your workspace"
+                  }
+                  detail={
+                    offline
+                      ? "Your session is signed in. Retry when the local service is available."
+                      : "Fetching this pharmacy’s records…"
+                  }
+                />
+              </div>
+            ) : (
+              <>
+                {page === "overview" && (
+                  <Overview
+                    data={data}
+                    manager={manager}
+                    disabled={disabled}
+                    act={act}
+                    navigate={navigate}
+                    openCandidate={openCandidate}
+                    openIncident={openIncident}
+                    simulator={() => setModal("simulator")}
+                  />
+                )}
+                {page === "review" && (
+                  <Review
+                    data={data}
+                    selectedId={candidateId}
+                    select={setCandidateId}
+                    openIncident={openIncident}
+                    disabled={disabled}
+                    act={act}
+                    manager={manager}
+                    simulator={() => setModal("simulator")}
+                  />
+                )}
+                {page === "incidents" && (
+                  <Casebook
+                    data={data}
+                    selectedId={incidentId}
+                    select={setIncidentId}
+                    disabled={disabled}
+                    act={act}
+                    manager={manager}
+                    openCandidate={openCandidate}
+                    create={() => setModal("manual")}
+                  />
+                )}
+                {page === "assistance" && (
+                  <AssistancePage
+                    data={data}
+                    disabled={disabled}
+                    act={act}
+                    create={() => setModal("assistance")}
+                  />
+                )}
+                {page === "cameras" && (
+                  <Cameras
+                    data={data}
+                    manager={manager}
+                    disabled={disabled}
+                    simulator={() => setModal("simulator")}
+                  />
+                )}
+                {page === "video-test" && (
+                  <VideoTest
+                    key={`${user.id}:${data.site.id}`}
+                    branchName={data.site.name}
+                  />
+                )}
+                {page === "live-detection" && (
+                  <LiveDetection
+                    key={`${user.id}:${data.site.id}`}
+                    branchName={data.site.name}
+                  />
+                )}
+                {page === "activity" && <ActivityPage data={data} />}
+                {page === "settings" && <Settings data={data} />}
+                {page === "administration" && pilot && manager && session && (
+                  <PharmacyAdmin
+                    key={`${user.id}:${data.site.id}`}
+                    user={user}
+                    siteId={data.site.id}
+                    disabled={disabled}
+                    onAccessChanged={async () => {
+                      const next = await api<Session>("/session");
+                      acceptSession(next);
+                    }}
+                    onOwnAccountChanged={() => {
+                      notifyOtherTabs();
+                      endSession();
+                      setError({
+                        message:
+                          "Your account access changed. Sign in again to continue.",
+                        conflict: false,
+                      });
+                    }}
+                  />
+                )}
+                <div className="workspace-footnote">
+                  <ShieldCheck size={14} />
+                  <span>
+                    {page === "live-detection"
+                      ? "Video stays on this laptop · Review every alert · Stop detection before leaving the CCTV view"
+                      : page === "video-test"
+                        ? "Local recording test · Timestamps are offsets within the video · No live monitoring"
+                        : pilot
+                          ? "Local pharmacy records · Access restricted to the active branch · All displayed times Europe/Dublin"
+                          : "Pharmacy-only prototype · Synthetic records · All displayed times Europe/Dublin"}
+                  </span>
+                  <span className="footnote-version">AisleSignals 0.1</span>
+                </div>
+              </>
+            )}
+          </main>
         </div>
-      )}
-      {modal && data && (
-        <Modal
-          title={
-            modal === "manual"
-              ? "Create a manual case"
-              : modal === "assistance"
-                ? "Ask for team assistance"
-                : "Scenario simulator"
-          }
-          onClose={closeModal}
-        >
-          {modal === "manual" ? (
-            <ManualForm
-              siteId={data.site.id}
-              disabled={disabled}
-              act={act}
-              done={(id) => {
-                setModal(null);
-                openIncident(id);
-              }}
-            />
-          ) : modal === "assistance" ? (
-            <AssistanceForm
-              siteId={data.site.id}
-              disabled={disabled}
-              act={act}
-              done={() => {
-                setModal(null);
-                navigate("assistance");
-              }}
-            />
-          ) : (
-            <Simulator
-              disabled={disabled}
-              act={act}
-              active={data.site.shift_active}
-              done={(id) => {
-                setModal(null);
-                if (id) openCandidate(id);
-              }}
-            />
-          )}
-        </Modal>
-      )}
-    </div>
+        {toast && (
+          <div className="toast" role="status">
+            <Check size={18} />
+            {toast}
+          </div>
+        )}
+        {modal && data && (modal !== "simulator" || !pilot) && (
+          <Modal
+            title={
+              modal === "manual"
+                ? "Create a manual case"
+                : modal === "assistance"
+                  ? "Ask for team assistance"
+                  : "Scenario simulator"
+            }
+            onClose={closeModal}
+          >
+            {modal === "manual" ? (
+              <ManualForm
+                siteId={data.site.id}
+                disabled={disabled}
+                act={act}
+                done={(id) => {
+                  setModal(null);
+                  openIncident(id);
+                }}
+              />
+            ) : modal === "assistance" ? (
+              <AssistanceForm
+                siteId={data.site.id}
+                disabled={disabled}
+                act={act}
+                done={() => {
+                  setModal(null);
+                  navigate("assistance");
+                }}
+              />
+            ) : (
+              <Simulator
+                disabled={disabled}
+                act={act}
+                active={data.site.shift_active}
+                done={(id) => {
+                  setModal(null);
+                  if (id) openCandidate(id);
+                }}
+              />
+            )}
+          </Modal>
+        )}
+      </div>
+    </PilotContext.Provider>
   );
 }
 
@@ -1003,6 +1233,7 @@ function Overview({
   openIncident: (id: string) => void;
   simulator: () => void;
 }) {
+  const pilot = data.mode === "pilot";
   const open = data.incidents.filter((i) => i.status === "OPEN");
   const waiting = data.candidates.filter(
     (c) => c.status === "NEW" || c.status === "ACKNOWLEDGED",
@@ -1017,20 +1248,23 @@ function Overview({
         </div>
         <div>
           <div className="banner-title">
-            Your demonstration workspace is ready.
+            {pilot
+              ? "Start with your pharmacy’s camera view."
+              : "Your demonstration workspace is ready."}
           </div>
           <p>
-            Walk through a shelf observation, review the facts and record an
-            outcome. Every scenario is synthetic.
+            {pilot
+              ? "Open LIVE DETECTION, select the authorised CCTV view and check the camera area. Product-interaction results and review history are kept with that session’s branch. This workspace does not monitor in the background."
+              : "Walk through a shelf observation, review the facts and record an outcome. Every scenario is synthetic."}
           </p>
         </div>
-        {manager && (
+        {(pilot || manager) && (
           <button
             className="button banner-button"
             disabled={disabled}
-            onClick={simulator}
+            onClick={pilot ? () => navigate("live-detection") : simulator}
           >
-            Run a scenario
+            {pilot ? "Open LIVE DETECTION" : "Run a scenario"}
             <ArrowRight size={16} />
           </button>
         )}
@@ -1059,9 +1293,13 @@ function Overview({
           onClick={() => navigate("assistance")}
         />
         <Stat
-          name="Simulated sources ready"
-          value={`${ready}/${data.cameras.length}`}
-          detail="Demo status, not camera coverage"
+          name={pilot ? "Camera readiness" : "Simulated sources ready"}
+          value={pilot ? "Check locally" : `${ready}/${data.cameras.length}`}
+          detail={
+            pilot
+              ? "Verify the selected view before each session"
+              : "Demo status, not camera coverage"
+          }
           icon={Video}
           onClick={() => navigate("cameras")}
         />
@@ -1090,7 +1328,11 @@ function Overview({
           ) : (
             <Empty
               title="The queue is clear"
-              detail="New synthetic observations will appear here when you run a scenario."
+              detail={
+                pilot
+                  ? "Product-interaction results appear in LIVE DETECTION. Use the casebook to record reviewed incidents."
+                  : "New synthetic observations will appear here when you run a scenario."
+              }
             />
           )}
           <div className="panel-bottom">
@@ -1108,7 +1350,13 @@ function Overview({
             <div>
               <span>Workflow shift</span>
               <Badge value={data.site.shift_active ? "OPEN" : "CLOSED"}>
-                {data.site.shift_active ? "Active · demo" : "Paused · demo"}
+                {data.site.shift_active
+                  ? pilot
+                    ? "Active"
+                    : "Active · demo"
+                  : pilot
+                    ? "Paused"
+                    : "Paused · demo"}
               </Badge>
             </div>
             <div>
@@ -1145,8 +1393,9 @@ function Overview({
             </div>
           </div>
           <p className="card-note">
-            Amounts are synthetic recorded values. Recovery is recorded
-            separately and is not a claim of savings.
+            {pilot
+              ? "Amounts reflect staff-entered records. Recovery is recorded separately and is not a claim of savings."
+              : "Amounts are synthetic recorded values. Recovery is recorded separately and is not a claim of savings."}
           </p>
           <button
             className="button secondary full"
@@ -1157,16 +1406,24 @@ function Overview({
                 { active: !data.site.shift_active },
                 {
                   success: data.site.shift_active
-                    ? "Demo workflow paused."
-                    : "Demo workflow activated.",
+                    ? pilot
+                      ? "Workflow paused."
+                      : "Demo workflow paused."
+                    : pilot
+                      ? "Workflow activated."
+                      : "Demo workflow activated.",
                 },
               )
             }
           >
             {data.site.shift_active ? <Pause size={16} /> : <Play size={16} />}{" "}
             {data.site.shift_active
-              ? "Pause demo shift"
-              : "Activate demo shift"}
+              ? pilot
+                ? "Pause workflow shift"
+                : "Pause demo shift"
+              : pilot
+                ? "Activate workflow shift"
+                : "Activate demo shift"}
           </button>
         </Panel>
         <Panel
@@ -1324,6 +1581,7 @@ function Review({
   manager: boolean;
   simulator: () => void;
 }) {
+  const pilot = data.mode === "pilot";
   const [filter, setFilter] = useState("ACTIVE");
   const [query, setQuery] = useState("");
   const filtered = data.candidates.filter(
@@ -1366,7 +1624,7 @@ function Review({
             onChange={(e) => setQuery(e.target.value)}
           />
         </label>
-        {manager && (
+        {manager && !pilot && (
           <button
             className="button secondary"
             disabled={disabled}
@@ -1398,7 +1656,11 @@ function Review({
           ) : (
             <Empty
               title="Nothing in this view"
-              detail="Change the filter, clear your search or run a synthetic scenario."
+              detail={
+                pilot
+                  ? "Change the filter or open LIVE DETECTION to review saved product-interaction results."
+                  : "Change the filter, clear your search or run a synthetic scenario."
+              }
             />
           )}
         </section>
@@ -1418,8 +1680,9 @@ function Review({
             </div>
             <h2>A little context goes a long way.</h2>
             <p>
-              Select an observation to review its source, timing and synthetic
-              evidence before deciding what to do.
+              {pilot
+                ? "Select an observation to review its source and timing before deciding what to do. Product-interaction results are reviewed within LIVE DETECTION."
+                : "Select an observation to review its source, timing and synthetic evidence before deciding what to do."}
             </p>
             <div>
               <span>01 Review the context</span>
@@ -1667,6 +1930,7 @@ function Casebook({
   openCandidate: (id: string) => void;
   create: () => void;
 }) {
+  const pilot = data.mode === "pilot";
   const [filter, setFilter] = useState("ALL");
   const [query, setQuery] = useState("");
   const selected = data.incidents.find((i) => i.id === selectedId);
@@ -1737,7 +2001,9 @@ function Casebook({
                       >
                         <span className="reference">{i.reference}</span>
                         <strong>{i.title}</strong>
-                        <span className="source-tag">Synthetic record</span>
+                        <span className="source-tag">
+                          {pilot ? "Staff record" : "Synthetic record"}
+                        </span>
                       </button>
                     </td>
                     <td>{label(i.classification)}</td>
@@ -1793,6 +2059,7 @@ function CaseDetail({
   back: () => void;
   openCandidate: (id: string) => void;
 }) {
+  const pilot = useContext(PilotContext);
   const [form, setForm] = useDraft(`case:${i.id}`, caseFields(i));
   const [version, setVersion] = useState(i.version);
   const [validation, setValidation] = useState("");
@@ -1877,7 +2144,9 @@ function CaseDetail({
           <ArrowLeft size={17} />
           Back to casebook
         </button>
-        <span className="source-tag">Synthetic case · {i.reference}</span>
+        <span className="source-tag">
+          {pilot ? "Case" : "Synthetic case"} · {i.reference}
+        </span>
         <Badge value={i.status} />
       </div>
       <div className="case-title-row">
@@ -2016,8 +2285,10 @@ function CaseDetail({
                     onChange={(e) => field("notes", e.target.value)}
                   />
                   <span className="field-hint">
-                    Use synthetic facts only. Do not enter patient data or
-                    identifying allegations.
+                    {pilot
+                      ? "Record reviewed facts only."
+                      : "Use synthetic facts only."}{" "}
+                    Do not enter patient data or identifying allegations.
                   </span>
                 </label>
                 <div className="form-columns">
@@ -2351,7 +2622,9 @@ function CaseDetail({
               ? "Close this case"
               : modal === "reopen"
                 ? "Reopen this case"
-                : "Export synthetic case record"
+                : pilot
+                  ? "Export case record"
+                  : "Export synthetic case record"
           }
           onClose={closeModal}
         >
@@ -2386,6 +2659,7 @@ function CaseActionForm({
   act: Act;
   done: (incident: Incident | null) => void;
 }) {
+  const pilot = useContext(PilotContext);
   const [reason, setReason] = useState("");
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -2395,8 +2669,9 @@ function CaseActionForm({
         { expected_version: version, purpose: reason },
         {
           download: true,
-          success:
-            "Synthetic case JSON downloaded. No external recipient was contacted.",
+          success: pilot
+            ? "Case JSON downloaded. No external recipient was contacted."
+            : "Synthetic case JSON downloaded. No external recipient was contacted.",
         },
       );
       if (blob) {
@@ -2426,7 +2701,9 @@ function CaseActionForm({
     <form className="modal-form" onSubmit={submit}>
       <p>
         {kind === "export"
-          ? "This downloads the synthetic structured case, history and integrity digest as JSON. It is not a real video evidence package and is not sent to anyone."
+          ? pilot
+            ? "This downloads the structured case, history and integrity digest as JSON. Video and product-interaction images are not included. Share only through your pharmacy’s authorised process."
+            : "This downloads the synthetic structured case, history and integrity digest as JSON. It is not a real video evidence package and is not sent to anyone."
           : kind === "close"
             ? "Record why this case is ready to close. The reason remains in its history."
             : "Record why this closed case needs further work. The reason remains in its history."}
@@ -2465,6 +2742,7 @@ function ManualForm({
   act: Act;
   done: (id: string) => void;
 }) {
+  const pilot = useContext(PilotContext);
   const [form, setForm] = useDraft(`manual:${siteId}`, {
     title: "",
     notes: "",
@@ -2482,8 +2760,9 @@ function ManualForm({
   return (
     <form className="modal-form" onSubmit={submit}>
       <div className="notice">
-        Manual records work independently of the demo shift and observation
-        queue. Use synthetic details only.
+        {pilot
+          ? "Record relevant, reviewed facts for this pharmacy. Manual records work independently of detection and the workflow shift. Do not enter patient records or unnecessary personal details."
+          : "Manual records work independently of the demo shift and observation queue. Use synthetic details only."}
       </div>
       <label>
         Case title
@@ -2526,6 +2805,7 @@ function AssistanceForm({
   act: Act;
   done: () => void;
 }) {
+  const pilot = useContext(PilotContext);
   const [reason, setReason] = useDraft(`assistance:${siteId}`, "");
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -2544,8 +2824,9 @@ function AssistanceForm({
       <div className="notice amber">
         <Bell size={18} />
         <span>
-          This records a request in the demo workspace. It does not call
-          emergency services, send a message or sound an external alarm.
+          {pilot
+            ? "This records a request in this installation for the active branch. Contact a colleague directly when help is needed; it does not send a notification to another laptop or call emergency services."
+            : "This records a request in the demo workspace. It does not call emergency services, send a message or sound an external alarm."}
         </span>
       </div>
       <label>
@@ -2695,6 +2976,7 @@ function Cameras({
   disabled: boolean;
   simulator: () => void;
 }) {
+  const pilot = data.mode === "pilot";
   const [sound, setSound] = useState("");
   async function soundTest() {
     try {
@@ -2725,17 +3007,21 @@ function Cameras({
       <div className="notice amber">
         <Monitor size={19} />
         <span>
-          These are simulated source states. Live RTSP/ONVIF connections and
-          continuous detection are not connected in this prototype. Existing
-          equipment must pass compatibility and laptop workload checks.
+          {pilot
+            ? "Connect an authorised CCTV browser tab, app window, screen, supported camera or recording in LIVE DETECTION. Native RTSP/ONVIF ingestion is not configured here. Check each view and laptop before relying on alerts."
+            : "These are simulated source states. Live RTSP/ONVIF connections and continuous detection are not connected in this prototype. Existing equipment must pass compatibility and laptop workload checks."}
         </span>
       </div>
       <div className="readiness-header">
         <div>
           <h2>Existing laptop. Existing cameras.</h2>
-          <p>First pilot: one Windows laptop and one Mac. No new hardware.</p>
+          <p>
+            {pilot
+              ? "Six-pharmacy rollout: existing Windows and Mac laptops. Qualify each installation."
+              : "First pilot: one Windows laptop and one Mac. No new hardware."}
+          </p>
         </div>
-        {manager && (
+        {manager && !pilot && (
           <button
             className="button secondary"
             disabled={disabled}
@@ -2746,6 +3032,14 @@ function Cameras({
           </button>
         )}
       </div>
+      {pilot && !data.cameras.length && (
+        <div className="panel">
+          <Empty
+            title="No camera view has been registered"
+            detail="Open LIVE DETECTION to select and test the CCTV view available on this laptop. A camera on a separate monitor needs an existing supported route to this laptop; the monitor alone is not a video connection."
+          />
+        </div>
+      )}
       <div className="camera-grid">
         {data.cameras.map((camera) => (
           <CameraCard key={camera.id} camera={camera} />
@@ -2754,7 +3048,7 @@ function Cameras({
       <div className="overview-grid readiness-bottom">
         <Panel
           title="Laptop readiness"
-          description="These prerequisites need to be checked on both pilot laptops."
+          description="Check these prerequisites on each pharmacy laptop."
         >
           <ol className="readiness-list">
             <li>
@@ -2799,8 +3093,9 @@ function Cameras({
               <Volume2 size={30} />
             </div>
             <p>
-              Test the browser sound while a colleague is present. No sounds
-              play automatically in this prototype.
+              Test the browser sound while a colleague is present. This short
+              readiness tone does not arm live alarms; configure and test those
+              in LIVE DETECTION.
             </p>
             <button
               className="button secondary"
@@ -2929,6 +3224,7 @@ function ActivityPage({ data }: { data: Bootstrap }) {
   );
 }
 function Settings({ data }: { data: Bootstrap }) {
+  const pilot = data.mode === "pilot";
   return (
     <div className="settings-grid">
       <Panel
@@ -2955,7 +3251,9 @@ function Settings({ data }: { data: Bootstrap }) {
           <div>
             <dt>Data mode</dt>
             <dd>
-              <Badge value="SIMULATOR">Synthetic prototype</Badge>
+              <Badge value={pilot ? "LOCAL" : "SIMULATOR"}>
+                {pilot ? "Local pilot · named accounts" : "Synthetic prototype"}
+              </Badge>
             </dd>
           </div>
         </dl>
@@ -2983,7 +3281,7 @@ function Settings({ data }: { data: Bootstrap }) {
           <span>Human review remains central</span>
         </div>
         <span className="subscription-note">
-          Prototype only · no payment processing · tax treatment to be agreed
+          No payment processing · tax treatment to be agreed
         </span>
       </section>
       <Panel
@@ -3017,24 +3315,37 @@ function Settings({ data }: { data: Bootstrap }) {
         <div className="notice">
           <FileText size={18} />
           <span>
-            The current engine is a deterministic{" "}
-            <strong>local template</strong>. It performs no AI inference and
-            makes no paid provider calls.
+            Case report drafts use a deterministic{" "}
+            <strong>local template</strong>. Optional product-interaction
+            analysis in LIVE DETECTION uses the separately configured local
+            vision model. Neither makes paid cloud-provider calls.
           </span>
         </div>
         <p className="settings-note">
-          Provider AI, atomic spend reservation and measured detector accuracy
-          belong to later implementation stages. No identity recognition, intent
-          prediction or automated criminal finding is included.
+          Measure detection quality on authorised pharmacy footage before
+          relying on alerts. No identity recognition, intent prediction or
+          automated criminal finding is included.
         </p>
       </Panel>
       <Panel
-        title="Prototype boundaries"
-        description="What needs to be qualified before a real pharmacy pilot."
+        title={
+          pilot
+            ? "Local installation and rollout checks"
+            : "Prototype boundaries"
+        }
+        description="What needs to be qualified before pharmacy use."
       >
         <ul className="boundary-list">
-          <li>Production identity and multi-factor authentication</li>
-          <li>Production database isolation, retention and recovery</li>
+          <li>
+            {pilot
+              ? "Named accounts are local; multi-factor authentication is not enabled"
+              : "Production identity and multi-factor authentication"}
+          </li>
+          <li>
+            {pilot
+              ? "Branch permissions apply in this installation; other laptops are not synchronised"
+              : "Production database isolation, retention and recovery"}
+          </li>
           <li>Real camera compatibility and source reliability</li>
           <li>Signed Windows and Mac installers with site testing</li>
           <li>Measured local detection and human review performance</li>
@@ -3042,7 +3353,11 @@ function Settings({ data }: { data: Bootstrap }) {
         </ul>
         <div className="panel-bottom">
           <ShieldCheck size={15} />
-          <span>Demo accounts are public. Use synthetic records only.</span>
+          <span>
+            {pilot
+              ? "Managers can add users and manage branch access from Administration."
+              : "Demo accounts are public. Start a protected pilot workspace to create individual pharmacy accounts."}
+          </span>
         </div>
       </Panel>
     </div>

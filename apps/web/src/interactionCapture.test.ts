@@ -5,6 +5,7 @@ import {
   safeInteractionFrameUrl,
   interactionCropPixels,
   captureInteractionFrame,
+  InteractionAlarmCommission,
 } from "./interactionCapture";
 
 describe("camera and aisle area sampling", () => {
@@ -223,6 +224,65 @@ describe("product attention alarm freshness", () => {
         result: { ...input.result, ...override },
       }),
     ).toBe(false);
+  });
+});
+
+describe("staff product alarm commissioning", () => {
+  const context = "branch-one:run-one:camera-one:crop-one:volume-one";
+  function commissioned(recorded = false) {
+    const gate = new InteractionAlarmCommission();
+    const test = gate.beginTest(context);
+    expect(gate.finishTest(test, context, 1000)).toBe(true);
+    expect(gate.confirm(context, 2000)).toBe(true);
+    expect(gate.arm(context, recorded)).toBe(true);
+    return gate;
+  }
+  it("cannot arm from browser audio activation without a staff confirmation", () => {
+    const gate = new InteractionAlarmCommission();
+    const test = gate.beginTest(context);
+    gate.finishTest(test, context, 1000);
+    expect(gate.arm(context, true)).toBe(false);
+    expect(gate.claim(context, "job-one", "CAMERA")).toBe(false);
+  });
+  it("ignores late sound activation after stopping or starting a newer test", () => {
+    const gate = new InteractionAlarmCommission();
+    const old = gate.beginTest(context);
+    gate.invalidate();
+    expect(gate.finishTest(old, context, 1000)).toBe(false);
+    const latest = gate.beginTest(context);
+    expect(gate.currentTest(old, context)).toBe(false);
+    expect(gate.finishTest(old, context, 1000)).toBe(false);
+    expect(gate.finishTest(latest, context, 1000)).toBe(true);
+  });
+  it("requires a timely sound confirmation for the exact source context", () => {
+    const gate = new InteractionAlarmCommission();
+    const test = gate.beginTest(context);
+    gate.finishTest(test, context, 1000);
+    expect(gate.confirm(context, 61001)).toBe(false);
+    expect(gate.confirm("new-source", 2000)).toBe(false);
+    expect(gate.confirm(context, NaN)).toBe(false);
+    expect(gate.confirm(context, 999)).toBe(false);
+  });
+  it("requires separate recorded-video consent and never repeats the same job", () => {
+    const gate = commissioned();
+    expect(gate.claim(context, "recorded-job", "RECORDED_VIDEO")).toBe(false);
+    expect(gate.claim(context, "live-job", "CAMERA")).toBe(true);
+    expect(gate.claim(context, "live-job", "CAMERA")).toBe(false);
+    expect(gate.claim("new-run", "next-job", "CAMERA")).toBe(false);
+    gate.arm(context, true);
+    expect(gate.claim(context, "recorded-job", "RECORDED_VIDEO")).toBe(true);
+  });
+  it("disarms on invalidation and retains delivered IDs through recommissioning", () => {
+    const gate = commissioned();
+    gate.claim(context, "job-one", "CAMERA");
+    gate.invalidate();
+    expect(gate.claim(context, "job-two", "CAMERA")).toBe(false);
+    const test = gate.beginTest(context);
+    gate.finishTest(test, context, 5000);
+    gate.confirm(context, 6000);
+    gate.arm(context, false);
+    expect(gate.claim(context, "job-one", "CAMERA")).toBe(false);
+    expect(gate.claim(context, "job-two", "CAMERA")).toBe(true);
   });
 });
 

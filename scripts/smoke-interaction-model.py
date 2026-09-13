@@ -10,7 +10,9 @@ import argparse
 import base64
 import io
 import json
+import os
 from pathlib import Path
+import secrets
 import sys
 import tempfile
 import time
@@ -28,6 +30,7 @@ BASE = "http://127.0.0.1:8765"
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mode", choices=["synthetic", "pilot"], default="synthetic")
     args = parser.parse_args()
     frames = []
     for index in range(4):
@@ -37,11 +40,19 @@ def main():
         frame.save(stream, "JPEG")
         frames.append({"at_seconds": index * 1.25, "jpeg_base64": base64.b64encode(stream.getvalue()).decode()})
     with tempfile.TemporaryDirectory(prefix="aisle-vision-smoke-") as temp:
-        app = create_app(Path(temp) / "smoke.db", Path(temp) / "web")
+        directory = Path(temp).resolve()
+        app = create_app(directory / "smoke.db", directory / "web", mode=args.mode)
+        email, password = "manager@harbour.demo", "AisleDemo!2026"
+        if args.mode == "pilot":
+            from services.api.pilot_identity import initialise
+            email, password = "smoke@example.invalid", secrets.token_urlsafe(32)
+            initialise(app.state.store, "Synthetic smoke group", "Synthetic smoke branch",
+                       email, "Synthetic smoke operator", password)
         with TestClient(app, base_url=BASE, headers={"Origin": BASE}) as client:
-            response = client.post("/api/login", json={"email": "manager@harbour.demo", "password": "AisleDemo!2026"})
+            response = client.post("/api/login", json={"email": email, "password": password})
             assert response.status_code == 200, "Smoke login failed"
             client.headers["X-CSRF-Token"] = response.json()["csrf_token"]
+            client.headers["X-AisleSignals-Site"] = response.json()["current_site_id"]
             status = client.get("/api/interactions/status").json()
             assert status["ready"], status["message"]
             started = time.monotonic()
@@ -62,6 +73,9 @@ def main():
             assert item["action"] == "UNCLEAR", "Geometry was misclassified; inspect the model before proceeding"
             assert item["person_visible"] is False and item["alarm_eligible"] is False
             assert len(item["frames"]) == 4
+            if args.mode == "pilot":
+                from services.api.evidence_crypto import MAGIC
+                assert (app.state.interactions.directory(item_id) / "0.jpg").read_bytes().startswith(MAGIC)
             for frame in item["frames"]:
                 image = client.get(frame["url"])
                 assert image.status_code == 200 and image.content.startswith(b"\xff\xd8")
@@ -71,6 +85,8 @@ def main():
             assert client.get(item["frames"][0]["url"]).status_code == 404
             report = {
                 "test": "real-model-api-negative-control",
+                "workspace_mode": args.mode,
+                "encrypted_evidence_verified": args.mode == "pilot",
                 "input": "Four generated frames of a moving rectangle; no people, no products",
                 "model_executed": True, "pharmacy_accuracy_evaluated": False,
                 "wall_seconds": round(time.monotonic() - started, 3),
@@ -79,6 +95,8 @@ def main():
             }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
+    if os.name != "nt":
+        args.output.chmod(0o600)
     print(json.dumps(report, indent=2))
 
 

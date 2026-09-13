@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "api_port": 8765,
+  "vision_port": 11435,
+  "data_dir": ".local/pilot",
+  "vision_runtime_dir": ".local/vision-runtime",
+  "vision_enabled": true,
+  "model_start_timeout_seconds": 120,
+  "restart_limit": 2
+}

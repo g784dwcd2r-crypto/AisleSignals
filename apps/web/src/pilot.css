@@ -1,0 +1,53 @@
+.pilot-branch-picker {
+  padding: 0 18px 20px;
+}
+.pilot-branch-picker label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 7px;
+}
+.pilot-branch-picker select {
+  width: 100%;
+  min-height: 42px;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid #d9e1dc;
+  border-radius: 8px;
+  background: white;
+  color: #203b30;
+}
+.pilot-branch-picker p {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #65736d;
+  margin: 7px 0 0;
+}
+.pilot-login-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 24px;
+  color: #5b6e65;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.pilot-login-note svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.pilot-login-note p {
+  margin: 0;
+}
+.pilot-setup {
+  display: block;
+  margin-bottom: 20px;
+}
+.pilot-setup p {
+  margin: 8px 0;
+}
+.pilot-setup code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}

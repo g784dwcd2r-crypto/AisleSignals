@@ -129,7 +129,40 @@
   font-size: 11px;
   color: #576e5b;
 }
+.interaction-commission,
+.interaction-evidence-policy {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid #9bb39e;
+  border-radius: 8px;
+  background: #fffef9;
+}
+.interaction-commission legend,
+.interaction-evidence-policy strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: #295538;
+}
+.interaction-commission p,
+.interaction-evidence-policy p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #405946;
+}
+.interaction-commission-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
 .interaction-alert {
+  position: fixed;
+  bottom: 14px;
+  right: 18px;
+  z-index: 70;
+  width: min(820px, calc(100vw - 36px));
+  box-sizing: border-box;
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 15px;
@@ -138,6 +171,13 @@
   color: white;
   padding: 17px;
   margin: 18px 0;
+  box-shadow: 0 4px 24px #39180c55;
+  border: 2px solid #fff5dc;
+}
+.interaction-alert button {
+  color: #582618;
+  background: #fffaf0;
+  border-color: #e0ac94;
 }
 .interaction-alert > div {
   flex: 1;

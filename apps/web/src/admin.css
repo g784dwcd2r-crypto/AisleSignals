@@ -1,0 +1,194 @@
+.pharmacy-setup {
+  margin-top: 24px;
+}
+.pharmacy-setup h3 {
+  font-size: 19px;
+  color: #284c3e;
+}
+.pharmacy-setup > p {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #52665c;
+}
+.pharmacy-setup .button {
+  margin-top: 12px;
+}
+.pharmacy-admin {
+  padding: 24px;
+  background: #fffcf7;
+  border: 1px solid #d6e0d6;
+  border-radius: 14px;
+}
+.admin-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: #365944;
+}
+.admin-intro svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.admin-intro p {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 14px;
+  max-width: 840px;
+}
+.admin-toolbar,
+.admin-account-actions,
+.admin-form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+}
+.admin-branches {
+  margin: 28px 0;
+}
+.admin-branches h2,
+.admin-account-heading h2 {
+  font-size: 17px;
+}
+.admin-branch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.admin-branch-list > span {
+  border: 1px solid #ccdbc9;
+  padding: 12px 16px;
+  border-radius: 9px;
+  background: #eef4e9;
+  font-size: 13px;
+  color: #284d3a;
+}
+.admin-branch-list small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.admin-account-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.admin-account-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.admin-account-heading label {
+  max-width: 320px;
+  flex: 1;
+  min-width: 200px;
+}
+.admin-account-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  margin-top: 18px;
+}
+.admin-account {
+  padding: 20px;
+  border-radius: 10px;
+  border: 1px solid #d3ded2;
+  background: white;
+}
+.admin-account-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-account h3 {
+  font-size: 15px;
+  margin: 0;
+  color: #244837;
+}
+.admin-account p {
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.admin-account ul {
+  padding-left: 18px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.admin-account .button {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.admin-hint {
+  color: #52665c;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.admin-dialog {
+  width: min(640px, calc(100vw - 28px));
+}
+.admin-form {
+  padding: 20px 24px;
+}
+.admin-form label {
+  margin-bottom: 16px;
+}
+.admin-target {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f0f5eb;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.admin-form-actions {
+  justify-content: flex-end;
+}
+.admin-grants {
+  margin: 16px 0;
+  padding: 13px;
+  border: 1px solid #c8d8c7;
+  border-radius: 8px;
+}
+.admin-grants legend {
+  color: #365442;
+  font-size: 13px;
+  font-weight: 700;
+}
+.admin-grant-row {
+  padding: 10px 0;
+  border-bottom: 1px solid #e1e9dc;
+}
+.admin-grant-row:last-child {
+  border-bottom: 0;
+}
+.admin-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.admin-check input {
+  width: auto;
+  margin: 0;
+}
+@media (max-width: 900px) {
+  .admin-account-list {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .pharmacy-admin {
+    padding: 16px;
+  }
+  .admin-form {
+    padding: 16px;
+  }
+  .admin-account-title {
+    flex-wrap: wrap;
+  }
+}

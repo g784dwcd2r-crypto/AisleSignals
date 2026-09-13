@@ -197,9 +197,13 @@ def public_observation(observation: ModelObservation, count: int) -> dict:
 
 
 class VisionProvider:
-    """Ollama adapter. Local model installation is separate from readiness."""
+    """Loopback vision adapter. Installation is separate from readiness."""
 
     def __init__(self, url=None, model=None):
+        # A casework-only launcher must never discover an unrelated model that
+        # happens to start later on this port. Disabled instances stay disabled
+        # for their whole lifetime, even if the process environment changes.
+        self.disabled = os.environ.get("AISLESIGNALS_VISION_DISABLED") == "1"
         supplied = url or os.environ.get(
             "AISLESIGNALS_VISION_URL", "http://127.0.0.1:11435"
         )
@@ -237,7 +241,7 @@ class VisionProvider:
         self.model_digest = os.environ.get("AISLESIGNALS_VISION_MODEL_DIGEST") or None
         self.token = os.environ.get("AISLESIGNALS_VISION_TOKEN", "")
         token_file = os.environ.get("AISLESIGNALS_VISION_TOKEN_FILE")
-        if token_file:
+        if token_file and not self.disabled:
             try:
                 self.token = Path(token_file).read_text().strip()
             except OSError:
@@ -249,10 +253,19 @@ class VisionProvider:
         ):
             raise ValueError("The local vision token has an unsupported format.")
 
+    def is_disabled(self):
+        return self.disabled or os.environ.get("AISLESIGNALS_VISION_DISABLED") == "1"
+
+    def require_enabled(self):
+        if self.is_disabled():
+            raise VisionError("Interaction analysis is disabled for this application session.")
+
     def _request(self, method, path, *, payload=None, inference=False):
+        self.require_enabled()
         limit = 32_768 if inference else 524_288
 
         async def perform():
+            self.require_enabled()
             headers = {"Accept-Encoding": "identity"}
             if self.token:
                 headers["Authorization"] = "Bearer " + self.token
@@ -307,6 +320,14 @@ class VisionProvider:
             ) from None
 
     def status(self):
+        if self.is_disabled():
+            return {
+                "ready": False,
+                "model": self.model,
+                "model_digest": self.model_digest,
+                "mode": "disabled",
+                "message": "Interaction analysis is disabled for this application session. Restart with an available configured model to enable it.",
+            }
         try:
             response = self._request(
                 "GET", "/v1/models" if self.backend == "llamacpp" else "/api/tags"
@@ -351,6 +372,7 @@ class VisionProvider:
             }
 
     def analyze(self, frames: list[tuple[float, bytes]]) -> dict:
+        self.require_enabled()
         frames = validate_frames(frames)
         started = time.monotonic()
         frame_times = ", ".join(

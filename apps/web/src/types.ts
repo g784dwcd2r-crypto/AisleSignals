@@ -1,5 +1,27 @@
 export type Role = "MANAGER" | "REVIEWER";
 export type User = { id: string; name: string; email: string; role: Role };
+export type RuntimeMode = "synthetic" | "pilot";
+export type Runtime = {
+  mode: RuntimeMode;
+  setup_required: boolean;
+  local_only: boolean;
+  authentication: "local_named_password" | "synthetic_demo";
+  mfa_enabled: boolean;
+};
+export type AllowedSite = {
+  id: string;
+  name: string;
+  organisation_id: string;
+  organisation_name: string;
+  role: Role;
+};
+export type Session = {
+  user: User;
+  csrf_token: string;
+  mode: RuntimeMode;
+  current_site_id: string;
+  allowed_sites: AllowedSite[];
+};
 export type Site = {
   id: string;
   name: string;
@@ -104,6 +126,9 @@ export type Budget = {
   cloud_enabled: boolean;
 };
 export type Bootstrap = {
+  mode?: RuntimeMode;
+  current_site_id?: string;
+  allowed_sites?: AllowedSite[];
   user: User;
   site: Site;
   cameras: Camera[];
@@ -122,4 +147,5 @@ export type Page =
   | "cameras"
   | "video-test"
   | "activity"
+  | "administration"
   | "settings";

@@ -1,10 +1,10 @@
 # AisleSignals
 
-A working first prototype for pharmacy incident review, evidence context and staff assistance. Built for Jawahir Q. by Codex and specialist agents.
+A local pharmacy application for video review, experimental interaction analysis, incident records and staff assistance. Built for Jawahir Q. by Codex and specialist agents. The protected release targets a supervised six-pharmacy rollout; individual laptop and camera acceptance is still required.
 
 **€60 per pharmacy branch per month. Existing Windows or Mac laptop. No hardware purchases.**
 
-This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly selected CCTV window, browser camera or recording → local body-pose inference → experimental temporal rules → laptop attention alarm and saved event metadata. The pharmacy case workflow retains clearly labelled synthetic observations, isolated demonstration organisations and manager/reviewer permissions. This is an experimental prototype, not a validated pharmacy theft detector. [Live Detection guide](docs/prototype/live-detection.md).
+This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly selected CCTV window, browser camera or recording → local inference → observable-action suggestions → separately enabled laptop attention alarms and saved review records. **Pilot mode** uses named accounts, branch permissions and a separate empty database. **Demo mode** retains the clearly labelled synthetic observations and public demonstration accounts. Interaction recognition remains experimental and has not been validated as a pharmacy theft detector. [Live Detection guide](docs/prototype/live-detection.md).
 
 **Product interaction analysis is now implemented:** an optional local Qwen3-VL model examines chronological sampled frames for product pickup, return, basket placement, possible concealment or insufficient evidence. Results include private frame evidence, staff feedback, deletion and a separately enabled experimental attention alarm. The model is pretrained and has not been validated on the client pharmacies. [Setup and operator guide](docs/prototype/product-interactions.md) · [Evaluation workflow](docs/prototype/interaction-evaluation.md). The owner relaxed the development budget for this work; no paid service or hardware was purchased.
 
@@ -12,7 +12,26 @@ This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly se
 
 **Earlier verified desktop build:** [all six GitHub jobs passed](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616), including Windows x64 and Mac arm64 executable startup and login. Those historical artifacts predate Live Detection; use the current source build or a newer successfully verified workflow run for this feature.
 
-## Start the prototype
+## Start the protected local release
+
+Read the [six-pharmacy release plan](docs/release/tuesday-release-plan.md), [installation guide](deployment/README.md), [named account setup](docs/release/pilot-identity.md) and [platform support record](docs/release/platform-support.md). Start with a separate pilot database; changing an environment variable cannot convert demonstration data into client data.
+
+From a prepared source checkout:
+
+```sh
+.venv/bin/python scripts/run_pilot.py accounts --help
+.venv/bin/python scripts/run_pilot.py model-setup --help
+.venv/bin/python scripts/run_pilot.py --check
+.venv/bin/python scripts/run_pilot.py
+```
+
+On Windows, use `.venv\Scripts\python.exe`. The unsigned `AisleSignalsPilot` executable includes the same commands, plus `backup --help` and `rollout --help`, without a separate Python installation. On first launch in an interactive terminal, enter its private 15-minute setup code in the browser and create your owner account. After signing in, open **Administration** to add branches and named users, assign manager/reviewer access, disable accounts or reset passphrases. Sensitive changes require your manager passphrase. No default pilot password exists. See [browser administration](docs/release/pilot-administration.md).
+
+The foreground launcher starts its own API/model processes, bounds recovery attempts and requires restart after detected sleep. Casework and administration can run with `--casework-only` while the model is unavailable.
+
+Branch switching applies to memberships within one local installation. It does not synchronise records between the six laptops. Automatic unattended monitoring, a central hosted dashboard, managed MFA and signed distribution remain separate work.
+
+## Start the demonstration
 
 From a checkout with Python 3.12 and Node.js 24 LTS:
 
@@ -48,13 +67,14 @@ After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the sour
 - Request assistance and distinguish acknowledgement from arrival.
 - Exercise missing media, historical observations, frozen/offline sources and recovery using the manager simulator.
 - Inspect branch pricing, the proposed €5 AI budget, camera-readiness limitations and scoped audit activity.
+- In a protected workspace, use **Administration** to manage named staff and their branch access. Demo accounts cannot use administration.
 
 Writes are transactional and versioned. Server-side checks enforce site/organisation access, roles, session expiry, CSRF, origin/host restrictions, input validation and duplicate-request protection. The browser shows errors, preserves unsaved input during a connection failure and requires explicit conflict reconciliation.
 
 ## Build and verify
 
 ```sh
-.venv/bin/python -m pytest tests/api tests/companion -q
+.venv/bin/python -m pytest tests packaging/test_bundle_integrity.py -q
 npm ci
 npm run build
 npm run test:web
@@ -82,7 +102,7 @@ Run `npm ci --prefix apps/web` first if the setup script has not installed inter
 
 The clarified core product is **automatic CCTV monitoring** across a browser viewer, desktop CCTV app or existing recorder. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines the full target. The implemented Live Detection slice supports browser-mediated screen/device input and local files, local pose inference, observable rules and laptop alarms. Direct recorder/RTSP adapters, validated concealment classification, automatic grid tiling and evidence clips remain future work. The pharmacy review queue remains synthetic.
 
-The prototype uses local SQLite and public demo accounts to make the workflow testable now. Production remains the documented React/FastAPI/PostgreSQL design with managed MFA, qualified camera integration, encrypted evidence lifecycle, signed Windows/Mac companion packages and actual site acceptance. The prototype's `/api` is a documented implementation slice, not completion of the full planned `/v1` contract.
+The local release uses SQLite and offers a protected pilot workspace alongside the separate demonstration. The broader production design still requires managed MFA, qualified camera integration, signed distribution, a configured central service if needed, and actual site acceptance. The local `/api` does not implement the entire planned `/v1` contract.
 
 Monitoring on the existing laptop will require it to remain powered on and awake. Camera/recorder interfaces must be qualified; universal compatibility is not promised. There is no automatic facial recognition, shared watchlist, person-level criminality prediction, clinical decision or door-lock control. This build makes no paid model calls or customer charges.
 

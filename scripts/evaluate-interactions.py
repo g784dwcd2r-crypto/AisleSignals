@@ -12,11 +12,13 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import statistics
 import sys
 import time
+import tempfile
 from datetime import datetime, timezone
 
 
@@ -31,7 +33,12 @@ CLASSES = (
 SPLITS = ("train", "validation", "test")
 NORMAL_CLASSES = set(CLASSES) - {"POSSIBLE_CONCEALMENT", "UNCLEAR"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
-VERSION = "interaction-evaluator-v1"
+VERSION = "interaction-evaluator-v2"
+SCENARIOS = (
+    "ORDINARY_BROWSING", "PICKUP", "RETURN", "BASKET_PLACEMENT",
+    "STAGED_CONCEALMENT", "PHONE_OR_BAG_HANDLING", "STAFF_RESTOCKING",
+    "OCCLUSION", "MULTIPLE_PEOPLE",
+)
 
 
 class EvaluationError(ValueError):
@@ -94,6 +101,8 @@ def validate_manifest(manifest, root: Path):
         require(isinstance(session, dict), "Sessions must be objects")
         sid = identifier(session.get("id"), "session")
         require(sid not in by_session, "Duplicate session id")
+        if "site_id" in session:
+            identifier(session["site_id"], "site")
         split = session.get("split")
         require(split in SPLITS, "Unknown session split")
         for kind in ("camera", "day"):
@@ -124,6 +133,8 @@ def validate_manifest(manifest, root: Path):
         require(time_range not in time_ranges, "Duplicate source window")
         time_ranges.add(time_range)
         require(window.get("label") in CLASSES, "Unknown ground-truth class")
+        if "scenario" in window:
+            require(window["scenario"] in SCENARIOS, "Unknown evaluation scenario")
         if session["source_kind"] == "NORMAL_OBSERVATION":
             require(window["label"] in NORMAL_CLASSES, "Normal observation sessions require adjudicated normal ground truth")
         people = window.get("person_ids")
@@ -194,13 +205,26 @@ def summarize_timings(values):
     }
 
 
-def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=30):
-    by_session = validate_manifest(manifest, root)
-    require(split in SPLITS, "Unknown evaluation split")
-    number(cooldown_seconds, "alarm cooldown", maximum=3600)
-    windows = [w for w in manifest["windows"] if by_session[w["session_id"]]["split"] == split]
-    require(windows, "Selected split contains no windows")
-    found = validate_predictions(predictions, windows)
+def alarm_metrics(windows, found):
+    """Measure the routing rule separately from the predicted action label."""
+    support = sum(w["label"] == "POSSIBLE_CONCEALMENT" for w in windows)
+    true_positive = sum(w["label"] == "POSSIBLE_CONCEALMENT" and found[w["id"]]["alarm_eligible"] for w in windows)
+    false_positive = sum(w["label"] in NORMAL_CLASSES and found[w["id"]]["alarm_eligible"] for w in windows)
+    unresolved = sum(w["label"] == "UNCLEAR" and found[w["id"]]["alarm_eligible"] for w in windows)
+    return {
+        "concealment_label_support": support,
+        "eligible_on_concealment_label": true_positive,
+        "concealment_eligibility_recall": true_positive / support if support else None,
+        "eligible_on_resolved_normal_labels": false_positive,
+        "eligible_precision_on_resolved_labels": true_positive / (true_positive + false_positive) if true_positive + false_positive else None,
+        "eligible_on_unclear_labels": unresolved,
+        "physical_alarm_delivery_tested": False,
+        "confidence_interval": None,
+        "uncertainty_note": "Counts are descriptive for these sampled windows. Overlapping windows and repeated actors are dependent; no population-accuracy or independence assumption is made.",
+    }
+
+
+def classification_metrics(windows, found):
     matrix = {actual: {predicted: 0 for predicted in CLASSES} for actual in CLASSES}
     for window in windows:
         matrix[window["label"]][found[window["id"]]["action"]] += 1
@@ -212,6 +236,114 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
         metrics[label] = {"support": support, "predicted": predicted, "true_positive": tp,
                           "precision": tp / predicted if predicted else None,
                           "recall": tp / support if support else None}
+    return matrix, metrics
+
+
+def validate_coverage_plan(plan):
+    require(isinstance(plan, dict) and plan.get("schema_version") == "1.0", "Expected coverage plan schema_version 1.0")
+    identifier(plan.get("plan_id"), "coverage plan")
+    require(plan.get("declared_before_test") is True, "Declare a coverage plan before viewing test predictions")
+    identifier(plan.get("owner_reference"), "coverage plan owner reference")
+    branches = plan.get("branches")
+    require(isinstance(branches, list) and 1 <= len(branches) <= 100, "Coverage plan requires 1 to 100 branches")
+    sites = set()
+    for branch in branches:
+        require(isinstance(branch, dict), "Coverage plan branches must be objects")
+        site_id = identifier(branch.get("site_id"), "coverage site")
+        require(site_id not in sites, "Duplicate coverage site")
+        sites.add(site_id)
+        counts = branch.get("minimum_successful_windows_per_class")
+        require(isinstance(counts, dict) and set(counts) == set(CLASSES), "Coverage plan must specify all six class minimums")
+        for count in counts.values():
+            require(type(count) is int and 1 <= count <= 100000, "Class minimums must be positive integers")
+        scenarios = branch.get("minimum_successful_windows_per_scenario")
+        require(isinstance(scenarios, dict) and scenarios and set(scenarios) <= set(SCENARIOS), "Coverage plan must specify supported scenarios")
+        for count in scenarios.values():
+            require(type(count) is int and 1 <= count <= 100000, "Scenario minimums must be positive integers")
+        for field in ("minimum_recordings", "minimum_days", "minimum_cameras"):
+            require(type(branch.get(field)) is int and 1 <= branch[field] <= 100000, "Recording, day and camera minimums must be positive integers")
+        number(branch.get("minimum_normal_camera_hours"), "minimum normal camera-hours", minimum=0.001, maximum=100000)
+    return sites
+
+
+def coverage_report(plan, by_session, windows, found, included_normal_sessions, cooldown_seconds):
+    planned_sites = validate_coverage_plan(plan)
+    reports = []
+    for branch in plan["branches"]:
+        site_id = branch["site_id"]
+        selected = [w for w in windows if by_session[w["session_id"]].get("site_id") == site_id]
+        successful = [w for w in selected if found[w["id"]]["status"] == "OK"]
+        sessions = {w["session_id"]: by_session[w["session_id"]] for w in successful}
+        class_counts = {label: sum(w["label"] == label for w in successful) for label in CLASSES}
+        scenario_counts = {scenario: sum(w.get("scenario") == scenario for w in successful) for scenario in SCENARIOS}
+        normal_hours = sum(by_session[sid]["duration_seconds"] for sid in included_normal_sessions if by_session[sid].get("site_id") == site_id) / 3600
+        normal_alarms = 0
+        for sid in included_normal_sessions:
+            if by_session[sid].get("site_id") != site_id:
+                continue
+            last_alarm = -math.inf
+            for window in sorted((w for w in selected if w["session_id"] == sid), key=lambda value: value["end_seconds"]):
+                if found[window["id"]]["alarm_eligible"] and window["end_seconds"] - last_alarm >= cooldown_seconds:
+                    normal_alarms += 1
+                    last_alarm = window["end_seconds"]
+        matrix, metrics = classification_metrics(selected, found)
+        actual = {
+            "minimum_recordings": len(sessions),
+            "minimum_days": len({s["day_id"] for s in sessions.values()}),
+            "minimum_cameras": len({s["camera_id"] for s in sessions.values()}),
+            "minimum_normal_camera_hours": normal_hours,
+        }
+        missing = []
+        for field, count in actual.items():
+            if count < branch[field]:
+                missing.append({"check": field, "required": branch[field], "observed": count})
+        for label, minimum in branch["minimum_successful_windows_per_class"].items():
+            if class_counts[label] < minimum:
+                missing.append({"check": "class:" + label, "required": minimum, "observed": class_counts[label]})
+        for scenario, minimum in branch["minimum_successful_windows_per_scenario"].items():
+            if scenario_counts[scenario] < minimum:
+                missing.append({"check": "scenario:" + scenario, "required": minimum, "observed": scenario_counts[scenario]})
+        errors = len(selected) - len(successful)
+        if errors:
+            missing.append({"check": "inference_errors", "required": 0, "observed": errors})
+        reports.append({
+            "site_id": site_id,
+            "status": "NOT_RUN" if not selected else "INSUFFICIENT" if missing else "SUFFICIENT_FOR_REVIEW",
+            "window_count": len(selected), "inference_errors": errors,
+            "successful_class_support": class_counts,
+            "successful_scenario_support": scenario_counts,
+            "successful_recording_count": len(sessions),
+            "measured_covered_normal_camera_hours": normal_hours,
+            "simulated_false_alarm_episodes": normal_alarms,
+            "simulated_false_alarms_per_camera_hour": normal_alarms / normal_hours if normal_hours else None,
+            "confusion_matrix_actual_rows_predicted_columns": matrix,
+            "per_class": metrics,
+            "abstention_rate": sum(found[w["id"]]["action"] == "UNCLEAR" for w in selected) / len(selected) if selected else None,
+            "alarm_eligibility": alarm_metrics(selected, found),
+            "missing": missing,
+            "site_acceptance_established": False,
+        })
+    unscoped = sum("site_id" not in by_session[w["session_id"]] for w in windows)
+    unplanned = sorted({by_session[w["session_id"]]["site_id"] for w in windows if "site_id" in by_session[w["session_id"]] and by_session[w["session_id"]]["site_id"] not in planned_sites})
+    return {
+        "plan_id": plan["plan_id"], "plan_sha256": digest(plan),
+        "plan_declared_before_test": True, "declaration_independently_verified": False,
+        "purpose": "DATA_SUFFICIENCY_ONLY_NOT_ACCEPTANCE",
+        "status": "SUFFICIENT_FOR_REVIEW" if all(r["status"] == "SUFFICIENT_FOR_REVIEW" for r in reports) else "INCOMPLETE",
+        "site_acceptance_established": False, "branches": reports,
+        "unscoped_windows_excluded": unscoped, "unplanned_sites_excluded": unplanned,
+        "warning": "Minimum counts are the supplied plan, not an accuracy guarantee. Review errors, per-class metrics, alert burden and live delivery separately. The declaration timestamp has not been independently attested.",
+    }
+
+
+def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=30, coverage_plan=None):
+    by_session = validate_manifest(manifest, root)
+    require(split in SPLITS, "Unknown evaluation split")
+    number(cooldown_seconds, "alarm cooldown", maximum=3600)
+    windows = [w for w in manifest["windows"] if by_session[w["session_id"]]["split"] == split]
+    require(windows, "Selected split contains no windows")
+    found = validate_predictions(predictions, windows)
+    matrix, metrics = classification_metrics(windows, found)
 
     normal_seconds = 0.0
     normal_alarms = 0
@@ -239,7 +371,7 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
     errors = sum(item["status"] == "ERROR" for item in found.values())
     abstentions = sum(item["action"] == "UNCLEAR" for item in found.values())
     unknown_truth_alarms = sum(w["label"] == "UNCLEAR" and found[w["id"]]["alarm_eligible"] for w in windows)
-    return {
+    report = {
         "report_version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "validation_status": "EXPERIMENTAL_REQUIRES_SITE_ACCEPTANCE",
@@ -259,6 +391,7 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
         "abstention": {"count": abstentions, "rate": abstentions / len(windows), "includes_errors": True},
         "inference_errors": errors,
         "alarms_on_unclear_ground_truth": unknown_truth_alarms,
+        "alarm_eligibility": alarm_metrics(windows, found),
         "normal_observation": {
             "measured_covered_camera_hours": normal_seconds / 3600,
             "simulated_false_alarm_episodes": normal_alarms,
@@ -278,6 +411,9 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
             "Do not tune prompts or thresholds on the test split; relabelled feedback belongs to a new development version.",
         ],
     }
+    if coverage_plan is not None:
+        report["branch_coverage"] = coverage_report(coverage_plan, by_session, windows, found, included_sessions, cooldown_seconds)
+    return report
 
 
 def read_jpeg(path):
@@ -361,6 +497,22 @@ def run_local(manifest, root: Path, split, provider=None):
     }
 
 
+def write_private_report(path: Path, report):
+    """Replace only the selected report, with private permissions on POSIX."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=".evaluation-report-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(report, output, indent=2, allow_nan=False)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -369,25 +521,34 @@ def main(argv=None):
     mode.add_argument("--run-local", action="store_true", help="Run the configured local vision provider serially")
     parser.add_argument("--split", choices=SPLITS, default="test")
     parser.add_argument("--alarm-cooldown-seconds", type=float, default=30)
+    parser.add_argument("--coverage-plan", type=Path, help="Predeclared branch-specific sample minimums; reports sufficiency, never site acceptance")
     parser.add_argument("--output", type=Path, required=True, help="Private JSON report path; do not commit footage or personal metadata")
     args = parser.parse_args(argv)
     try:
         inputs = {args.manifest.resolve()}
         if args.predictions:
             inputs.add(args.predictions.resolve())
+        if args.coverage_plan:
+            inputs.add(args.coverage_plan.resolve())
         require(args.output.resolve() not in inputs, "The output report must not overwrite an input file")
+        require(args.output.resolve().suffix.lower() == ".json", "The output report must be a JSON file, never a source JPEG")
         manifest = json.loads(args.manifest.read_text())
         root = args.manifest.resolve().parent
         validate_manifest(manifest, root)
+        coverage_plan = json.loads(args.coverage_plan.read_text()) if args.coverage_plan else None
+        if coverage_plan is not None:
+            validate_coverage_plan(coverage_plan)
         if args.run_local:
             predictions = run_local(manifest, root, args.split)
         else:
             predictions = json.loads(args.predictions.read_text())
-        report = evaluate(manifest, predictions, root, args.split, args.alarm_cooldown_seconds)
+        report = evaluate(manifest, predictions, root, args.split, args.alarm_cooldown_seconds, coverage_plan)
         report["execution_mode"] = "LOCAL_PROVIDER_EXECUTION" if args.run_local else "PREDICTION_FILE_METRICS_ONLY"
         report["results"] = predictions["results"]
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+        report["evaluator_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        if "branch_coverage" in report:
+            report["branch_coverage"]["execution_mode"] = report["execution_mode"]
+        write_private_report(args.output, report)
     except (EvaluationError, OSError, json.JSONDecodeError) as exc:
         print(f"Evaluation failed: {exc}", file=sys.stderr)
         return 2

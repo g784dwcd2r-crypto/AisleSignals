@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 from urllib.parse import urlsplit
+from pydantic import Field
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -66,6 +67,17 @@ def problem(status, code, message, current_version=None):
 
 def public_user(user):
     return {key: user[key] for key in ("id", "name", "email", "role")}
+
+
+class SiteSwitch(Input):
+    site_id: str = Field(min_length=36, max_length=36, pattern=r"^[0-9a-f-]{36}$")
+
+
+def session_payload(store, conn, user, csrf):
+    return dict(
+        user=public_user(user), csrf_token=csrf, mode=store.mode,
+        current_site_id=user["site_id"], allowed_sites=store.allowed_sites(conn, user),
+    )
 
 
 @dataclass
@@ -119,9 +131,7 @@ def context(request: Request):
                 "SESSION_EXPIRED",
                 "Your session expired. Sign in again; unsaved input has not been submitted.",
             )
-        user = conn.execute(
-            "SELECT * FROM users WHERE id=?", (session["user_id"],)
-        ).fetchone()
+        user = request.app.state.store.resolve_session_user(conn, session)
         if user is None:
             problem(401, "AUTH_REQUIRED", "Sign in to continue.")
         if request.method not in ("GET", "HEAD", "OPTIONS"):
@@ -131,6 +141,15 @@ def context(request: Request):
                     403,
                     "CSRF_REJECTED",
                     "The request could not be verified. Refresh your session and retry.",
+                )
+            if (
+                request.app.state.store.mode == "pilot"
+                and request.url.path not in {"/api/logout", "/api/session/site"}
+                and request.headers.get("x-aislesignals-site") != user["site_id"]
+            ):
+                problem(
+                    409, "SITE_CONTEXT_CHANGED",
+                    "The active branch changed. Stop capture and reload this branch before submitting.",
                 )
         # Background refresh and image loads must not keep an unattended laptop signed in.
         if (
@@ -222,7 +241,7 @@ def new_incident(ctx, title, notes, candidate_id=None):
         "INCIDENT_CREATED",
         "incident",
         item_id,
-        "Human-created synthetic incident record; no finding of criminality.",
+        "Human-created incident record; no finding of criminality.",
     )
     return ctx.put("incident", item)
 
@@ -236,7 +255,10 @@ def idempotent(ctx: Context, request: Request, payload, action: Callable):
             "Provide an Idempotency-Key of 1 to 128 letters, numbers or - _ : . characters.",
         )
     route = request.url.path
-    payload_hash = digest(encode(payload))
+    payload_hash = digest(encode({
+        "payload": payload, "organisation_id": ctx.user["organisation_id"],
+        "site_id": ctx.user["site_id"],
+    }))
     previous = ctx.conn.execute(
         "SELECT payload_hash,result FROM idempotency WHERE actor_id=? AND route=? AND key=?",
         (ctx.user["id"], route, key),
@@ -306,10 +328,11 @@ def candidate_view(item):
     return item
 
 
-def create_app(db_path=None, web_dist=None):
-    if os.environ.get("AISLESIGNALS_MODE", "synthetic") != "synthetic":
+def create_app(db_path=None, web_dist=None, mode=None):
+    mode = mode or os.environ.get("AISLESIGNALS_MODE", "synthetic")
+    if mode not in {"synthetic", "pilot"}:
         raise ValueError(
-            "This build supports AISLESIGNALS_MODE=synthetic only. It cannot run a live pharmacy service."
+            "AISLESIGNALS_MODE must be synthetic or pilot."
         )
     try:
         runtime_port = int(os.environ.get("AISLESIGNALS_PORT", "8765"))
@@ -326,7 +349,7 @@ def create_app(db_path=None, web_dist=None):
         for port in allowed_ports
     }
     application = FastAPI(
-        title="AisleSignals synthetic prototype",
+        title="AisleSignals local pharmacy application",
         version="0.1.0",
         docs_url=None,
         redoc_url=None,
@@ -336,7 +359,8 @@ def create_app(db_path=None, web_dist=None):
     application.state.store = Store(
         db_path
         or os.environ.get("AISLESIGNALS_DB_PATH")
-        or ROOT / ".local" / "aislesignals.db"
+        or ROOT / ".local" / ("aislesignals-pilot.db" if mode == "pilot" else "aislesignals.db"),
+        mode=mode,
     )
     application.state.web_dist = Path(
         web_dist
@@ -345,9 +369,12 @@ def create_app(db_path=None, web_dist=None):
     ).resolve()
     application.state.dummy_salt = secrets.token_hex(16)
     application.state.dummy_hash = password_hash(
-        "invalid-demo-user", application.state.dummy_salt
+        "invalid-user", application.state.dummy_salt,
+        600_000 if mode == "pilot" else 210_000,
     )
     install_interactions(application, context, problem)
+    from .pilot_admin import install_pilot_admin
+    install_pilot_admin(application, context, problem)
 
     @application.exception_handler(Problem)
     async def handle_problem(request, exc):
@@ -420,7 +447,7 @@ def create_app(db_path=None, web_dist=None):
             response = rejected(
                 400,
                 "LOCAL_HOST_REQUIRED",
-                "This synthetic prototype accepts localhost requests only.",
+                "This application accepts localhost requests only.",
             )
         elif any(
             name in request.headers
@@ -515,7 +542,20 @@ def create_app(db_path=None, web_dist=None):
 
     @application.get("/api/health")
     def health():
-        return dict(status="ok", mode="synthetic-prototype", version="0.1.0")
+        return dict(status="ok", mode="pilot" if mode == "pilot" else "synthetic-prototype", version="0.1.0")
+
+    @application.get("/api/runtime")
+    def runtime():
+        with application.state.store.transaction() as conn:
+            ready = mode == "synthetic" or conn.execute(
+                "SELECT 1 FROM account_security a JOIN memberships m ON m.user_id=a.user_id "
+                "WHERE a.enabled=1 AND m.role='MANAGER' LIMIT 1"
+            ).fetchone() is not None
+        return dict(
+            mode=mode, setup_required=not ready, local_only=True,
+            authentication="local_named_password" if mode == "pilot" else "synthetic_demo",
+            mfa_enabled=False,
+        )
 
     @application.post("/api/login")
     def login(body: Login, request: Request):
@@ -543,13 +583,23 @@ def create_app(db_path=None, web_dist=None):
             user = conn.execute(
                 "SELECT * FROM users WHERE email=?", (email,)
             ).fetchone()
+            security = conn.execute(
+                "SELECT * FROM account_security WHERE user_id=?", (user["id"],)
+            ).fetchone() if user and mode == "pilot" else None
+            iterations = (
+                security["password_iterations"] if security else
+                (600_000 if mode == "pilot" else 210_000)
+            )
             supplied_hash = password_hash(
-                body.password, user["salt"] if user else application.state.dummy_salt
+                body.password, user["salt"] if user else application.state.dummy_salt,
+                iterations,
             )
             expected_hash = (
                 user["password_hash"] if user else application.state.dummy_hash
             )
-            if not secrets.compare_digest(supplied_hash, expected_hash):
+            permitted_sites = application.state.store.allowed_sites(conn, user) if user else []
+            valid = secrets.compare_digest(supplied_hash, expected_hash)
+            if not valid or not permitted_sites or (mode == "pilot" and (not security or not security["enabled"])):
                 conn.execute(
                     "INSERT INTO login_attempts(ip,email,at) VALUES(?,?,?)",
                     (ip, email, stamp),
@@ -570,6 +620,13 @@ def create_app(db_path=None, web_dist=None):
                 "INSERT INTO sessions VALUES(?,?,?,?,?)",
                 (digest(token), user["id"], csrf, stamp, stamp),
             )
+            user = dict(user)
+            if mode == "pilot":
+                selected = next((site for site in permitted_sites if site["id"] == user["site_id"]), permitted_sites[0])
+                user.update(site_id=selected["id"], role=selected["role"])
+                conn.execute("INSERT INTO session_scopes VALUES(?,?,?)", (
+                    digest(token), user["organisation_id"], user["site_id"],
+                ))
             conn.execute("DELETE FROM login_attempts WHERE email=?", (email,))
             application.state.store.audit(
                 conn,
@@ -577,9 +634,9 @@ def create_app(db_path=None, web_dist=None):
                 "SIGNED_IN",
                 "session",
                 user["id"],
-                "Local synthetic demo session created.",
+                "Local named-account session created." if mode == "pilot" else "Local synthetic demo session created.",
             )
-            response = JSONResponse(dict(user=public_user(user), csrf_token=csrf))
+            response = JSONResponse(session_payload(application.state.store, conn, user, csrf))
             response.set_cookie(
                 COOKIE,
                 token,
@@ -593,13 +650,39 @@ def create_app(db_path=None, web_dist=None):
 
     @application.get("/api/session")
     def session(ctx: Context = Depends(context)):
-        return dict(user=public_user(ctx.user), csrf_token=ctx.csrf_token)
+        return session_payload(ctx.store, ctx.conn, ctx.user, ctx.csrf_token)
+
+    @application.post("/api/session/site")
+    def switch_site(body: SiteSwitch, ctx: Context = Depends(context)):
+        sites = ctx.store.allowed_sites(ctx.conn, ctx.user)
+        selected = next((site for site in sites if site["id"] == body.site_id), None)
+        if selected is None:
+            problem(404, "SITE_NOT_AVAILABLE", "This branch is not available to your account.")
+        if mode == "synthetic" or body.site_id == ctx.user["site_id"]:
+            return session_payload(ctx.store, ctx.conn, ctx.user, ctx.csrf_token)
+        token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        current = ctx.conn.execute("SELECT created_at FROM sessions WHERE token_hash=?", (ctx.token_hash,)).fetchone()
+        # Rotation revokes pending jobs and credentials held by stale tabs.
+        # Preserve absolute expiry: branch switching never extends the workday.
+        ctx.conn.execute("DELETE FROM sessions WHERE token_hash=?", (ctx.token_hash,))
+        ctx.conn.execute("INSERT INTO sessions VALUES(?,?,?,?,?)", (
+            digest(token), ctx.user["id"], csrf, current["created_at"], time.time(),
+        ))
+        ctx.conn.execute("INSERT INTO session_scopes VALUES(?,?,?)", (
+            digest(token), selected["organisation_id"], selected["id"],
+        ))
+        ctx.audit("BRANCH_LEFT", "site", ctx.user["site_id"], "Session rotated before changing active branch.")
+        user = {**ctx.user, "site_id": selected["id"], "role": selected["role"]}
+        ctx.store.audit(ctx.conn, user, "BRANCH_SELECTED", "site", user["site_id"], "Authorised branch selected; previous capture session revoked.")
+        response = JSONResponse(session_payload(ctx.store, ctx.conn, user, csrf))
+        response.set_cookie(COOKIE, token, max_age=max(1, int(current["created_at"] + 8 * 3600 - time.time())), httponly=True, samesite="strict", secure=False, path="/")
+        return response
 
     @application.post("/api/logout")
     def logout(ctx: Context = Depends(context)):
         ctx.conn.execute("DELETE FROM sessions WHERE token_hash=?", (ctx.token_hash,))
         ctx.audit(
-            "SIGNED_OUT", "session", ctx.user["id"], "Local demo session revoked."
+            "SIGNED_OUT", "session", ctx.user["id"], "Local session revoked."
         )
         response = JSONResponse({"ok": True})
         response.delete_cookie(COOKIE, path="/", httponly=True, samesite="strict")
@@ -609,6 +692,9 @@ def create_app(db_path=None, web_dist=None):
     def bootstrap(ctx: Context = Depends(context)):
         return dict(
             user=public_user(ctx.user),
+            mode=ctx.store.mode,
+            current_site_id=ctx.user["site_id"],
+            allowed_sites=ctx.store.allowed_sites(ctx.conn, ctx.user),
             site=ctx.get("site", ctx.user["site_id"]),
             cameras=ctx.store.listing(ctx.conn, ctx.user, "camera"),
             candidates=[
@@ -634,7 +720,7 @@ def create_app(db_path=None, web_dist=None):
             "SHIFT_ACTIVATED" if body.active else "SHIFT_ENDED",
             "site",
             site["id"],
-            "Synthetic review shift updated. This is not live monitoring coverage.",
+            "Review shift updated. This setting alone does not establish monitoring coverage.",
         )
         return ctx.put("site", site)
 
@@ -809,6 +895,8 @@ def create_app(db_path=None, web_dist=None):
     @application.post("/api/simulator")
     def simulator(body: Simulator, request: Request, ctx: Context = Depends(context)):
         ctx.manager()
+        if mode != "synthetic":
+            problem(403, "SIMULATOR_DISABLED", "Synthetic observations are disabled in pilot mode.")
 
         def run():
             payload_hash = digest(encode(body.model_dump()))
@@ -1124,7 +1212,7 @@ def create_app(db_path=None, web_dist=None):
         ctx.manager()
         match_version(item, body.expected_version)
         payload = dict(
-            format="AisleSignals synthetic case record v0.1",
+            format="AisleSignals case record v0.1" if mode == "pilot" else "AisleSignals synthetic case record v0.1",
             provenance="SYNTHETIC PROTOTYPE. No real video or person identity. This is not a real video evidence package.",
             exported_at=now(),
             exported_by=public_user(ctx.user),
@@ -1143,7 +1231,7 @@ def create_app(db_path=None, web_dist=None):
             encode(manifest),
             media_type="application/json",
             headers={
-                "Content-Disposition": f'attachment; filename="{item["reference"]}-synthetic-record.json"'
+                "Content-Disposition": f'attachment; filename="{item["reference"]}-{"record" if mode == "pilot" else "synthetic-record"}.json"'
             },
         )
 

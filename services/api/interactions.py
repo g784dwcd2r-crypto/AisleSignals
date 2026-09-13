@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -31,9 +32,13 @@ from .interaction_vision import (
     validate_frames,
 )
 from .models import Input
-from .store import digest, encode, ident, now
+from .store import Store, digest, encode, ident, now
+from .evidence_crypto import EvidenceCipher, PilotDatabaseLock, read_frame
 
 RETENTION_SECONDS = 24 * 3600
+SITE_LIMIT = 100
+TOTAL_LIMIT = 600  # Six branches can each retain their full local allowance.
+MIN_FREE_DISK_BYTES = 128 * 1024 * 1024
 INFERENCE_SLOT = threading.BoundedSemaphore(1)
 ACTIVE_LOCK = threading.Lock()
 ACTIVE_JOBS: dict[str, tuple[object, threading.Event]] = {}
@@ -130,9 +135,25 @@ class InteractionService:
             )
         self.evidence_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.evidence_root, 0o700)
+        self.database_lock = None
+        self.cipher = None
+        if store.mode == "pilot":
+            self.database_lock = PilotDatabaseLock(db)
+            try:
+                with store.transaction() as conn:
+                    has_evidence = conn.execute("SELECT 1 FROM entities WHERE kind='interaction' LIMIT 1").fetchone()
+                self.cipher = EvidenceCipher(db, create=not has_evidence)
+            except BaseException:
+                self.database_lock.close()
+                raise
         self.closed = threading.Event()
         self.janitor = None
-        self.cleanup(recover=True)
+        try:
+            self.cleanup(recover=True)
+        except BaseException:
+            if self.database_lock:
+                self.database_lock.close()
+            raise
 
     def directory(self, item_id):
         # No client-provided path is ever used to locate evidence.
@@ -236,6 +257,13 @@ class InteractionService:
                     cancellation.set()
         if self.janitor:
             self.janitor.join(timeout=1)
+        # Workers can finish a model request after shutdown. Their cancelled
+        # result is never published; release only after their DB/file work ends.
+        if self.database_lock:
+            with ACTIVE_LOCK:
+                active = any(service is self for service, _ in ACTIVE_JOBS.values())
+            if not active:
+                self.database_lock.close()
 
     @staticmethod
     def authorized(conn, item):
@@ -243,9 +271,7 @@ class InteractionService:
             "SELECT * FROM sessions WHERE token_hash=? AND user_id=?",
             (item["session_hash"], item["actor_id"]),
         ).fetchone()
-        user = conn.execute(
-            "SELECT * FROM users WHERE id=?", (item["actor_id"],)
-        ).fetchone()
+        user = Store.resolve_session_user(conn, session) if session else None
         stamp = time.time()
         if (
             not session
@@ -260,6 +286,39 @@ class InteractionService:
         ):
             return None
         return dict(user)
+
+    def make_room(self, conn, scope):
+        """Roll only unreviewed low-value terminal samples at the branch limit.
+
+        Reviewed results and possible concealment
+        survive pressure until explicit deletion or the documented 24-hour expiry.
+        One branch can never evict another branch's evidence.
+        """
+        rows = conn.execute(
+            "SELECT body FROM entities WHERE kind='interaction' AND organisation_id=? AND site_id=? ORDER BY created_at,id",
+            (scope["organisation_id"], scope["site_id"]),
+        ).fetchall()
+        count = len(rows)
+        total = conn.execute("SELECT COUNT(*) FROM entities WHERE kind='interaction'").fetchone()[0]
+        removed = []
+        for row in rows:
+            if count < SITE_LIMIT and total < TOTAL_LIMIT:
+                break
+            item = json.loads(row["body"])
+            low_value = item["status"] in {"failed", "cancelled"} or (
+                item["status"] == "completed" and
+                (item.get("result") or {}).get("action") in {"NORMAL_SHOPPING", "UNCLEAR", "TAKE_PRODUCT", "RETURN_PRODUCT", "PLACE_IN_BASKET"}
+                and not (item.get("result") or {}).get("alarm_eligible", False)
+            )
+            if item.get("review") is not None or not low_value:
+                continue
+            conn.execute("DELETE FROM entities WHERE kind='interaction' AND id=?", (item["id"],))
+            removed.append(item["id"])
+            self.store.audit(conn, scope, "INTERACTION_ROLLED_OFF", "interaction", item["id"],
+                             "Unreviewed ordinary-shopping/unclear or failed/cancelled sample removed to keep local storage bounded.")
+            count -= 1
+            total -= 1
+        return count < SITE_LIMIT and total < TOTAL_LIMIT, removed
 
     def worker(self, item_id, scope, cancellation):
         try:
@@ -279,12 +338,7 @@ class InteractionService:
             # Deliberately outside all SQLite transactions and database locks.
             frames = []
             for index, frame in enumerate(item["frames"]):
-                path = self.directory(item_id) / f"{index}.jpg"
-                if path.is_symlink():
-                    raise VisionError("The requested evidence is unavailable.")
-                data = path.read_bytes()
-                if hashlib.sha256(data).hexdigest() != frame["sha256"]:
-                    raise VisionError("A sampled frame failed its integrity check.")
+                data = read_frame(self.evidence_root, item, index, self.cipher, MAX_JPEG_BYTES)
                 frames.append((frame["at_seconds"], data))
             if cancellation.is_set() or self.closed.is_set():
                 return
@@ -346,6 +400,8 @@ class InteractionService:
         finally:
             with ACTIVE_LOCK:
                 ACTIVE_JOBS.pop(item_id, None)
+            if self.closed.is_set() and self.database_lock:
+                self.database_lock.close()
             INFERENCE_SLOT.release()
 
 
@@ -377,7 +433,12 @@ def install_interactions(app, context, problem):
         # while the model server is contacted or the janitor opens a transaction.
         ctx.conn.commit()
         service.cleanup()
-        return service.provider.status()
+        return {**service.provider.status(), "evidence_policy": {
+            "retention_seconds": RETENTION_SECONDS,
+            "site_limit": SITE_LIMIT, "installation_limit": TOTAL_LIMIT,
+            "encryption": "AES-256-GCM" if service.cipher else "synthetic_plaintext",
+            "rolling_cleanup": "Keep up to 100 recent samples per branch. Oldest unreviewed ordinary-shopping actions, unclear results and failed/cancelled jobs roll off at capacity. Staff-reviewed samples and possible concealment require explicit deletion or expire after 24 hours.",
+        }}
 
     @app.post("/api/interactions/jobs")
     def submit(body: InteractionInput, request: Request, ctx=Depends(context)):
@@ -429,18 +490,18 @@ def install_interactions(app, context, problem):
                 "INVALID_FRAMES",
                 "Use three to six complete JPEG frames, at most 350 KB and 768 pixels per edge, in chronological order over at most twelve seconds.",
             )
-        site_count = ctx.conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE kind='interaction' AND organisation_id=? AND site_id=?",
-            (ctx.user["organisation_id"], ctx.user["site_id"]),
-        ).fetchone()[0]
-        total_count = ctx.conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE kind='interaction'"
-        ).fetchone()[0]
-        if site_count >= 100 or total_count >= 500:
+        try:
+            enough_disk = shutil.disk_usage(service.evidence_root).free >= MIN_FREE_DISK_BYTES + sum(len(data) + 64 for _, data in frames)
+        except OSError:
+            enough_disk = False
+        if not enough_disk:
+            problem(503, "EVIDENCE_STORAGE_UNAVAILABLE", "Sampled analysis is paused: at least 128 MiB of free disk space plus room for this sample is required. Free space and submit a fresh sample.")
+        room_available, rolled_off = service.make_room(ctx.conn, ctx.user)
+        if not room_available:
             problem(
                 429,
                 "EVIDENCE_LIMIT",
-                "The local interaction review store is full. Delete reviewed samples before submitting another.",
+                "The branch evidence store is full of protected review samples. Review and explicitly delete samples no longer needed; they otherwise expire after 24 hours. Analysis is paused until space is available.",
             )
         if not INFERENCE_SLOT.acquire(blocking=False):
             problem(
@@ -453,12 +514,13 @@ def install_interactions(app, context, problem):
         try:
             directory = service.directory(item_id)
             directory.mkdir(mode=0o700)
+            encryption_scope = {"id": item_id, "organisation_id": ctx.user["organisation_id"], "site_id": ctx.user["site_id"]}
             manifest = []
             for index, (stamp, data) in enumerate(frames):
                 path = directory / f"{index}.jpg"
                 with path.open("xb") as output:
                     os.chmod(path, 0o600)
-                    output.write(data)
+                    output.write(service.cipher.encrypt(data, encryption_scope, index) if service.cipher else data)
                 manifest.append(
                     {
                         "at_seconds": stamp,
@@ -500,6 +562,13 @@ def install_interactions(app, context, problem):
                 (ctx.user["id"], route, key, payload_hash, encode(response)),
             )
             ctx.conn.commit()
+            for old_id in rolled_off:
+                try:
+                    service.remove_files(old_id)
+                except (OSError, ValueError, VisionError):
+                    # The record is gone, so access is denied. The orphan janitor
+                    # retries physical removal; never resurrect deleted metadata.
+                    pass
             cancellation = threading.Event()
             with ACTIVE_LOCK:
                 ACTIVE_JOBS[item_id] = (service, cancellation)
@@ -597,12 +666,7 @@ def install_interactions(app, context, problem):
         if item["status"] != "completed" or not 0 <= index < len(item["frames"]):
             problem(404, "EVIDENCE_UNAVAILABLE", "This sampled frame is not available.")
         try:
-            path = service.directory(str(item_id)) / f"{index}.jpg"
-            if path.is_symlink() or path.stat().st_size > MAX_JPEG_BYTES:
-                raise OSError
-            data = path.read_bytes()
-            if hashlib.sha256(data).hexdigest() != item["frames"][index]["sha256"]:
-                raise OSError
+            data = read_frame(service.evidence_root, item, index, service.cipher, MAX_JPEG_BYTES)
         except (OSError, VisionError, ValueError):
             problem(
                 404,
