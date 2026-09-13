@@ -5,7 +5,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_free_blueprint_has_only_reviewed_health_service():
+def test_free_blueprint_has_only_reviewed_health_service_and_private_staging_database():
     blueprint = yaml.safe_load((ROOT / "deployment/render-staging.yaml").read_text())
     assert set(blueprint) == {"projects", "previews"}
     assert blueprint["previews"] == {"generation": "off"}
@@ -14,7 +14,7 @@ def test_free_blueprint_has_only_reviewed_health_service():
     assert project["name"] == "AisleSignals"
     assert len(project["environments"]) == 1
     environment = project["environments"][0]
-    assert set(environment) == {"name", "services"}
+    assert set(environment) == {"name", "services", "databases"}
     assert environment["name"] == "Staging"
     assert len(environment["services"]) == 1
     service = environment["services"][0]
@@ -25,14 +25,24 @@ def test_free_blueprint_has_only_reviewed_health_service():
     assert service["branch"] == "codex/cloud-staging"
     assert service["repo"] == "https://github.com/g784dwcd2r-crypto/AisleSignals"
     assert service["buildCommand"] == "python -m pip install -r services/cloud/requirements.txt"
-    assert service["startCommand"] == "python -m services.cloud"
-    assert service["healthCheckPath"] == "/health/live"
+    assert service["startCommand"] == "python -m services.cloud.start_with_schema"
+    assert service["healthCheckPath"] == "/health/ready"
     assert "preDeployCommand" not in service and "disk" not in service
     assert service["envVars"] == [
         {"key": "PYTHON_VERSION", "value": "3.12.14"},
         {"key": "CLOUD_ENV", "value": "staging"},
         {"key": "CLOUD_DATABASE_SSLMODE", "value": "require"},
+        {"key": "DATABASE_URL", "fromDatabase": {"name": "aislesignals-postgres-staging", "property": "connectionString"}},
     ]
+    assert environment["databases"] == [{
+        "name": "aislesignals-postgres-staging",
+        "databaseName": "aislesignals_staging",
+        "plan": "free",
+        "region": "frankfurt",
+        "postgresMajorVersion": "16",
+        "ipAllowList": [],
+        "storageAutoscalingEnabled": False,
+    }]
 
 
 def test_runtime_requirements_are_isolated_and_pinned():

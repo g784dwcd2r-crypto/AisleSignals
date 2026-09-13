@@ -1,83 +1,89 @@
-# AisleSignals cloud staging
+# AisleSignals — Render staging setup
 
 Prepared for Jawahir Q. · 13 September 2026
 
-This is a separate, deployable **infrastructure scaffold**. It exposes process health and optional PostgreSQL schema readiness. It does not provide cloud login, pharmacy administration, laptop enrolment, event synchronisation, evidence storage or detection. The existing pharmacy application and CCTV/model processing stay on the laptops. A successful Render deployment does not establish a working central management product.
+The staging infrastructure consists of one Free Python web service and one Free PostgreSQL 16 database in Frankfurt. The database is for infrastructure metadata only. Cloud staff login, pharmacy administration, laptop enrolment, synchronisation and evidence storage remain unimplemented. CCTV capture, model processing and recordings stay on the pharmacy laptops.
 
-## Current free deployment
+## Existing resources
 
-`deployment/render-staging.yaml` proposes exactly one **Free** Python web service in Frankfurt. It creates no database, disk, worker or account, and disables automatic deploys and previews. The coordinator has already created the AisleSignals project and Staging environment; service activation and live acceptance are separate from this source change. Review the existing project and service names before applying a Blueprint so unrelated resources are not adopted. [Render Blueprint reference](https://render.com/docs/blueprint-spec).
+| Resource                 | Value                                                             |
+| ------------------------ | ----------------------------------------------------------------- |
+| Project / environment    | AisleSignals / Staging                                            |
+| Web service              | `aislesignals-control-staging` — `srv-dajigagae00c73a3rfsg`       |
+| Database                 | `aislesignals-postgres-staging` — `dpg-dajik4fqj5pc73dp762g-a`    |
+| Region                   | Frankfurt (EU Central), both resources                            |
+| Public service URL       | https://aislesignals-control-staging.onrender.com                 |
+| PostgreSQL               | Major version 16, Free, fixed 1 GB storage                        |
+| Database expiry          | **13 October 2026**; upgrade before expiry if it must be retained |
+| External database access | Blocked; PostgreSQL inbound IP list is empty                      |
 
-| Render setting              | Exact value                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------- |
-| Project / environment       | AisleSignals / Staging                                                          |
-| Service name                | `aislesignals-control-staging`                                                  |
-| Repository                  | `https://github.com/g784dwcd2r-crypto/AisleSignals`                             |
-| Branch                      | `codex/cloud-staging`, after the coordinator publishes the reviewed cloud files |
-| Runtime / region / instance | Python 3 / Frankfurt / Free                                                     |
-| Root directory              | Empty: repository root                                                          |
-| Build command               | `python -m pip install -r services/cloud/requirements.txt`                      |
-| Start command               | `python -m services.cloud`                                                      |
-| Pre-deploy command          | Empty                                                                           |
-| Health check path           | `/health/live`                                                                  |
-| Automatic deploy            | Off; select the reviewed commit manually                                        |
+The database and web service were created in the existing project through the dashboard. The checked-in `deployment/render-staging.yaml` records their intended configuration; it has not adopted these manually created resources as a managed Blueprint. Review Render's resource-matching preview before applying it, and do not create duplicates. [Render Blueprint reference](https://render.com/docs/blueprint-spec).
 
-The Python entry point starts one Uvicorn process, binds Render's `PORT` on `0.0.0.0`, and uses a ten-second graceful shutdown window. It does not start laptop companions or models. This follows Render's native [FastAPI deployment pattern](https://render.com/docs/deploy-fastapi).
+## Web service configuration
 
-| Environment variable       | Value / behaviour                                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `PYTHON_VERSION`           | `3.12.14`, explicitly pinned in the manifest                                                                                   |
-| `CLOUD_ENV`                | `staging`                                                                                                                      |
-| `CLOUD_DATABASE_SSLMODE`   | `require`                                                                                                                      |
-| `DATABASE_URL`             | **Unset** for this milestone. Never paste a laptop SQLite path here.                                                           |
-| `PORT`                     | Render supplies it; default `10000` for local checks                                                                           |
-| `RENDER`                   | Render supplies `true`; public container binding requires it                                                                   |
-| `RENDER_EXTERNAL_HOSTNAME` | Render supplies the exact service hostname, which becomes an allowed Host                                                      |
-| `CLOUD_ALLOWED_HOSTS`      | Optional comma-separated exact additional hostnames, only when deliberately adding custom domains; no URLs, ports or wildcards |
+| Setting                        | Exact value                                                |
+| ------------------------------ | ---------------------------------------------------------- |
+| Repository                     | `https://github.com/g784dwcd2r-crypto/AisleSignals`        |
+| Branch                         | `codex/cloud-staging`                                      |
+| Runtime / compute              | Python 3 / Free                                            |
+| Root directory                 | Empty: repository root                                     |
+| Build command                  | `python -m pip install -r services/cloud/requirements.txt` |
+| Start command                  | `python -m services.cloud.start_with_schema`               |
+| Pre-deploy command             | Empty; unavailable on Free                                 |
+| Health check                   | `/health/ready`                                            |
+| Automatic deploy / PR previews | Off / Off                                                  |
 
-Render supports a fully specified [`PYTHON_VERSION`](https://render.com/docs/python-version). Its [default environment variables](https://render.com/docs/environment-variables) include the service hostname. Configure any custom domain before using it: Render may also use that domain as the health-check Host.
+Use only a reviewed commit that includes the explicit `start_with_schema` module. Changing environment variables with **Save only** does not update the running process; deploy the reviewed commit after saving all settings.
 
-## What the endpoints mean
+| Environment variable                         | Configuration                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------ |
+| `PYTHON_VERSION`                             | `3.12.14`                                                                      |
+| `CLOUD_ENV`                                  | `staging`                                                                      |
+| `CLOUD_DATABASE_SSLMODE`                     | `require`                                                                      |
+| `DATABASE_URL`                               | The database's **internal connection URL**, saved privately in Render          |
+| `PORT`, `RENDER`, `RENDER_EXTERNAL_HOSTNAME` | Supplied by Render                                                             |
+| `CLOUD_ALLOWED_HOSTS`                        | Optional exact additional hostnames for deliberately configured custom domains |
 
-| Request                                                      | Result                                                                                                         |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `GET /`                                                      | Static, public status describing this infrastructure-only stage; customer access, enrolment and sync are false |
-| `GET /health/live`                                           | `200`, process alive; makes no database or product-readiness claim                                             |
-| `GET /health/ready`, no DB                                   | `503`, `DATABASE_NOT_CONFIGURED`                                                                               |
-| `GET /health/ready`, compatible DB                           | `200`, `READY`, explicitly scoped to `database-schema-only`                                                    |
-| Unavailable, incompatible or timed-out DB                    | `503`, opaque status code; no hostname, credentials or driver exception                                        |
-| Laptop API, account, sync, evidence and documentation routes | `404`                                                                                                          |
-| Writes to health endpoints                                   | `405`                                                                                                          |
+The manifest's `fromDatabase.connectionString` reference contains no credential. For the current manual setup, the internal URL is stored directly in the web service's secret environment configuration. If credentials are rotated later, update this value and redeploy before revoking the old credential. Never commit URLs, passwords or laptop databases. Do not copy pharmacy camera credentials to Render.
 
-Readiness allows one in-flight check per process, no queue or persistent connection pool, a 2.5-second outer deadline, short PostgreSQL query/connection timeouts and a one-second result cache. Concurrent cache misses receive `READINESS_BUSY`. These bounds fit within Render's five-second [HTTP health-check deadline](https://render.com/docs/health-checks). In this deliberately database-free stage, Render checks **liveness**, while the distinct readiness endpoint stays unavailable. After a database-backed feature is introduced, change the deployment health path to `/health/ready` only after its schema and failure checks pass.
+Same-region Render services can connect through the internal URL even when public database access is blocked. TLS is required with `sslmode=require`; Render's internal database certificates are self-signed, so this encrypts transport without `verify-full` identity verification. [Render connection guidance](https://render.com/docs/postgresql-creating-connecting).
 
-The runtime disables access logs, proxy-header trust, interactive API documentation and cookie/session creation. Responses are non-cacheable, do not permit CORS, and carry restrictive content/security headers. Hostnames are explicitly allowed; configuration errors omit values. There is no file mount, SQLite import, model package or dependency on `services.api`. These are infrastructure protections, not a substitute for authenticated product access.
+## Schema startup and health
 
-## Later PostgreSQL step — not activated by this manifest
+Free web services have no dashboard shell, one-off jobs or pre-deploy command. The explicitly selected `start_with_schema` entry point therefore performs this sequence on each process start:
 
-The driver and explicit migration command are implemented and tested. There is currently **no Render database** provisioned by this workstream. A later approved database should be in Frankfurt with the application, use its internal connection string, and set `ipAllowList: []` to deny external database connections. Keep the URL in Render's secret environment configuration. Internal connections support `sslmode=require` with Render's self-signed certificates; this encrypts transport but does not verify server identity with `verify-full`. [Render PostgreSQL connection guidance](https://render.com/docs/postgresql-creating-connecting).
+1. Require staging configuration and a database URL.
+2. Run the existing transactional metadata migration, with an advisory lock and version/checksum validation.
+3. Verify the committed schema with a fresh bounded readiness check.
+4. Start the unchanged cloud server only after those steps succeed.
 
-The proposed paid minimum is a web instance `0.5c-512mb` plus PostgreSQL `0.1c-256mb`, PostgreSQL major version **16** (the locally tested major), `diskSizeGB: 1`, and storage autoscaling disabled. These are a review proposal, not an instruction to activate them. Do not add a free expiring database for customer data. The current [Render pricing](https://render.com/pricing) lists $7/month web compute and $6/month database compute; database storage is listed separately at $0.30/GB/month in Render's [cost guide](https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses). Budget roughly **US$13.30/month** for this minimal pair with 1 GB storage, subject to the actual checkout quote, workspace charges, taxes, currency conversion and usage. It is not a production capacity estimate.
+A failure exits with a fixed error code before serving; it does not print credentials or driver exceptions. Repeated startup is idempotent. An incompatible schema is rejected without overwriting it. The normal `python -m services.cloud` entry point still does not migrate. This explicit Free staging path is not a general production migration framework.
 
-For a paid web service, configure the pre-deploy command as:
+The only schema is `aislesignals_control.schema_version`, version 1 and its checksum. No customer, pharmacy, user or evidence tables are created. A future production deployment needs separate migration/runtime roles and a versioned migration process; the current metadata scaffold uses one credential.
 
-```sh
-python -m services.cloud.migrate
-```
+| Request                                                                      | Expected result                                                                  |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `GET /`                                                                      | 200; explicitly states infrastructure-only, customer access/enrolment/sync false |
+| `GET /health/live`                                                           | 200; process is alive                                                            |
+| `GET /health/ready`                                                          | 200 `READY`, scoped to **database-schema-only**, when the database is compatible |
+| Absent/unavailable/incompatible database                                     | 503 readiness with an opaque error code                                          |
+| Local pilot, login, administration, event, evidence, sync and API-doc routes | 404                                                                              |
 
-Render runs [pre-deploy commands](https://render.com/docs/deploys#pre-deploy-command) separately before starting the new version; this facility is not available on Free web services. The migration never runs automatically during app startup. It takes a PostgreSQL transaction/advisory lock, creates only `aislesignals_control.schema_version`, and records version 1 and its migration checksum. Repeated and concurrent runs are safe. An incompatible version/checksum fails without rewriting it. There is no automatic downgrade or destructive reset. Readiness remains unavailable for an absent or incompatible schema.
+Readiness permits one in-flight check per process, a 2.5-second outer deadline, short database timeouts and a one-second cache. It makes no detection, full-product or branch-acceptance claim. Hostnames are explicitly allowed, access logs and API docs are disabled, and responses use no-store/security headers and no cookies. No local pilot routes are imported or exposed.
 
-Before storing any customer data, separate migration and runtime database roles, verify backup/restore and retention, and implement the product access controls below. This metadata-only scaffold uses one database credential; it is not a completed tenancy schema or migration framework.
+After deployment, verify the actual HTTPS liveness and readiness responses and denied application routes. Record the source commit and Render deploy ID outside Git with the deployment evidence. A rollback must retain a compatible schema; never delete a database to repair a deployment.
 
-## Free-plan limits and spending boundary
+## Free-plan limits
 
-The checked-in service has $0 compute, but this does **not** guarantee a $0 workspace invoice. Free services consume shared free hours, bandwidth and build allowances; excess usage can incur charges where billing is enabled, or cause suspension according to account limits. Review the workspace's limits before activation. Free services sleep after inactivity and are not production hosting. A Free PostgreSQL database expires after 30 days and has no backups; this manifest does not create one. [Render Free service limits](https://render.com/docs/free).
+Both selected compute plans are Free. No paid resource, storage autoscaling, replica, connection pool or background worker is enabled by this configuration. Shared workspace usage limits still apply, and Free compute does not guarantee a zero workspace invoice. Billing and unrelated services were not changed.
 
-The current workspace payment warning is an account prerequisite for the owner to resolve if Render prevents the requested free setup. Do not change unrelated services, enter payment details, create paid resources or upgrade the workspace as part of this scaffold.
+**Free PostgreSQL expires after 30 days and has no backups.** The web service sleeps after inactivity. These resources are staging infrastructure, not production hosting or storage for customer data. Upgrade and verify backup/restore before customer use. [Render Free service limits](https://render.com/docs/free).
+
+For a later paid deployment, review the actual plan quote and gain authorization before upgrading. Use a separate pre-deploy migration step and the normal non-migrating server start after production migration controls are implemented. A paid upgrade alone does not implement cloud accounts, device sync or validated detection.
 
 ## Reproduce checks
 
-Use Python 3.12 in an isolated environment. Dependencies are separate from the laptop application and are pinned; Psycopg's [binary distribution](https://www.psycopg.org/psycopg3/docs/basic/install.html) provides its runtime library without a system compiler/libpq build step.
+Use Python 3.12 in an isolated environment:
 
 ```sh
 python3.12 -m venv .venv-cloud
@@ -86,15 +92,15 @@ python3.12 -m venv .venv-cloud
 .venv-cloud/bin/python -m pip check
 ```
 
-On Windows use `.venv-cloud\Scripts\python.exe`. The ordinary suite covers configuration, real HTTP startup, absent routes, local-API isolation, safe errors, caching, cancellation, timeouts and concurrent probe bounds. Five optional tests require PostgreSQL `initdb` and `pg_ctl` on a POSIX PATH:
+On Windows use `.venv-cloud\Scripts\python.exe`. Five optional integration cases require PostgreSQL `initdb` and `pg_ctl` on a POSIX PATH:
 
 ```sh
 CLOUD_RUN_POSTGRES_TESTS=1 .venv-cloud/bin/python -m pytest tests/cloud -q
 ```
 
-The opt-in tests create a disposable, process-owned PostgreSQL cluster with synthetic credentials on an unused loopback port and stop it afterward. They never connect to an inherited `DATABASE_URL` or the user's existing database. They cover actual migration, repeated/concurrent execution, version/checksum refusal and blocked-query recovery. Native verification here used PostgreSQL 16.15 and Python 3.12.14: **62 passed**, including the five database checks; the ordinary run skips only those five. Existing test-client dependency deprecation warnings do not change the result.
+These tests start and stop a disposable owned cluster on an unused loopback port with synthetic credentials. They never use an inherited database URL. They cover actual migration, concurrency, version/checksum refusal and lock recovery. The suite also tests startup failure sequencing, safe errors, health bounds, configuration, real HTTP startup and excluded routes. Local verification: **76 passed**, including five real PostgreSQL cases.
 
-Validate the manifest against a separately downloaded official schema, without using a Render account:
+Validate the manifest against the official schema:
 
 ```sh
 mkdir -p .local/cloud-validation
@@ -102,13 +108,13 @@ curl --fail --silent --show-error https://render.com/schema/render.yaml.json -o 
 .venv-cloud/bin/python tests/cloud/validate_blueprint.py .local/cloud-validation/render.schema.json
 ```
 
-The schema validation passed. It checks structure, not account access, project adoption, branch publication, available capacity or successful deployment. After an authorised deployment, verify the actual URL, expected 200/503 split and denied laptop/account routes. Record the deployed commit. A rollback must select a compatible schema version; never delete a database to repair a failed health check.
+Schema validation checks syntax and structure, not resource adoption, account eligibility or live deployment. The separate `Cloud staging checks` workflow runs the cloud suite with PostgreSQL integration enabled.
 
-## Subsequent secure product milestones
+## Application work still required
 
-1. **Staff identity and branch authority:** managed OIDC/MFA, explicit owner provisioning, expiring invitations, server-side sessions and CSRF, organisation/branch enforcement and audit. No public first-visitor claim and no reuse of laptop bootstrap codes as cloud credentials. Test cross-organisation and revoked-access denials before enabling account routes.
-2. **Device enrolment:** locally generated device keys, one-time manager-authorised enrolment, site-bound credentials, expiry/revocation and replay protection. Camera passwords remain on laptops. Test stolen/reused enrolment codes and revoked devices.
-3. **Event synchronisation:** versioned metadata contract, durable local outbox, idempotent tenant-bound ingestion, acknowledgements/conflicts, retry/backoff, offline recovery and bounded quotas. Historical retries cannot trigger a live alarm. Test concurrent replay and branch mismatch; no footage upload by default.
-4. **Central workflow and evidence scope:** authenticated, scoped manager UI; agreed event retention; minimisation and masks before any separately authorised evidence transfer; encrypted storage and verified restore/deletion. Reconcile central and laptop authority explicitly before deploying to six branches.
+1. Staff identity, MFA/invitations, sessions, organisation and branch authority, and audit with cross-tenant denial tests.
+2. Manager-authorised device enrolment, local device keys, credential expiry/revocation and replay protection.
+3. Durable offline outbox and tenant-bound event ingestion, idempotent retries, acknowledgements and bounded quotas. Historical retries cannot raise a live alarm.
+4. Authenticated central management interfaces, retention, support and offboarding; separately authorised evidence transfer and tested backup/restore/deletion.
 
-These milestones are planned, not implemented by this scaffold. No user-facing cloud management, continuous monitoring, detection accuracy or branch acceptance is claimed.
+These remain product-development milestones. No public first-visitor owner claim, facial watchlist, automatic footage transfer or production readiness is introduced by hosting setup.
