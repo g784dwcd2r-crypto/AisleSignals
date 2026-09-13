@@ -41,8 +41,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: services/api/requirements.txt
-      - run: python -m pip install -r services/api/requirements.txt
+          cache-dependency-path: |
+            services/api/requirements.txt
+            services/cloud/requirements.txt
+            services/cloud/requirements-test.txt
+      - run: python -m pip install -r services/api/requirements.txt -r services/cloud/requirements-test.txt
       - run: python -m pytest tests packaging/test_bundle_integrity.py -q
 
   browser:

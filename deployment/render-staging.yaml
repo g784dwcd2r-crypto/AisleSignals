@@ -1,0 +1,30 @@
+# Free, infrastructure-only staging. No database or customer-data service.
+# Review the Blueprint preview in the existing AisleSignals / Staging project.
+# No paid resource or automatic deploy is enabled by this file.
+previews:
+  generation: "off"
+projects:
+  - name: AisleSignals
+    environments:
+      - name: Staging
+        services:
+          - type: web
+            name: aislesignals-control-staging
+            runtime: python
+            plan: free
+            region: frankfurt
+            repo: https://github.com/g784dwcd2r-crypto/AisleSignals
+            branch: codex/cloud-staging
+            autoDeployTrigger: "off"
+            buildCommand: python -m pip install -r services/cloud/requirements.txt
+            startCommand: python -m services.cloud
+            # Liveness only: /health/ready correctly stays 503 until PostgreSQL exists.
+            healthCheckPath: /health/live
+            maxShutdownDelaySeconds: 15
+            envVars:
+              - key: PYTHON_VERSION
+                value: "3.12.14"
+              - key: CLOUD_ENV
+                value: staging
+              - key: CLOUD_DATABASE_SSLMODE
+                value: require
