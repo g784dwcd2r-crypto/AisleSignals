@@ -74,6 +74,8 @@ Run `npm ci --prefix apps/web` first if the setup script has not installed inter
 
 ## Scope and next release
 
+The clarified core product is **automatic CCTV monitoring** across a browser viewer, a desktop CCTV app or an existing recorder serving a separate monitor. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines all three setup paths, direct-stream preference, authorised window-capture fallback, live-versus-playback guards and economical local AI. These inputs/detectors are next-release work; the current review queue remains synthetic.
+
 The prototype uses local SQLite and public demo accounts to make the workflow testable now. Production remains the documented React/FastAPI/PostgreSQL design with managed MFA, qualified camera integration, encrypted evidence lifecycle, signed Windows/Mac companion packages and actual site acceptance. The prototype's `/api` is a documented implementation slice, not completion of the full planned `/v1` contract.
 
 Monitoring on the existing laptop will require it to remain powered on and awake. Camera/recorder interfaces must be qualified; universal compatibility is not promised. There is no automatic facial recognition, shared watchlist, person-level criminality prediction, clinical decision or door-lock control. This build makes no paid model calls or customer charges.

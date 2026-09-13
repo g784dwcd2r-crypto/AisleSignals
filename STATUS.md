@@ -16,6 +16,7 @@ Prototype 0.1 — 13 September 2026. Product owner: Jawahir Q.
 | Pricing | Preserved | EUR 60 monthly per branch; owner-managed record only, no charging |
 | Mari Mina Pharmacy profile | Implemented | Separate demo organisation/branch and manager sign-in; initially empty records; additive startup preserves existing workspaces |
 | Actual camera/detector | Not connected | Existing device/interface inventory and authorised software integration still required |
+| Browser/app/separate-monitor CCTV paths | Specified for next release | [Automatic monitoring addendum](docs/prototype/cctv-monitoring.md) includes permitted screen capture, recorder access, freshness and resource limits; no live adapter implemented yet |
 | Cloud AI / real evidence lifecycle | Not implemented | Provider evaluation, budgets, encrypted capture/storage, deletion/holds and rights workflows remain production work |
 | Signed installers / pharmacy laptop acceptance | Not completed | Windows and Mac bundles are developer prototypes; exact pharmacy hardware/OS versions remain unqualified |
 | Production hosting and alarm control | Not deployed/connected | No cloud accounts, physical outputs or customer data activated |
