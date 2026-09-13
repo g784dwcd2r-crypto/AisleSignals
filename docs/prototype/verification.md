@@ -1,5 +1,19 @@
 # Prototype verification
 
+## Live Detection implementation — 13 September 2026
+
+Current local checks: **88 Python tests, 75 frontend unit tests and 32 Chromium browser tests passed**, plus 49 companion subtests. The full 31-test browser suite passed, followed by one additional live-capture disconnection test. TypeScript and the production web build passed. Earlier sections below preserve historical results.
+
+New evidence includes:
+
+- Actual local MediaPipe model/WASM loading and inference on decoded synthetic video with no people: no fabricated pose alarms and no external runtime requests.
+- Actual inference on Google's temporary public pose-test image: one pose, 33 keypoints. A single smoke frame took approximately 106 ms on this development Mac; this is not a sustained or pharmacy performance benchmark.
+- Synthetic pose-boundary browser tests: two-second configured-zone observation → visual alarm → Web Audio oscillator request → persistent branch event → acknowledgement. Live screen provenance, muted sound and capture disconnection were separately verified.
+- Immediate worker termination when Stop is clicked during model startup; source/file release, permission denial, bounded file validation and narrow-screen accessibility.
+- Twenty-one deterministic rule tests for positive/negative temporal sequences, aspect ratio, visibility, track ambiguity, gaps and cooldowns; twelve new API tests for strict metadata, branch scope, deduplication, conflicts and acknowledgement.
+
+No customer camera was connected and no pharmacy theft model accuracy was measured. Physical speaker audibility, actual Windows browser/installer behaviour and both pharmacy laptops are not accepted by these checks. The test image is not shipped. This slice saves metadata only; see [implemented capabilities and limits](live-detection.md).
+
 13 September 2026. Root reproduced the final tests after specialist-agent implementation and independent review. These results apply to the synthetic prototype, not real pharmacy monitoring.
 
 | Check | Actual local result |

@@ -56,6 +56,7 @@ import { date, getAlertCount, label, money } from "./format";
 import { buildCasePatch, caseFields } from "./caseForm";
 import type { CaseForm } from "./caseForm";
 import VideoTest from "./VideoTest";
+import LiveDetection from "./LiveDetection";
 
 type ActionOptions = {
   method?: string;
@@ -70,6 +71,7 @@ type Act = <T>(
 ) => Promise<T | null>;
 const navItems: { id: Page; name: string; icon: typeof Activity }[] = [
   { id: "overview", name: "Overview", icon: LayoutDashboard },
+  { id: "live-detection", name: "LIVE DETECTION", icon: Monitor },
   { id: "review", name: "Review queue", icon: Radio },
   { id: "incidents", name: "Casebook", icon: ClipboardList },
   { id: "assistance", name: "Team assistance", icon: Bell },
@@ -347,8 +349,9 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <span>{email}</span>
               <code>AisleDemo!2026</code>
               <p>
-                Local synthetic use only. This demo has no live cameras, paid
-                AI, external alarms or billing.
+                Demo accounts and synthetic workflow records. LIVE DETECTION
+                processes an explicitly selected video locally, with laptop
+                attention sounds. No external alarms or billing.
               </p>
             </div>
           </div>
@@ -362,7 +365,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<Bootstrap | null>(null);
   const [starting, setStarting] = useState(true);
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(
+    location.hash === "#live-detection" ? "live-detection" : "overview",
+  );
   const [candidateId, setCandidateId] = useState<string | null>(null);
   const [incidentId, setIncidentId] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
@@ -518,6 +523,11 @@ export default function App() {
   };
   function navigate(next: Page) {
     setPage(next);
+    history.replaceState(
+      null,
+      "",
+      `${location.pathname}${location.search}${next === "live-detection" ? "#live-detection" : ""}`,
+    );
     setMenu(false);
     setCandidateId(null);
     setIncidentId(null);
@@ -696,9 +706,11 @@ export default function App() {
               <span />
               {offline
                 ? "Connection lost · coverage unknown"
-                : page === "video-test"
-                  ? "Playback test · no live monitoring"
-                  : "Synthetic data · no live monitoring"}
+                : page === "live-detection"
+                  ? "Local pose analysis · experimental rules"
+                  : page === "video-test"
+                    ? "Playback test · no live monitoring"
+                    : "Synthetic data · no live monitoring"}
             </span>
             <button
               className="icon-button"
@@ -758,66 +770,70 @@ export default function App() {
               simulated camera coverage is unknown.
             </div>
           )}
-          <div className="page-heading">
-            <div>
-              <div className="eyebrow">
-                {page === "overview"
-                  ? "YOUR PHARMACY, IN FOCUS"
-                  : page === "review"
-                    ? "OBSERVE · REVIEW · DECIDE"
-                    : "A CLEARER WORKING DAY"}
-              </div>
-              <h1 ref={headingRef} tabIndex={-1}>
-                {page === "overview"
-                  ? "Every detail, thoughtfully handled."
-                  : title}
-              </h1>
-              <p>
-                {
+          {page !== "live-detection" && (
+            <div className="page-heading">
+              <div>
+                <div className="eyebrow">
+                  {page === "overview"
+                    ? "YOUR PHARMACY, IN FOCUS"
+                    : page === "review"
+                      ? "OBSERVE · REVIEW · DECIDE"
+                      : "A CLEARER WORKING DAY"}
+                </div>
+                <h1 ref={headingRef} tabIndex={-1}>
+                  {page === "overview"
+                    ? "Every detail, thoughtfully handled."
+                    : title}
+                </h1>
+                <p>
                   {
-                    overview:
-                      "A clear view of what needs attention, and a record of what happens next.",
-                    review:
-                      "An observation is a prompt to review. Your team determines the outcome.",
-                    incidents:
-                      "One place for reviewed facts, follow-up tasks and recorded outcomes.",
-                    assistance:
-                      "Ask a colleague for support and track their response.",
-                    cameras:
-                      "Understand the connection before relying on the coverage.",
-                    "video-test":
-                      "Try a recording locally and review a timeline of visual activity.",
-                    activity:
-                      "A traceable record of actions within this pharmacy branch.",
-                    settings:
-                      "Your branch, subscription terms and prototype boundaries.",
-                  }[page]
-                }
-              </p>
+                    {
+                      overview:
+                        "A clear view of what needs attention, and a record of what happens next.",
+                      review:
+                        "An observation is a prompt to review. Your team determines the outcome.",
+                      incidents:
+                        "One place for reviewed facts, follow-up tasks and recorded outcomes.",
+                      assistance:
+                        "Ask a colleague for support and track their response.",
+                      cameras:
+                        "Understand the connection before relying on the coverage.",
+                      "video-test":
+                        "Try a recording locally and review a timeline of visual activity.",
+                      "live-detection":
+                        "Connect your CCTV video. Follow activity. Receive an automatic attention alarm.",
+                      activity:
+                        "A traceable record of actions within this pharmacy branch.",
+                      settings:
+                        "Your branch, subscription terms and prototype boundaries.",
+                    }[page]
+                  }
+                </p>
+              </div>
+              <div className="page-actions">
+                {page !== "assistance" && page !== "video-test" && (
+                  <button
+                    className="button secondary"
+                    disabled={disabled}
+                    onClick={() => setModal("assistance")}
+                  >
+                    <Bell size={17} />
+                    Ask for assistance
+                  </button>
+                )}
+                {page === "incidents" || page === "overview" ? (
+                  <button
+                    className="button primary"
+                    disabled={disabled}
+                    onClick={() => setModal("manual")}
+                  >
+                    <Plus size={17} />
+                    New manual case
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <div className="page-actions">
-              {page !== "assistance" && page !== "video-test" && (
-                <button
-                  className="button secondary"
-                  disabled={disabled}
-                  onClick={() => setModal("assistance")}
-                >
-                  <Bell size={17} />
-                  Ask for assistance
-                </button>
-              )}
-              {page === "incidents" || page === "overview" ? (
-                <button
-                  className="button primary"
-                  disabled={disabled}
-                  onClick={() => setModal("manual")}
-                >
-                  <Plus size={17} />
-                  New manual case
-                </button>
-              ) : null}
-            </div>
-          </div>
+          )}
           {!data ? (
             <div className="panel">
               <Empty
@@ -891,14 +907,22 @@ export default function App() {
                   branchName={data.site.name}
                 />
               )}
+              {page === "live-detection" && (
+                <LiveDetection
+                  key={`${user.id}:${data.site.id}`}
+                  branchName={data.site.name}
+                />
+              )}
               {page === "activity" && <ActivityPage data={data} />}
               {page === "settings" && <Settings data={data} />}
               <div className="workspace-footnote">
                 <ShieldCheck size={14} />
                 <span>
-                  {page === "video-test"
-                    ? "Local recording test · Timestamps are offsets within the video · No live monitoring"
-                    : "Pharmacy-only prototype · Synthetic records · All displayed times Europe/Dublin"}
+                  {page === "live-detection"
+                    ? "Video stays on this laptop · Review every alert · Stop detection before leaving the CCTV view"
+                    : page === "video-test"
+                      ? "Local recording test · Timestamps are offsets within the video · No live monitoring"
+                      : "Pharmacy-only prototype · Synthetic records · All displayed times Europe/Dublin"}
                 </span>
                 <span className="footnote-version">AisleSignals 0.1</span>
               </div>

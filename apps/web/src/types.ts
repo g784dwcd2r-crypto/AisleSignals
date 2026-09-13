@@ -115,6 +115,7 @@ export type Bootstrap = {
 };
 export type Page =
   | "overview"
+  | "live-detection"
   | "review"
   | "incidents"
   | "assistance"

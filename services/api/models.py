@@ -1,6 +1,9 @@
 """Strict inputs for the narrow prototype contract."""
 
+from datetime import datetime, timedelta, timezone
 from typing import Literal
+import unicodedata
+from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -8,6 +11,7 @@ from pydantic import (
     AwareDatetime,
     StrictBool,
     StrictInt,
+    field_validator,
     model_validator,
 )
 
@@ -127,4 +131,56 @@ class PlaybackEvent(Input):
     def ordered_interval(self):
         if self.video_end_seconds < self.video_start_seconds:
             raise ValueError("Video end must be at or after video start.")
+        return self
+
+
+class LiveEventInput(Input):
+    """Browser-reported pose observations, never footage or a finding of theft."""
+
+    run_id: str = Field(strict=True, min_length=36, max_length=36)
+    event_id: str = Field(strict=True, min_length=36, max_length=36)
+    source_kind: Literal["SCREEN_CAPTURE", "CAMERA", "RECORDED_VIDEO"]
+    source_label: str = Field(strict=True, min_length=1, max_length=120)
+    event_code: Literal["REPEATED_HAND_TO_WAIST", "RESTRICTED_ZONE_ENTRY"]
+    track_id: StrictInt = Field(ge=1, le=1_000_000)
+    source_time_seconds: float = Field(
+        strict=True, allow_inf_nan=False, ge=0, le=43_200
+    )
+    detected_at: AwareDatetime
+    model_version: Literal["mediapipe-pose-lite-f16-v1"]
+    rule_version: Literal["pose-rules-v1"]
+    sound_requested: StrictBool
+
+    @field_validator("run_id", "event_id")
+    @classmethod
+    def canonical_uuid(cls, value):
+        parsed = str(UUID(value))
+        if parsed != value.lower():
+            raise ValueError("Use a hyphenated UUID.")
+        return parsed
+
+    @field_validator("source_label")
+    @classmethod
+    def plain_source_label(cls, value):
+        if any(
+            character in "<>" or unicodedata.category(character).startswith("C")
+            for character in value
+        ):
+            raise ValueError("Use a plain source label without markup or controls.")
+        return value
+
+    @field_validator("detected_at", mode="before")
+    @classmethod
+    def explicit_timestamp(cls, value):
+        if not isinstance(value, str) or "T" not in value:
+            raise ValueError("Use an ISO timestamp with a timezone.")
+        return value
+
+    @model_validator(mode="after")
+    def bounded_observation(self):
+        if self.source_kind == "RECORDED_VIDEO" and self.source_time_seconds > 600:
+            raise ValueError("Recorded-video source time must not exceed 600 seconds.")
+        stamp = datetime.now(timezone.utc)
+        if not stamp - timedelta(hours=24) <= self.detected_at <= stamp + timedelta(minutes=1):
+            raise ValueError("Detection time must be within the last 24 hours and no more than one minute ahead.")
         return self

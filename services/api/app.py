@@ -1,6 +1,8 @@
-"""AisleSignals 0.1: localhost-only, persistent synthetic workflow prototype.
+"""AisleSignals: localhost-only workflow and browser pose-observation prototype.
 
-No live camera input, cloud inference, biometric recognition, external alarm actuation or billing.
+The browser acquires selected video and reports local pose-rule metadata; this
+backend does not acquire video or verify detector output. No cloud inference,
+biometric recognition, external alarm actuation or billing.
 Run with: uvicorn services.api.app:app --host 127.0.0.1 --port 8765
 """
 
@@ -24,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException
 
 from .models import (
+    Input,
     Login,
     Shift,
     Simulator,
@@ -37,6 +40,7 @@ from .models import (
     AssistanceCreate,
     AssistanceTransition,
     PlaybackEvent,
+    LiveEventInput,
 )
 from .store import Store, now, ident, encode, digest, password_hash
 
@@ -492,10 +496,10 @@ def create_app(db_path=None, web_dist=None):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = (
-            "camera=(), microphone=(), geolocation=()"
+            "camera=(self), display-capture=(self), microphone=(), geolocation=()"
         )
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         )
         return response
 
@@ -684,6 +688,113 @@ def create_app(db_path=None, web_dist=None):
         # Include resolved authority in the retry hash so a membership change
         # cannot reveal an earlier branch's cached response for the same actor.
         return idempotent(ctx, request, {**payload, **scope}, run)
+
+    @application.get("/api/live-events")
+    def live_events(ctx: Context = Depends(context)):
+        return ctx.store.listing(ctx.conn, ctx.user, "live_event")[:100]
+
+    @application.post("/api/live-events")
+    def record_live_event(
+        body: LiveEventInput, request: Request, ctx: Context = Depends(context)
+    ):
+        payload = body.model_dump(mode="json")
+        scope = {
+            "organisation_id": ctx.user["organisation_id"],
+            "site_id": ctx.user["site_id"],
+        }
+
+        def run():
+            # A run is local to an actor and branch. A browser-supplied ID
+            # never grants access and a lost-response retry cannot log twice.
+            event_id = "live-" + digest(
+                encode(
+                    {
+                        **scope,
+                        "actor_id": ctx.user["id"],
+                        "run_id": body.run_id,
+                        "event_id": body.event_id,
+                    }
+                )
+            )
+            previous = ctx.store.get(ctx.conn, ctx.user, "live_event", event_id)
+            if previous is not None:
+                if any(previous.get(key) != value for key, value in payload.items()):
+                    problem(
+                        409,
+                        "LIVE_EVENT_CONFLICT",
+                        "This pose event was already logged with different input. The original record has been preserved.",
+                    )
+                return previous
+            descriptions = {
+                "REPEATED_HAND_TO_WAIST": (
+                    "Repeated hand-to-waist movement",
+                    "Browser pose rules reported repeated hand movement near the waist. Review the video context; this does not establish concealment or theft.",
+                ),
+                "RESTRICTED_ZONE_ENTRY": (
+                    "Restricted zone entry",
+                    "Browser pose rules reported a tracked person entering a user-marked restricted zone. Check the zone and context; this does not establish wrongdoing.",
+                ),
+            }
+            label, detail = descriptions[body.event_code]
+            item = dict(
+                **payload,
+                id=event_id,
+                label=label,
+                detail=detail,
+                created_at=now(),
+                acknowledged_at=None,
+                acknowledged_by=None,
+            )
+            ctx.put("live_event", item)
+            ctx.audit(
+                "LIVE_POSE_EVENT_LOGGED",
+                "live_event",
+                event_id,
+                "Browser-reported pose-rule metadata saved from "
+                + body.source_kind
+                + ". Source kind is a client declaration. No footage, identity finding, incident or confirmed speaker delivery is established.",
+            )
+            return item
+
+        # Cached responses must also honour a changed branch membership.
+        return idempotent(ctx, request, {**payload, **scope}, run)
+
+    @application.post("/api/live-events/{event_id}/acknowledge")
+    def acknowledge_live_event(
+        event_id: str,
+        request: Request,
+        body: Input = Input(),
+        ctx: Context = Depends(context),
+    ):
+        # Resolve scope before consulting retry results, including after a
+        # membership change or when a caller guesses another branch's ID.
+        ctx.get("live_event", event_id)
+
+        def run():
+            item = ctx.get("live_event", event_id)
+            if item["acknowledged_at"] is not None:
+                return item
+            item["acknowledged_at"] = now()
+            item["acknowledged_by"] = ctx.user["name"]
+            ctx.put("live_event", item)
+            ctx.audit(
+                "LIVE_POSE_EVENT_ACKNOWLEDGED",
+                "live_event",
+                event_id,
+                "A staff member acknowledged the pose observation. No incident finding recorded.",
+            )
+            return item
+
+        return idempotent(
+            ctx,
+            request,
+            {
+                **body.model_dump(),
+                "organisation_id": ctx.user["organisation_id"],
+                "site_id": ctx.user["site_id"],
+            },
+            run,
+        )
 
     @application.post("/api/simulator")
     def simulator(body: Simulator, request: Request, ctx: Context = Depends(context)):

@@ -2,7 +2,7 @@
 
 Product owner: Jawahir Q. · Direction clarified 13 September 2026.
 
-**Status: next-release implementation specification. These video adapters and detectors are not implemented by prototype 0.1.** The working prototype currently supplies the pharmacy workflow, scoped records and simulated observations. Its camera-readiness command requests metadata only and does not acquire video. Connecting an input, decoding frames and detecting a useful event are three distinct milestones.
+**Status: full-target specification with an implemented experimental slice.** The dedicated [Live Detection tab](live-detection.md) now acquires explicitly selected browser screen/device video or local recordings, runs real local pose inference, applies temporal review rules and connects laptop sound to saved metadata events. Direct recorder/RTSP adapters, validated pharmacy interaction classes, grid tiling and event clips below remain planned. The camera-readiness command still requests metadata only.
 
 Subsequent implemented slice: the [local video-file test](video-test.md) loads MP4/WebM recordings and scans for visual activity entirely in the browser. It is deliberately separate from live-source ingestion and trained AI; its results do not create incidents or live alerts.
 

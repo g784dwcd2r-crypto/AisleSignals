@@ -4,11 +4,11 @@ A working first prototype for pharmacy incident review, evidence context and sta
 
 **€60 per pharmacy branch per month. Existing Windows or Mac laptop. No hardware purchases.**
 
-This version runs locally and uses clearly labelled synthetic observations. It supports a complete review-to-closed-case journey, persisted records, three isolated demonstration organisations and manager/reviewer permissions. Real camera detection, cloud AI and external alarms are future integrations; the interface does not represent them as active.
+This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly selected CCTV window, browser camera or recording → local body-pose inference → experimental temporal rules → laptop attention alarm and saved event metadata. The pharmacy case workflow retains clearly labelled synthetic observations, isolated demonstration organisations and manager/reviewer permissions. This is an experimental prototype, not a validated pharmacy theft detector. [Live Detection guide](docs/prototype/live-detection.md).
 
 ![AisleSignals prototype overview with synthetic pharmacy records](docs/prototype/screenshots/overview.png)
 
-**Verified build:** [all six GitHub jobs passed](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616), including actual Windows x64 and Mac arm64 executable startup and login. Download the development bundles from that run's **Artifacts** section. The first build's artifacts are retained until 27 September 2026; the checked-in workflow can produce fresh bundles.
+**Earlier verified desktop build:** [all six GitHub jobs passed](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616), including Windows x64 and Mac arm64 executable startup and login. Those historical artifacts predate Live Detection; use the current source build or a newer successfully verified workflow run for this feature.
 
 ## Start the prototype
 
@@ -34,6 +34,7 @@ After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the sour
 
 ## What you can do
 
+- Open **LIVE DETECTION**, share an authorised CCTV window or choose a camera/recording, and start real local pose inference. View person boxes/keypoints and automatic review alarms for repeated reach-to-waist patterns or configured restricted-zone presence. Save and acknowledge branch event metadata; no theft finding or video-clip capture is claimed. See the [Live Detection guide](docs/prototype/live-detection.md).
 - Load an MP4/WebM in **Video test**, play it locally, scan for visual changes and jump to activity timestamps. The recording stays in the browser; this is a playback test, not AI theft detection or a live alert. See the [video test guide](docs/prototype/video-test.md).
 - Start an explicit **alarm playback test** for a repeating laptop attention tone, automatic image-change categories and a saved branch test log. Mute, stop, seek and failure controls are included. A real FBI pharmacy video is linked as a YouTube reference; the reference iframe cannot be analysed. See the [alarm and reference guide](docs/prototype/attention-alarm-test.md).
 - Review, acknowledge and dismiss a synthetic observation, or open exactly one case with a recorded reason.
@@ -76,7 +77,7 @@ Run `npm ci --prefix apps/web` first if the setup script has not installed inter
 
 ## Scope and next release
 
-The clarified core product is **automatic CCTV monitoring** across a browser viewer, a desktop CCTV app or an existing recorder serving a separate monitor. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines all three setup paths, direct-stream preference, authorised window-capture fallback, live-versus-playback guards and economical local AI. Live adapters and trained detectors are next-release work. The local video-file activity test is implemented separately; the pharmacy review queue remains synthetic.
+The clarified core product is **automatic CCTV monitoring** across a browser viewer, desktop CCTV app or existing recorder. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines the full target. The implemented Live Detection slice supports browser-mediated screen/device input and local files, local pose inference, observable rules and laptop alarms. Direct recorder/RTSP adapters, validated concealment classification, automatic grid tiling and evidence clips remain future work. The pharmacy review queue remains synthetic.
 
 The prototype uses local SQLite and public demo accounts to make the workflow testable now. Production remains the documented React/FastAPI/PostgreSQL design with managed MFA, qualified camera integration, encrypted evidence lifecycle, signed Windows/Mac companion packages and actual site acceptance. The prototype's `/api` is a documented implementation slice, not completion of the full planned `/v1` contract.
 

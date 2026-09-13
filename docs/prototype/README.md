@@ -4,6 +4,8 @@ Product owner: Jawahir Q. Built by Codex with backend, interface and laptop/read
 
 ## Try the workflow
 
+For the new camera/video path, open **LIVE DETECTION** and follow the [local detection guide](live-detection.md). It contains real pose inference, experimental temporal rules, person overlays and automatic laptop attention alarms with saved metadata. The steps below describe the separate synthetic case workflow.
+
 1. Start the local application and open `http://127.0.0.1:8765`.
 2. Sign in as `manager@harbour.demo`, password `AisleDemo!2026`. These deliberately public accounts belong only to this synthetic prototype.
 3. Open the review queue. Inspect the synthetic shelf observation and its source/time; acknowledge it, then record a reason to dismiss it or open a case.
