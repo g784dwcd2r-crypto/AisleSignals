@@ -81,6 +81,80 @@ def test_persistent_seed_and_manual_record_survive_restart(app, client):
     assert any(record["id"] == item["id"] for record in refreshed["incidents"])
 
 
+def test_mari_mina_profile_starts_empty_and_is_scoped(app, client):
+    mari = sign_in(app, "manager@marimina.demo")
+    profile = mari.get("/api/bootstrap").json()
+    harbour = client.get("/api/bootstrap").json()
+    assert profile["site"]["name"] == "Mari Mina Pharmacy"
+    assert profile["site"]["monthly_price_cents"] == 6000
+    assert profile["site"]["timezone"] == "Europe/Dublin"
+    assert profile["user"]["name"] == "Mari Mina Manager"
+    assert profile["site"]["id"] != harbour["site"]["id"]
+    assert profile["candidates"] == profile["incidents"] == profile["assistance"] == []
+    assert profile["cameras"][0]["connection_kind"] == "SIMULATOR"
+    evidence = next(c for c in harbour["candidates"] if c["evidence_url"])
+    assert mari.get(evidence["evidence_url"]).status_code == 404
+    item = manual(client)
+    assert (
+        write(
+            mari,
+            f"/api/incidents/{item['id']}",
+            {"expected_version": item["version"], "title": "Cross-scope attempt"},
+            method="patch",
+        ).status_code
+        == 404
+    )
+
+
+def test_mari_mina_upgrade_is_additive_and_concurrent_safe(app, client):
+    item = manual(client)
+    assert write(client, "/api/shift", {"active": True}).status_code == 200
+    # Reproduce the earlier three-account database without disturbing its work.
+    with app.state.store.transaction() as conn:
+        old_user = dict(
+            conn.execute(
+                "SELECT * FROM users WHERE email='manager@harbour.demo'"
+            ).fetchone()
+        )
+        mari = conn.execute(
+            "SELECT * FROM users WHERE email='manager@marimina.demo'"
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM entities WHERE organisation_id=?", (mari["organisation_id"],)
+        )
+        conn.execute("DELETE FROM users WHERE id=?", (mari["id"],))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(Store, [app.state.store.path, app.state.store.path]))
+    restarted = create_app(app.state.store.path)
+    mari_client = sign_in(restarted, "manager@marimina.demo")
+    mari_before = mari_client.get("/api/bootstrap").json()
+    assert write(mari_client, "/api/shift", {"active": True}).status_code == 200
+    Store(app.state.store.path)
+    refreshed = client.get("/api/bootstrap").json()
+    assert refreshed["site"]["shift_active"] is True
+    assert any(record["id"] == item["id"] for record in refreshed["incidents"])
+    mari_after = mari_client.get("/api/bootstrap").json()
+    assert mari_after["site"]["id"] == mari_before["site"]["id"]
+    assert mari_after["site"]["shift_active"] is True
+    assert mari_after["candidates"] == mari_after["incidents"] == []
+    with app.state.store.transaction() as conn:
+        assert (
+            dict(
+                conn.execute(
+                    "SELECT * FROM users WHERE email='manager@harbour.demo'"
+                ).fetchone()
+            )
+            == old_user
+        )
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 4
+        assert (
+            conn.execute("SELECT COUNT(*) FROM entities WHERE kind='site'").fetchone()[
+                0
+            ]
+            == 3
+        )
+
+
 def test_duplicate_creation_and_changed_payload_conflict(client):
     body = {"title": "Manual event", "notes": "Synthetic reviewed context"}
     first = write(client, "/api/incidents", body, "same-action")

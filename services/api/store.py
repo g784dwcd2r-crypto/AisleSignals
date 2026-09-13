@@ -78,6 +78,7 @@ class Store:
             conn.execute("PRAGMA user_version=1")
             if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
                 self.seed(conn)
+            self.ensure_mari_mina_profile(conn)
 
     @contextmanager
     def transaction(self):
@@ -200,68 +201,105 @@ class Store:
             ("Harbour Pharmacy", "Harbour Demo Ltd", "harbour"),
             ("Liffey Pharmacy", "Liffey Demo Ltd", "liffey"),
         ]:
-            site_id, organisation_id = ident(), ident()
-            scope = dict(site_id=site_id, organisation_id=organisation_id)
-            self.put(
+            self.seed_profile(
                 conn,
-                scope,
-                "site",
-                dict(
-                    id=site_id,
-                    name=branch,
-                    organisation_name=organisation,
-                    timezone="Europe/Dublin",
-                    monthly_price_cents=6000,
-                    shift_active=False,
+                branch,
+                organisation,
+                slug,
+                roles=("MANAGER", "REVIEWER") if slug == "harbour" else ("MANAGER",),
+            )
+
+    def ensure_mari_mina_profile(self, conn):
+        """Add the requested demo workspace without resetting existing records."""
+        if conn.execute(
+            "SELECT 1 FROM users WHERE email=?", ("manager@marimina.demo",)
+        ).fetchone():
+            return
+        self.seed_profile(
+            conn,
+            "Mari Mina Pharmacy",
+            "Mari Mina Pharmacy (demo)",
+            "marimina",
+            seed_observations=False,
+        )
+
+    def seed_profile(
+        self,
+        conn,
+        branch,
+        organisation,
+        slug,
+        *,
+        roles=("MANAGER",),
+        seed_observations=True,
+    ):
+        site_id, organisation_id = ident(), ident()
+        scope = dict(site_id=site_id, organisation_id=organisation_id)
+        self.put(
+            conn,
+            scope,
+            "site",
+            dict(
+                id=site_id,
+                name=branch,
+                organisation_name=organisation,
+                timezone="Europe/Dublin",
+                monthly_price_cents=6000,
+                shift_active=False,
+            ),
+        )
+        for role in roles:
+            salt = secrets.token_hex(16)
+            user = dict(
+                id=ident(),
+                email=f"{role.lower()}@{slug}.demo",
+                name=f"{branch.removesuffix(' Pharmacy')} {role.title()}",
+                role=role,
+                **scope,
+            )
+            conn.execute(
+                "INSERT INTO users VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    user["id"],
+                    user["email"],
+                    user["name"],
+                    role,
+                    organisation_id,
+                    site_id,
+                    salt,
+                    password_hash(PASSWORD, salt),
                 ),
             )
-            for role in ["MANAGER", "REVIEWER"] if slug == "harbour" else ["MANAGER"]:
-                salt = secrets.token_hex(16)
-                user = dict(
-                    id=ident(),
-                    email=f"{role.lower()}@{slug}.demo",
-                    name=f"{branch.split()[0]} {role.title()}",
-                    role=role,
-                    **scope,
-                )
-                conn.execute(
-                    "INSERT INTO users VALUES(?,?,?,?,?,?,?,?)",
-                    (
-                        user["id"],
-                        user["email"],
-                        user["name"],
-                        role,
-                        organisation_id,
-                        site_id,
-                        salt,
-                        password_hash(PASSWORD, salt),
-                    ),
-                )
-            camera = dict(
-                id=ident(),
-                name="Front shop · simulator",
-                zone="Open retail shelves",
-                status="DEMO_ONLINE",
-                connection_kind="SIMULATOR",
-                last_seen_at=now(),
-                detail="Synthetic source only. No physical camera is connected.",
-                version=1,
-            )
-            self.put(conn, scope, "camera", camera)
-            for scenario, minutes in [
+        camera = dict(
+            id=ident(),
+            name="Front shop · simulator",
+            zone="Open retail shelves",
+            status="DEMO_ONLINE",
+            connection_kind="SIMULATOR",
+            last_seen_at=now(),
+            detail="Synthetic source only. No physical camera is connected.",
+            version=1,
+        )
+        self.put(conn, scope, "camera", camera)
+        scenarios = (
+            [
                 ("SHELF_EVENT", 7),
                 ("RETURNED_ITEM", 19),
                 ("MISSING_MEDIA", 31),
                 ("HISTORICAL_EVENT", 1560),
-            ]:
-                self.put(
-                    conn, scope, "candidate", self.candidate(camera, scenario, minutes)
-                )
-            self.audit(
-                conn,
-                user,
-                "DEMO_SEEDED",
-                "site",
-                site_id,
-                "Synthetic prototype fixtures created. No live monitoring is active.",
+            ]
+            if seed_observations
+            else []
+        )
+        for scenario, minutes in scenarios:
+            self.put(
+                conn, scope, "candidate", self.candidate(camera, scenario, minutes)
             )
+        self.audit(
+            conn,
+            user,
+            "DEMO_SEEDED",
+            "site",
+            site_id,
+            "Synthetic prototype fixtures created. No live monitoring is active.",
+        )

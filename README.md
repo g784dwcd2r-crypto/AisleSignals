@@ -4,7 +4,7 @@ A working first prototype for pharmacy incident review, evidence context and sta
 
 **€60 per pharmacy branch per month. Existing Windows or Mac laptop. No hardware purchases.**
 
-This version runs locally and uses clearly labelled synthetic observations. It supports a complete review-to-closed-case journey, persisted records, two isolated demonstration organisations and manager/reviewer permissions. Real camera detection, cloud AI and external alarms are future integrations; the interface does not represent them as active.
+This version runs locally and uses clearly labelled synthetic observations. It supports a complete review-to-closed-case journey, persisted records, three isolated demonstration organisations and manager/reviewer permissions. Real camera detection, cloud AI and external alarms are future integrations; the interface does not represent them as active.
 
 ![AisleSignals prototype overview with synthetic pharmacy records](docs/prototype/screenshots/overview.png)
 
@@ -27,6 +27,8 @@ py -3.12 scripts\setup_prototype.py
 ```
 
 Open **http://127.0.0.1:8765**. Sign in as **manager@harbour.demo** with **AisleDemo!2026**. These are deliberately public credentials for synthetic data only. Try **reviewer@harbour.demo** for restricted permissions, or **manager@liffey.demo** for the other organisation.
+
+**Mari Mina Pharmacy:** select its manager account on the login screen or enter **manager@marimina.demo**, with the same public demo password. It has a separate organisation/branch, an empty casebook and review queue, one explicitly labelled simulator source, and the €60 monthly branch price. Upgrading adds this profile once while preserving existing pharmacy records and credentials. No address, contact details or actual incident history have been assumed.
 
 After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the source installation. Separate self-contained development bundles are built by the [GitHub workflow](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/workflows/prototype.yml) when all required checks pass; they contain the runtime and do not need Node/Python on the recipient laptop. Bundles are unsigned prototypes and are labelled by the actual platform/architecture. They are not commissioned pharmacy installers.
 

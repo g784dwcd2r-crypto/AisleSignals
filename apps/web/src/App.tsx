@@ -302,6 +302,9 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
                 <option value="manager@liffey.demo">
                   Liffey Pharmacy · Manager
                 </option>
+                <option value="manager@marimina.demo">
+                  Mari Mina Pharmacy · Manager
+                </option>
               </select>
             </label>
             <label>

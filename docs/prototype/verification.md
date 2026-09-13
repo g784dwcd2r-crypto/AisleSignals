@@ -63,3 +63,7 @@ Download the artifacts from the run's **Artifacts** section:
 Artifacts expire on 27 September 2026 under the 14-day retention policy. GitHub wraps each bundle in an outer ZIP: extract that, then the inner platform archive. The workflow can be run again to regenerate packages. Intel Mac and Windows ARM packages were not built or qualified.
 
 The subsequent documentation-only commit adds this observed evidence and a screenshot; executable source and lockfiles are unchanged from the tested commit. CI deliberately ignores documentation-only pushes.
+
+## Mari Mina Pharmacy profile update
+
+The named profile addition passed the 65-test Python suite (26 API, 39 companion, plus 49 subtests), the production interface build and the 10 existing browser journeys. Two added API checks verify its empty initial records, cross-pharmacy access rejection, and concurrent/repeated upgrades of the older database while preserving casework, shift state and credential hashes. An independent read-only agent review found no blocking issues. The earlier six-job run above records the initial prototype source; the profile commit triggers a fresh workflow.

@@ -14,6 +14,7 @@ Prototype 0.1 — 13 September 2026. Product owner: Jawahir Q.
 | Windows and Mac automated builds | Passed in GitHub Actions | Windows x64 and Mac arm64 bundles built; actual executables passed startup, assets, login, scoped data and logout checks in [run 34762107616](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616) |
 | Accessibility | Checked on three core browser views | Automated checks pass for login, overview and review; captions enlarged and contrast improved; not a complete accessibility certification |
 | Pricing | Preserved | EUR 60 monthly per branch; owner-managed record only, no charging |
+| Mari Mina Pharmacy profile | Implemented | Separate demo organisation/branch and manager sign-in; initially empty records; additive startup preserves existing workspaces |
 | Actual camera/detector | Not connected | Existing device/interface inventory and authorised software integration still required |
 | Cloud AI / real evidence lifecycle | Not implemented | Provider evaluation, budgets, encrypted capture/storage, deletion/holds and rights workflows remain production work |
 | Signed installers / pharmacy laptop acceptance | Not completed | Windows and Mac bundles are developer prototypes; exact pharmacy hardware/OS versions remain unqualified |

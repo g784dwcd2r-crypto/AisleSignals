@@ -16,6 +16,8 @@ Product owner: Jawahir Q. Built by Codex with backend, interface and laptop/read
 
 No external account, paid API, new camera or hardware is required for this prototype. The branch price remains €60/month; the UI is a price/budget record and does not charge a customer.
 
+Mari Mina Pharmacy is also available as a separate profile: choose **Mari Mina Pharmacy · Manager** at login (`manager@marimina.demo`, password `AisleDemo!2026`). Its casebook and observation queue start empty. The simulator remains available for an explicit demonstration; no incident history or camera connection has been attributed to the pharmacy. Existing installations receive the new profile on startup without resetting any workspace.
+
 ## Run from source
 
 Use Python 3.12 and Node.js 24 LTS for the development toolchain. These are developer prerequisites; desktop bundles contain the runtime and built interface.
@@ -66,7 +68,7 @@ For Windows PowerShell, set `$env:AISLESIGNALS_TEST_PYTHON='.venv/Scripts/python
 | Decision | Reason and boundary |
 |---|---|
 | Local FastAPI + SQLite + React | Runs on an existing laptop without hosted services. SQL transactions, scoped queries and version checks make a useful first workflow; this does not implement the production PostgreSQL RLS design. |
-| Public synthetic accounts | Makes the manager/reviewer/two-organisation demo immediately testable. Production requires managed identity, individual accounts, MFA, account lifecycle and hardened sessions. |
+| Public synthetic accounts | Makes manager/reviewer permissions and separate pharmacy organisations immediately testable. Production requires managed identity, individual accounts, MFA, account lifecycle and hardened sessions. |
 | Synthetic camera observations | Allows testing the complete review flow before obtaining actual camera models, credentials and detector rights. The simulator is never described as live detection. |
 | Local factual report template | Costs zero in model calls and remains deterministic. It is not AI inference. A future provider adapter needs factuality, budget and processing acceptance. |
 | Explicit readiness utility | Reads laptop capabilities and, only when explicitly requested, a supported private-camera protocol response. It is not continuous surveillance, frame decoding or theft detection. |

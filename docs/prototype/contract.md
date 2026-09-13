@@ -7,7 +7,7 @@ Implementation slice of baseline 2.2, not its completed production contract. Roo
 Same-origin local browser/API deployment on 127.0.0.1:8765. Vite developer proxy forwards /api. FastAPI serves built apps/web/dist with SPA fallback. Local prototype SQLite persists to ignored `.local/aislesignals.db`; not production PostgreSQL/RLS. Cookies are HttpOnly and SameSite=Strict, scoped to local host; CSRF token returned at login and GET /api/session and required in X-CSRF-Token on authenticated writes. Reject foreign Origin, unknown Host, expired sessions and cross-organisation resource IDs (404). Eight-hour absolute / fifteen-minute idle session. Demo password auth is explicitly not production OIDC/MFA. No credentials in browser storage. Login rate limited.
 
 POST /api/login `{email,password}` -> `{user,csrf_token}`. GET /api/session -> same. POST /api/logout -> `{ok:true}`.
-Demo users: manager@harbour.demo, reviewer@harbour.demo, manager@liffey.demo. Shared deliberately-public demo password: `AisleDemo!2026`. Only synthetic local use. Seeded sites: Harbour Pharmacy / Liffey Pharmacy, separate organisations. UI displays demo credentials on login. No registration/payment flows.
+Demo users: manager@harbour.demo, reviewer@harbour.demo, manager@liffey.demo, manager@marimina.demo. Shared deliberately-public demo password: `AisleDemo!2026`. Only synthetic local use. Sites: Harbour Pharmacy / Liffey Pharmacy / Mari Mina Pharmacy, separate organisations. Mari Mina starts with no observations or cases and receives a labelled simulator source; startup adds it once to existing databases without resetting records. UI displays demo credentials on login. No registration/payment flows.
 
 ## Read model
 
