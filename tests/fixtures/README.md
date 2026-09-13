@@ -53,3 +53,17 @@ const { chromium } = require('./node_modules/playwright-core');
 });
 
 ```
+
+## Case-review recording
+
+`synthetic-case-video.webm` repeats the original six-second generated fixture ten times with continuous media timestamps: 60 seconds, 600 frames, WebM/VP8, 320 × 180, no audio. Size: 67,204 bytes. SHA-256: `b077ba9a9cd88b9c484e772d2409c2490f73fffe940503885e25d8a561b0711c`. It contains the same original rectangle pixels and no customer or third-party footage.
+
+The case-review browser journeys use this longer recording so the source remains active while a real local API job completes and staff inspect the result. The short scanner fixture could naturally end after sampling and stop live result polling, racing the case-review assertion on slower Windows runners. The synthetic case provider also waits two seconds to exercise asynchronous completion beyond that short input window. Source-end cancellation remains enabled and tested separately; this asset does not change application timing or detection guards.
+
+Regenerate from the checked-in original with an existing FFmpeg:
+
+```sh
+ffmpeg -hide_banner -loglevel error -stream_loop 9 -i tests/fixtures/synthetic-video.webm -map 0:v:0 -c:v copy -an -y tests/fixtures/synthetic-case-video.webm
+```
+
+This remuxes the generated video without fetching remote media. Encoder/container versions may change output bytes; record the new checksum after intentional regeneration.

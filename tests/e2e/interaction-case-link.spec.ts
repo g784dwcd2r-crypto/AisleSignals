@@ -8,7 +8,7 @@ import AxeBuilder from "@axe-core/playwright";
 // Each browser journey owns a fresh real pilot API/SQLite/evidence directory.
 // Only the vision provider is mocked; no customer preview or model is contacted.
 const server = String.raw`
-import json, os, socket, sys
+import json, os, socket, sys, time
 from pathlib import Path
 for key in list(os.environ):
     if key.startswith('AISLESIGNALS_'): del os.environ[key]
@@ -27,7 +27,12 @@ from test_interactions import MockProvider
 initial=initialise(app.state.store,'Synthetic Case Group','Synthetic North','case.manager@example.test','Synthetic Case Manager','Synthetic case test passphrase 847!')
 other=add_site(app.state.store, initial['site']['organisation_id'],'Synthetic South')
 grant_user(app.state.store,'case.manager@example.test',other['id'],'MANAGER')
-app.state.interactions.provider=MockProvider()
+class DelayedReviewProvider(MockProvider):
+    def analyze(self, frames):
+        # Exercise real async completion beyond the short scanner fixture's end.
+        time.sleep(2)
+        return super().analyze(frames)
+app.state.interactions.provider=DelayedReviewProvider()
 import uvicorn
 print('CASE_READY '+json.dumps({'url':'http://127.0.0.1:'+str(port),'north':initial['site']['id'],'south':other['id']}),flush=True)
 uvicorn.Server(uvicorn.Config(app,log_level='warning',access_log=False,proxy_headers=False)).run(sockets=[listener])
@@ -128,7 +133,9 @@ async function open(page: Page, installation: Installation) {
     .click();
   await page
     .getByLabel("Choose CCTV recording")
-    .setInputFiles(resolve("tests/fixtures/synthetic-video.webm"));
+    // Keep the real decoder running while the API completes and staff review.
+    // The short scanner fixture can end and stop polling before a result appears.
+    .setInputFiles(resolve("tests/fixtures/synthetic-case-video.webm"));
   await page
     .getByRole("combobox", { name: "Camera layout", exact: true })
     .selectOption("single");
