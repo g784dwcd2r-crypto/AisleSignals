@@ -15,12 +15,13 @@ async function open(page: Page) {
 
 // Provider responses below are explicit fixtures for workflow tests. They do not
 // demonstrate model accuracy. Actual pretrained inference is tested separately.
-async function modelWorkflow(page: Page, { concealment = false, delayed = false, reviewConflict = false } = {}) {
+async function modelWorkflow(page: Page, { concealment = false, delayed = false, reviewConflict = false, unavailable = false } = {}) {
   let submitted: any = null;
   let item: any = null;
   let cancelled = 0;
   let deleted = false;
   let reviews = 0;
+  let ready = !unavailable;
   await page.addInitScript(() => {
     (window as any).__interactionAudioStarts = 0;
     const start = OscillatorNode.prototype.start;
@@ -40,7 +41,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     }
     (window as any).Worker = EmptyPoseWorker;
   });
-  await page.route('**/api/interactions/status', route => route.fulfill({ json: { ready: true, model: 'qwen3-vl:4b', mode: 'experimental', message: 'Controlled test provider; no accuracy claim.', evidence_policy: { retention_seconds: 86400, site_limit: 100, installation_limit: 600, encryption: 'AES-256-GCM', rolling_cleanup: 'Oldest unreviewed ordinary results roll off at capacity. Reviewed samples and possible concealment expire after 24 hours or explicit deletion.' } } }));
+  await page.route('**/api/interactions/status', route => route.fulfill({ json: { ready, model: 'qwen3-vl:4b', mode: ready ? 'experimental' : 'disabled', message: ready ? 'Controlled test provider; no accuracy claim.' : 'Interaction analysis disabled in this controlled test session.', evidence_policy: { retention_seconds: 86400, site_limit: 100, installation_limit: 600, encryption: 'AES-256-GCM', rolling_cleanup: 'Oldest unreviewed ordinary results roll off at capacity. Reviewed samples and possible concealment expire after 24 hours or explicit deletion.' } } }));
   await page.route('**/api/interactions', route => route.fulfill({ json: { items: item && !deleted ? [item] : [] } }));
   await page.route('**/api/interactions/jobs', async route => {
     submitted = route.request().postDataJSON();
@@ -88,7 +89,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     deleted = true;
     await route.fulfill({ json: { deleted: true } });
   });
-  return { submitted: () => submitted, cancelled: () => cancelled };
+  return { submitted: () => submitted, cancelled: () => cancelled, setReady: (next: boolean) => { ready = next; } };
 }
 
 async function commission(page: Page) {
@@ -105,6 +106,7 @@ async function commission(page: Page) {
 
 async function collect(page: Page, arm = false) {
   await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
+  await page.getByRole('combobox', { name: 'Camera layout', exact: true }).selectOption('single');
   await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
   if (arm) await commission(page);
@@ -235,11 +237,69 @@ test('disarming during pending audio activation prevents a late test tone', asyn
   await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
   await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Camera layout', exact: true }).selectOption('single');
   await page.getByRole('button', { name: 'Test product alarm sound', exact: true }).click();
   await page.getByRole('button', { name: 'Stop sound & disarm product alarm', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__productAudioResumeDelivered)).toBe(true);
   expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
   await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('pose tracking distinguishes unavailable product analysis and recovery needs explicit opt-in', async ({ page }) => {
+  const probe = await modelWorkflow(page, { unavailable: true, delayed: true });
+  await open(page);
+  const productStatus = page.locator('.ld-product-status');
+  const enable = page.getByLabel('Enable product interaction analysis', { exact: true });
+  await expect(productStatus.getByText('PRODUCT ANALYSIS UNAVAILABLE', { exact: true })).toBeVisible();
+  await expect(productStatus).toContainText('Restart with the local interaction model');
+  await expect(enable).toBeDisabled();
+  await expect(enable).not.toBeChecked();
+  await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
+  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  await expect(page.getByText('POSE TRACKING RUNNING', { exact: true })).toBeVisible();
+  await expect.poll(() => page.locator('.ld-metrics b').nth(2).textContent()).not.toBe('0');
+  await expect(productStatus.getByText('PRODUCT ANALYSIS UNAVAILABLE', { exact: true })).toBeVisible();
+  await expect(page.getByText('0/4 fresh sampled frames', { exact: true })).toBeVisible();
+  expect(probe.submitted()).toBeNull();
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+  probe.setReady(true);
+  await page.getByRole('button', { name: 'Refresh model & history', exact: true }).click();
+  await expect(productStatus.getByText('PRODUCT ANALYSIS OFF', { exact: true })).toBeVisible();
+  await expect(enable).toBeEnabled();
+  await expect(enable).not.toBeChecked();
+  await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked();
+  await collect(page);
+  await expect(productStatus.getByText('PRODUCT ANALYSIS MANUAL · READY', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
+  await expect(productStatus.getByText('PRODUCT ANALYSIS ANALYSING', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('losing product model readiness clears enabled sampling and automatic mode without restarting them on recovery', async ({ page }) => {
+  const probe = await modelWorkflow(page);
+  await open(page);
+  const enable = page.getByLabel('Enable product interaction analysis', { exact: true });
+  const automatic = page.getByLabel('Analyse automatically', { exact: true });
+  await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
+  await page.getByRole('combobox', { name: 'Camera layout', exact: true }).selectOption('single');
+  await enable.check();
+  await automatic.check();
+  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+  await expect(page.getByText('PRODUCT ANALYSIS AUTOMATIC · COLLECTING', { exact: true })).toBeVisible();
+  probe.setReady(false);
+  await page.getByRole('button', { name: 'Refresh model & history', exact: true }).click();
+  await expect(enable).not.toBeChecked();
+  await expect(enable).toBeDisabled();
+  await expect(automatic).not.toBeChecked();
+  await expect(page.getByText('0/4 fresh sampled frames', { exact: true })).toBeVisible();
+  await expect(page.getByText('POSE TRACKING RUNNING', { exact: true })).toBeVisible();
+  probe.setReady(true);
+  await page.getByRole('button', { name: 'Refresh model & history', exact: true }).click();
+  await expect(page.getByText('PRODUCT ANALYSIS OFF', { exact: true })).toBeVisible();
+  await expect(enable).not.toBeChecked();
+  await expect(automatic).not.toBeChecked();
+  expect(probe.submitted()).toBeNull();
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
 });

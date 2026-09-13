@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 import InteractionAnalysis from "./interactionAnalysis";
+import type { InteractionMonitorStatus } from "./interactionAnalysis";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import { createPoseDetector } from "./poseDetector";
 import { watchVideoContinuity } from "./monitoringContinuity";
@@ -81,6 +82,11 @@ function safeLabel(label: string) {
 /** Only real frame observations enter the engine. Source/model lifetimes are explicit. */
 export default function LiveDetection({ branchName }: { branchName: string }) {
   const [phase, setPhase] = useState<Phase>("empty");
+  const [productStatus, setProductStatus] = useState<InteractionMonitorStatus>({
+    state: "checking",
+    label: "PRODUCT ANALYSIS CHECKING",
+    guidance: "Checking the separate local product model.",
+  });
   const [source, setSource] = useState<Source | null>(null);
   const [status, setStatus] = useState(
     "Connect a CCTV view or choose a recording to begin.",
@@ -1036,11 +1042,11 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           <span className={`ld-state ld-state-${phase}`}>
             <i />
             {phase === "running"
-              ? "DETECTION RUNNING"
+              ? "POSE TRACKING RUNNING"
               : phase === "degraded"
                 ? "POSE ANALYSIS DELAYED"
                 : phase === "loading"
-                  ? "LOADING MODEL"
+                  ? "LOADING POSE MODEL"
                   : phase === "preparing"
                     ? "CONNECTING"
                     : "DETECTION STOPPED"}
@@ -1048,6 +1054,15 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           <span>
             {source ? sourceNames[source.kind] : "No source connected"}
           </span>
+        </div>
+        <div
+          className={`ld-product-status ld-product-status-${productStatus.state}`}
+        >
+          <strong role="status">{productStatus.label}</strong>
+          <p>
+            {productStatus.guidance}{" "}
+            <a href="#interaction-heading">Product analysis settings</a>
+          </p>
         </div>
         <div
           className="ld-screen"
@@ -1373,6 +1388,8 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         muted={muted}
         volume={volume}
         branchName={branchName}
+        sourceKey={source?.url ?? source?.stream?.id ?? ""}
+        onMonitorStatus={setProductStatus}
       />
       <section className="ld-event-panel" aria-labelledby="ld-events-heading">
         <div className="ld-event-heading">

@@ -1,0 +1,124 @@
+.camera-layout-picker {
+  margin-top: 20px;
+  padding: 17px;
+  border: 1px solid #b8cdb6;
+  border-radius: 9px;
+  background: #f1f6ec;
+}
+.camera-layout-picker h3 {
+  margin: 0 0 9px;
+  color: #294f38;
+  font-size: 16px;
+}
+.camera-layout-picker p {
+  color: #465f4c;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.camera-layout-picker > label {
+  max-width: 380px;
+}
+.camera-layout-status {
+  padding: 10px;
+  border-radius: 6px;
+  background: #fffaf0;
+}
+.camera-board-options {
+  margin: 14px 0;
+  font-size: 12px;
+}
+.camera-board-options summary {
+  cursor: pointer;
+  color: #365740;
+  font-weight: 600;
+}
+.camera-board-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.camera-layout-preview {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  background: #142c22;
+  overflow: hidden;
+  border-radius: 5px;
+  margin-top: 16px;
+}
+.camera-layout-preview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.camera-layout-placeholder {
+  position: absolute;
+  inset: 20% 10%;
+  color: #edf4e8;
+  text-align: center;
+  font-size: 12px;
+}
+.live-detection .camera-layout-preview .camera-layout-tile {
+  position: absolute;
+  border: 2px dashed #ffe28b;
+  border-radius: 0;
+  box-sizing: border-box;
+  padding: 4px;
+  color: #173427;
+  background: #0000000a;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow: hidden;
+  min-height: 0;
+}
+.live-detection .camera-layout-preview .camera-layout-tile:disabled {
+  opacity: 1;
+  cursor: default;
+}
+.camera-layout-tile span {
+  padding: 4px 7px;
+  border-radius: 3px;
+  background: #ffedb0;
+  font-size: 12px;
+  font-weight: 700;
+}
+.live-detection
+  .camera-layout-preview
+  .camera-layout-tile:hover:not(:disabled) {
+  border-color: #ffe28b;
+  background: #0000000a;
+}
+.live-detection .camera-layout-preview .camera-layout-tile-selected,
+.live-detection
+  .camera-layout-preview
+  .camera-layout-tile-selected:hover:not(:disabled) {
+  border: 3px solid #9cffc3;
+  background: #44c37c12;
+}
+.camera-layout-tile-selected span {
+  background: #baffd4;
+}
+.camera-layout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 13px;
+  margin-top: 13px;
+}
+.camera-layout-actions > span {
+  font-size: 12px;
+  color: #34583f;
+}
+@media (max-width: 600px) {
+  .camera-board-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .camera-layout-picker {
+    padding: 12px;
+  }
+  .camera-layout-tile span {
+    padding: 2px 4px;
+    font-size: 10px;
+  }
+}

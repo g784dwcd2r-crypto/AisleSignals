@@ -58,7 +58,7 @@ test('real local model processes decoded video with no people or fabricated alar
     if (request.method() === 'POST' && request.url().endsWith('/live-events')) posts.push(request.postData() ?? '');
   });
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
-  await expect(page.getByText('DETECTION RUNNING', { exact: true })).toBeVisible();
+  await expect(page.getByText('POSE TRACKING RUNNING', { exact: true })).toBeVisible();
   await expect(page.getByText(/^No clear body pose/)).toBeVisible();
   await expect.poll(() => page.locator('.ld-metrics b').nth(2).textContent()).not.toBe('0');
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
@@ -67,7 +67,7 @@ test('real local model processes decoded video with no people or fabricated alar
   expect(errors).toEqual([]);
   expect(urls.some(url => url.includes('pose_landmarker_lite.task'))).toBe(true);
   expect(urls.some(url => url.endsWith('.wasm'))).toBe(true);
-  expect(urls.filter(url => /^https?:/.test(url)).every(url => new URL(url).origin === 'http://127.0.0.1:8799')).toBe(true);
+  expect(urls.filter(url => /^https?:/.test(url)).every(url => new URL(url).origin === new URL(page.url()).origin)).toBe(true);
   await expect(page.locator('.ld-track')).toHaveCount(0);
 });
 

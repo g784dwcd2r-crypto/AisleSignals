@@ -106,7 +106,7 @@ test('background updates preserve edits and require conflict reconciliation', as
   const data = await (await page.request.get('/api/bootstrap')).json();
   const incident = data.incidents.find((i: { title: string }) => i.title === 'Synthetic conflicting staff edits');
   const write = await page.request.patch(`/api/incidents/${incident.id}`, {
-    headers: { Origin: 'http://127.0.0.1:8799', 'X-CSRF-Token': session.csrf_token },
+    headers: { Origin: new URL(page.url()).origin, 'X-CSRF-Token': session.csrf_token },
     data: { expected_version: incident.version, notes: 'Another staff reviewer recorded new synthetic context.' },
   });
   expect(write.status()).toBe(200);
@@ -187,7 +187,7 @@ test('late export from an expired session cannot download into another account',
   await captured;
   const session = await (await page.request.get('/api/session')).json();
   const revoked = await page.request.post('/api/logout', {
-    headers: { Origin: 'http://127.0.0.1:8799', 'X-CSRF-Token': session.csrf_token }, data: {},
+    headers: { Origin: new URL(page.url()).origin, 'X-CSRF-Token': session.csrf_token }, data: {},
   });
   expect(revoked.status()).toBe(200);
   await page.clock.fastForward('00:11');

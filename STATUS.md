@@ -8,6 +8,7 @@ Protected local release candidate — 13 September 2026. Product owner: Jawahir 
 | Protected identity | Separate initially empty pilot database; named passwords, branch switching, current session authority and no public demo accounts. Local accounts only; no MFA, email invitations or hosted group synchronisation. |
 | LIVE DETECTION | Explicit screen/device/recording input, pose boxes/keypoints and experimental observable-action signals. Restart monitoring after source loss, hidden tabs, sleep or stalled frames. |
 | Product interactions | Local pretrained Qwen3-VL sampled-frame analysis for pickup, return, basket placement, possible concealment and uncertainty; evidence and human review. Actual inference exercised locally. No measured client-pharmacy accuracy or theft determination. |
+| Shared-window camera layouts | Local pixel check proposes 2 × 2, 3 × 2 or 2 × 3 layouts with measured separators and explicit confirmation. Manual layout/inset-board/custom-area fallback. Product analysis processes one selected camera tile; changing camera context cancels old work and disarms sound. See [camera layouts](docs/release/camera-layouts.md). |
 | Attention alarms | Speaker commissioning, explicit arming, fresh source/results, duplicate suppression, visual feedback, acknowledgement and bounded sound. Physical audibility at the six branches is untested. |
 | Evidence | Authenticated encryption of pilot JPEGs bound to branch/job/frame. Rolling bounded storage, 24-hour expiry and scoped retrieval/deletion. Database metadata relies on OS file protections/disk encryption. No continuous video archive. |
 | Backup and restore | Offline encrypted package with authenticated extraction and integrity checks. Restore revokes sessions, clears setup capabilities, disables accounts for access review and cancels old jobs. |
@@ -19,7 +20,7 @@ Protected local release candidate — 13 September 2026. Product owner: Jawahir 
 
 See [release verification](docs/release/verification.md), [administration](docs/release/pilot-administration.md), [installation](deployment/README.md) and [six-branch coordination](docs/release/rollout-coordination.md).
 
-This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, automatic grid/RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
+This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, simultaneous all-camera product analysis, direct RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
 
 ## Historical prototype record
 

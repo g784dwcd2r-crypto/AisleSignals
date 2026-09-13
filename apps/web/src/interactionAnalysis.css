@@ -52,6 +52,14 @@
   color: #53675b;
   overflow-wrap: anywhere;
 }
+.interaction-readiness {
+  padding: 12px;
+  background: #e9f0e4;
+  border-radius: 7px;
+  color: #35503d;
+  font-size: 13px;
+  line-height: 1.6;
+}
 .interaction-controls {
   display: flex;
   flex-wrap: wrap;

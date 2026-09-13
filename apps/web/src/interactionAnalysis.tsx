@@ -24,6 +24,7 @@ import {
 } from "./interactionCapture";
 import type { InteractionReview, SavedInteraction } from "./interactionCapture";
 import "./interactionAnalysis.css";
+import CameraLayoutPicker from "./CameraLayoutPicker";
 
 type Session = {
   runId: string;
@@ -58,6 +59,20 @@ type Props = {
   muted: boolean;
   volume: number;
   branchName: string;
+  sourceKey: string;
+  onMonitorStatus: (status: InteractionMonitorStatus) => void;
+};
+export type InteractionMonitorStatus = {
+  state:
+    | "checking"
+    | "unavailable"
+    | "off"
+    | "waiting"
+    | "collecting"
+    | "ready"
+    | "analysing";
+  label: string;
+  guidance: string;
 };
 const reviewLabels: Record<InteractionReview, string> = {
   USEFUL: "Useful",
@@ -83,6 +98,8 @@ export default function InteractionAnalysis({
   muted,
   volume,
   branchName,
+  sourceKey,
+  onMonitorStatus,
 }: Props) {
   const [enabled, setEnabled] = useState(false);
   const [automatic, setAutomatic] = useState(false);
@@ -101,7 +118,18 @@ export default function InteractionAnalysis({
     height: 1,
   });
   const [cropError, setCropError] = useState("");
+  const [cameraChoice, setCameraChoice] = useState({
+    sourceKey: "",
+    confirmed: false,
+    custom: false,
+    label: "",
+  });
+  const cameraReady =
+    cameraChoice.confirmed &&
+    cameraChoice.sourceKey === sourceKey &&
+    !!sourceKey;
   const [model, setModel] = useState<ModelStatus | null>(null);
+  const [modelChecked, setModelChecked] = useState(false);
   const [status, setStatus] = useState(
     "Enable analysis to sample the selected CCTV video.",
   );
@@ -131,6 +159,10 @@ export default function InteractionAnalysis({
     cropEnabled,
     crop,
     cropError,
+    modelReady: model?.ready === true,
+    cameraReady,
+    cameraLabel: cameraChoice.label,
+    sourceKey,
   });
   options.current = {
     enabled,
@@ -142,6 +174,10 @@ export default function InteractionAnalysis({
     cropEnabled,
     crop,
     cropError,
+    modelReady: model?.ready === true,
+    cameraReady,
+    cameraLabel: cameraChoice.label,
+    sourceKey,
   };
   const buffer = useRef(new InteractionFrameBuffer());
   const generation = useRef(0);
@@ -163,6 +199,7 @@ export default function InteractionAnalysis({
     const video = videoRef.current;
     if (
       !current.running ||
+      !options.current.cameraReady ||
       !current.source ||
       !video ||
       video.paused ||
@@ -178,6 +215,8 @@ export default function InteractionAnalysis({
       current.source.kind,
       current.source.label,
       options.current.cropEnabled ? options.current.crop : null,
+      options.current.sourceKey,
+      options.current.cameraLabel,
     ]);
   }
   function disarmAlarm(
@@ -276,7 +315,26 @@ export default function InteractionAnalysis({
     }
   }
 
-  function changeCrop(nextEnabled: boolean, nextCrop: DetectionRect) {
+  function invalidateCameraLayout() {
+    cancel();
+    options.current.cameraReady = false;
+    options.current.cameraLabel = "";
+    options.current.cropEnabled = false;
+    options.current.cropError = "";
+    options.current.crop = { x: 0, y: 0, width: 1, height: 1 };
+    setCropEnabled(false);
+    setCropError("");
+    setCrop(options.current.crop);
+    setCameraChoice({ sourceKey, confirmed: false, custom: false, label: "" });
+    setStatus(
+      "Choose or confirm the camera layout before sampling product interactions. Earlier camera samples and alarms were cleared.",
+    );
+  }
+  function changeCrop(
+    nextEnabled: boolean,
+    nextCrop: DetectionRect,
+    tileLabel?: string,
+  ) {
     cancel();
     let invalid = "";
     const video = videoRef.current;
@@ -293,6 +351,15 @@ export default function InteractionAnalysis({
     setCropEnabled(nextEnabled);
     setCrop(nextCrop);
     setCropError(invalid);
+    const label = tileLabel ?? "custom selected area";
+    options.current.cameraReady = nextEnabled && !!sourceKey;
+    options.current.cameraLabel = label;
+    setCameraChoice({
+      sourceKey,
+      confirmed: nextEnabled,
+      custom: nextEnabled && !tileLabel,
+      label,
+    });
     setStatus(
       nextEnabled
         ? "Analysis area changed. Collect four new frames; the product alarm has been disarmed."
@@ -326,16 +393,22 @@ export default function InteractionAnalysis({
     if (!mounted.current || requestRevision !== refreshRevision.current) return;
     if (results[0].status === "fulfilled") {
       setModel(results[0].value);
-      if (!results[0].value.ready)
-        disarmAlarm(
-          "The model is unavailable. Check the service and repeat the sound check before arming.",
-        );
     } else {
       setModel(null);
-      disarmAlarm(
-        "The local service could not be verified. Product alarm is off.",
-      );
       setError(failureText(results[0].reason));
+    }
+    const ready = results[0].status === "fulfilled" && results[0].value.ready;
+    options.current.modelReady = ready;
+    setModelChecked(true);
+    if (!ready) {
+      options.current.enabled = false;
+      options.current.automatic = false;
+      setEnabled(false);
+      setAutomatic(false);
+      cancel();
+      setStatus(
+        "Product analysis is unavailable. No product frames are being sampled or classified. Check the local model, then select Refresh model & history.",
+      );
     }
     if (results[1].status === "fulfilled") {
       if (startingHistory === historyRevision.current)
@@ -355,6 +428,7 @@ export default function InteractionAnalysis({
     if (
       job.current ||
       !options.current.enabled ||
+      !options.current.cameraReady ||
       options.current.cropError ||
       !model?.ready ||
       !current.running ||
@@ -388,9 +462,11 @@ export default function InteractionAnalysis({
     const payload = {
       run_id: current.runId,
       source_kind: current.source.kind,
-      source_label: options.current.cropEnabled
-        ? `${current.source.label.slice(0, 100)} · selected area`
-        : current.source.label,
+      source_label:
+        `${current.source.label.slice(0, 70)} · ${options.current.cameraLabel}`.slice(
+          0,
+          120,
+        ),
       frames: frames.map(({ at_seconds, jpeg_base64 }) => ({
         at_seconds,
         jpeg_base64,
@@ -622,6 +698,8 @@ export default function InteractionAnalysis({
         );
       if (
         !configuration.enabled ||
+        !configuration.cameraReady ||
+        !configuration.modelReady ||
         configuration.cropError ||
         !current.running ||
         !current.source ||
@@ -708,6 +786,57 @@ export default function InteractionAnalysis({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted, volume]);
 
+  const monitorState: InteractionMonitorStatus["state"] = !modelChecked
+    ? "checking"
+    : !model?.ready
+      ? "unavailable"
+      : !enabled
+        ? "off"
+        : !cameraReady || !sourceReady || !!cropError
+          ? "waiting"
+          : busy && !job.current?.cancelled
+            ? "analysing"
+            : count < 4
+              ? "collecting"
+              : "ready";
+  const monitorLabel = {
+    checking: "PRODUCT ANALYSIS CHECKING",
+    unavailable: "PRODUCT ANALYSIS UNAVAILABLE",
+    off: "PRODUCT ANALYSIS OFF",
+    waiting: "PRODUCT ANALYSIS WAITING",
+    collecting: `PRODUCT ANALYSIS ${automatic ? "AUTOMATIC" : "MANUAL"} · COLLECTING`,
+    ready: `PRODUCT ANALYSIS ${automatic ? "AUTOMATIC" : "MANUAL"} · READY`,
+    analysing: "PRODUCT ANALYSIS ANALYSING",
+  }[monitorState];
+  const monitorGuidance =
+    monitorState === "unavailable"
+      ? model?.mode === "disabled"
+        ? "Product classification is disabled in this application session. Restart with the local interaction model, then select Refresh model & history. Body tracking can run separately."
+        : "The local product model is unavailable. Check that it is running, then select Refresh model & history. Body tracking can run separately."
+      : monitorState === "checking"
+        ? "Checking the local product model. Body tracking and product classification have separate readiness states."
+        : monitorState === "off"
+          ? "The product model is available but analysis is off. Enable product interaction analysis below, then choose automatic analysis or analyse a recent sequence."
+          : monitorState === "waiting"
+            ? !cameraReady
+              ? "Choose and confirm one camera tile, select Single camera, or set a custom area below. An unconfirmed CCTV mosaic is not product-analysed."
+              : cropError ||
+                "Product analysis is enabled but is waiting for a fresh playing video. Start detection to collect samples."
+            : monitorState === "analysing"
+              ? "The local product model is analysing one sampled sequence. Body keypoints are a separate movement overlay."
+              : monitorState === "collecting"
+                ? `${automatic ? "Automatic" : "Manual"} product analysis: collecting ${count}/4 fresh sampled frames. No product classification has been requested for this window yet.`
+                : automatic
+                  ? "Automatic product analysis has fresh frames and is waiting for its next submission slot. Only one model job runs at a time."
+                  : "Four fresh frames are ready. Select Analyse recent sequence, or enable Analyse automatically. Sound requires its separate staff sound check.";
+  useEffect(() => {
+    onMonitorStatus({
+      state: monitorState,
+      label: monitorLabel,
+      guidance: monitorGuidance,
+    });
+  }, [onMonitorStatus, monitorState, monitorLabel, monitorGuidance]);
+
   return (
     <section
       className="interaction-panel"
@@ -728,7 +857,11 @@ export default function InteractionAnalysis({
         <span
           className={`interaction-model ${model?.ready ? "interaction-ready" : ""}`}
         >
-          {model?.ready ? "Local model available" : "Local model unavailable"}
+          {!modelChecked
+            ? "Checking local model"
+            : model?.ready
+              ? "Local model available"
+              : "Local model unavailable"}
         </span>
       </div>
       <p className="interaction-service">
@@ -736,13 +869,18 @@ export default function InteractionAnalysis({
           ? `${model.model} · ${model.message}`
           : "Checking the local interaction service…"}
       </p>
+      <p className="interaction-readiness" role="status">
+        {monitorGuidance}
+      </p>
       <div className="interaction-controls">
         <label className="ld-inline-check">
           <input
             type="checkbox"
             checked={enabled}
+            disabled={!model?.ready}
             onChange={(event) => {
               const next = event.target.checked;
+              if (next && !options.current.modelReady) return;
               options.current.enabled = next;
               setEnabled(next);
               if (!next) {
@@ -817,6 +955,7 @@ export default function InteractionAnalysis({
             type="button"
             disabled={
               !enabled ||
+              !cameraReady ||
               !model?.ready ||
               !sourceReady ||
               muted ||
@@ -860,7 +999,15 @@ export default function InteractionAnalysis({
           {soundStatus}
         </p>
       </fieldset>
+      <CameraLayoutPicker
+        videoRef={videoRef}
+        sourceKey={sourceKey}
+        customArea={cameraReady && cameraChoice.custom}
+        onInvalidate={invalidateCameraLayout}
+        onSelect={(area, tileLabel) => changeCrop(true, area, tileLabel)}
+      />
       <div className="interaction-crop">
+        <h3>Custom area controls</h3>
         <label className="ld-inline-check">
           <input
             type="checkbox"
@@ -870,9 +1017,11 @@ export default function InteractionAnalysis({
           Analyse this camera/aisle area
         </label>
         <p className="ld-hint">
-          {cropEnabled
-            ? "Select one camera tile or shelf area. Percentages refer to the full video above. Keep the person’s hands and the product in view."
-            : "The full video is analysed. For a CCTV grid, select one camera tile here to preserve more product detail."}
+          {cameraReady && cameraChoice.custom
+            ? "Custom selected area. Percentages refer to the full source above; include one camera tile or shelf area with hands and products visible."
+            : cameraReady
+              ? `${cameraChoice.label} is selected. Editing these percentages switches to a custom area.`
+              : "Choose a layout above, or explicitly enable and set a custom area here. No product frames are sampled until an area is selected."}
         </p>
         {cropEnabled && (
           <div className="interaction-crop-content">
@@ -932,7 +1081,12 @@ export default function InteractionAnalysis({
           className="ld-primary"
           type="button"
           disabled={
-            !enabled || !model?.ready || !!cropError || count < 4 || busy
+            !enabled ||
+            !model?.ready ||
+            !cameraReady ||
+            !!cropError ||
+            count < 4 ||
+            busy
           }
           onClick={() => void submit()}
         >

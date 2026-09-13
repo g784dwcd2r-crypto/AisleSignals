@@ -2,6 +2,17 @@
 
 13 September 2026. Accounts and footage used in automated checks are synthetic. Existing local preview records were preserved separately; they are not published as fixtures.
 
+## Camera-layout and product-readiness update
+
+The subsequent shared-window layout change adds local 2 × 2 / 3 × 2 / 2 × 3 proposals, measured source-coordinate crops, explicit camera confirmation, manual/inset-board fallback and camera-bound cancellation. Pose and product-model readiness are displayed separately. This updates source and the local browser application; the previously downloaded executable archives still identify `c6c0b20`.
+
+- Coordinating lead: **213 frontend unit tests**, production build, TypeScript, formatting and diff checks passed.
+- **All 62 Chromium journeys passed across the full run and targeted retry**. The initial isolated-port run passed 53; seven setup fixtures lacked the local Python executable and two existing API test requests had hard-coded origins for port 8799. Setting the test Python path and deriving those request origins from the actual page fixed the test configuration; all nine affected cases passed on retry. No application authority check was weakened. The user-visible service on port 8799 was preserved.
+- Eight new grid journeys exercise all three layouts, decoded JPEG camera colours/dimensions, transparent preview overlays, tile/board/source cancellation, early manual selection before decoded frames, re-detection, uncertain-frame fallback and narrow-screen accessibility. Two additional interaction journeys cover unavailable model status and explicit re-enabling after recovery.
+- Visible protected-browser check: compressed synthetic six-camera recording proposed 3 × 2; Camera 2 was confirmed, sampled and submitted to the actual local model. The saved result retained the camera label and Camera 2-only frames. Inference took **1.9 seconds** and returned `UNCLEAR`, with no person/product/interaction sequence reported. No alarm was armed; this is pipeline verification, not pharmacy accuracy or physical speaker acceptance.
+
+See [camera layout operation and limitations](camera-layouts.md). The platform results below belong to their explicitly named earlier source; subsequent CI must qualify updated executable builds separately.
+
 ## Local checks during integration
 
 - Python API, security, identity/administration, deployment, recovery, evaluation, coordinator and packaging checks: **363 passed, plus 49 companion subtests**. Two dependency deprecation warnings; no failures. A subsequent isolated-source launcher regression caught and fixed a missing source import during interactive setup; all **32 launcher checks** then passed and the real protected API/model launcher started successfully.

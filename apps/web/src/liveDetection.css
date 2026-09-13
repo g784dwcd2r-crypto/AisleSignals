@@ -198,6 +198,36 @@
   font-weight: 700;
   letter-spacing: 1px;
 }
+.ld-product-status {
+  padding: 12px 18px;
+  background: #edf3e9;
+  border-bottom: 1px solid #cedccc;
+  color: #34583f;
+}
+.ld-product-status strong {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+}
+.ld-product-status p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.ld-product-status a {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 600;
+}
+.ld-product-status-unavailable {
+  background: #fff2d9;
+  color: #755017;
+}
+.ld-product-status-off,
+.ld-product-status-checking,
+.ld-product-status-waiting {
+  background: #edf0ef;
+  color: #4a6256;
+}
 .ld-state i {
   background: #a0aea5;
   width: 7px;

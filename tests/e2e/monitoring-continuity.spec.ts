@@ -103,7 +103,7 @@ test("fresh static camera frames remain monitored; track mute releases capture a
     .poll(() => page.evaluate(() => (window as any).__monitoring.calls))
     .toBeGreaterThan(15);
   await expect(
-    page.getByText("DETECTION RUNNING", { exact: true }),
+    page.getByText("POSE TRACKING RUNNING", { exact: true }),
   ).toBeVisible();
   await page.evaluate(() =>
     (window as any).__monitoring.tracks[0].dispatchEvent(new Event("mute")),
@@ -138,7 +138,7 @@ test("an advancing playback clock cannot mask missing presented frames; late cal
     .getByRole("button", { name: "Start detection", exact: true })
     .click();
   await expect(
-    page.getByText("DETECTION RUNNING", { exact: true }),
+    page.getByText("POSE TRACKING RUNNING", { exact: true }),
   ).toBeVisible();
   const before = await page
     .locator("video")
@@ -217,7 +217,7 @@ test("page hiding stops the current capture and fresh callbacks do not silently 
     .getByRole("button", { name: "Start detection", exact: true })
     .click();
   await expect(
-    page.getByText("DETECTION RUNNING", { exact: true }),
+    page.getByText("POSE TRACKING RUNNING", { exact: true }),
   ).toBeVisible();
   // Controlled Page Lifecycle event; actual OS sleep remains a site acceptance check.
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
