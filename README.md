@@ -6,6 +6,10 @@ A working first prototype for pharmacy incident review, evidence context and sta
 
 This version runs locally and uses clearly labelled synthetic observations. It supports a complete review-to-closed-case journey, persisted records, two isolated demonstration organisations and manager/reviewer permissions. Real camera detection, cloud AI and external alarms are future integrations; the interface does not represent them as active.
 
+![AisleSignals prototype overview with synthetic pharmacy records](docs/prototype/screenshots/overview.png)
+
+**Verified build:** [all six GitHub jobs passed](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616), including actual Windows x64 and Mac arm64 executable startup and login. Download the development bundles from that run's **Artifacts** section. The first build's artifacts are retained until 27 September 2026; the checked-in workflow can produce fresh bundles.
+
 ## Start the prototype
 
 From a checkout with Python 3.12 and Node.js 24 LTS:

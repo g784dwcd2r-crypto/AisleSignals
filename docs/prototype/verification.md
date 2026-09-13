@@ -15,7 +15,7 @@
 | Dependency audit | npm audit reports zero known vulnerabilities for root and interface dependencies at the time checked |
 | Actual Mac executable | PyInstaller bundle built; startup, HTML/JS/CSS assets, local login, scoped bootstrap and logout passed |
 | Actual laptop preflight | Mac arm64 / Python 3.12.14; free-disk guard passed, no camera/network probe requested; FFprobe absent reported explicitly |
-| Windows / CI Mac execution | Workflow configured; remote results are recorded separately below once available |
+| Windows / CI Mac execution | Both actual executable smoke tests passed in GitHub Actions; remote results below |
 
 ## Browser acceptance journeys
 
@@ -40,4 +40,26 @@ Python test output includes dependency deprecation warnings about the current St
 
 ## Remote build results
 
-The first source push triggers the GitHub workflow. A successful configured job is required before claiming its Windows/Mac runtime or bundle passed. The final delivery record will reference the observed run, or clearly state any external limitation.
+[GitHub run 34762107616](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616) completed with **success** on 13 September 2026 at 14:17:50 UTC for source commit [`89d1dfb7c013d40db4162ecac132e0f4c183e20a`](https://github.com/g784dwcd2r-crypto/AisleSignals/commit/89d1dfb7c013d40db4162ecac132e0f4c183e20a). All six jobs were observed as completed/success:
+
+| Job | Observed result |
+|---|---|
+| Python checks — Ubuntu | Passed, Python 3.12 |
+| Python checks — Windows | Passed, Python 3.12 |
+| Python checks — Mac | Passed, Python 3.12 |
+| Build and browser journeys | Passed, Node 24; production build, unit tests, formatting and all 10 browser journeys |
+| Desktop bundle — Windows | Passed; PyInstaller build, actual executable smoke check and archive upload |
+| Desktop bundle — Mac | Passed; PyInstaller build, actual executable smoke check and archive upload |
+
+The executable checks start the built binary with a temporary database, fetch its HTML and referenced JS/CSS, sign in, read scoped bootstrap data, sign out and stop the owned process. The locally built Mac tar.gz was also extracted and its extracted executable passed the same checks. These are host/build checks; acceptance on the two pharmacy laptops remains pending.
+
+Download the artifacts from the run's **Artifacts** section:
+
+| Artifact | Architecture | GitHub artifact ID |
+|---|---|---|
+| `AisleSignalsPrototype-Windows-X64-unsigned` | Windows x64 | 10319626179 |
+| `AisleSignalsPrototype-macOS-ARM64-unsigned` | Apple silicon arm64 | 10318997715 |
+
+Artifacts expire on 27 September 2026 under the 14-day retention policy. GitHub wraps each bundle in an outer ZIP: extract that, then the inner platform archive. The workflow can be run again to regenerate packages. Intel Mac and Windows ARM packages were not built or qualified.
+
+The subsequent documentation-only commit adds this observed evidence and a screenshot; executable source and lockfiles are unchanged from the tested commit. CI deliberately ignores documentation-only pushes.

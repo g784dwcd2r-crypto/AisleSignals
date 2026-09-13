@@ -35,6 +35,8 @@ The server binds only to `127.0.0.1`. Source-mode data persists in ignored `.loc
 
 The GitHub workflow checks Python on Linux, Windows and Mac, runs browser journeys, then builds separate Windows and Mac development bundles. A bundle is useful only after its job and packaged-executable smoke test pass. The artifact name records the actual operating system and architecture. Mac bundles are wrapped in a tar.gz archive to preserve executable permissions and symlinks; Windows bundles use ZIP. These are unsigned development bundles, not signed/notarised pharmacy installers; actual site-device acceptance remains necessary.
 
+The [first verified run](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616) passed every job and provides Windows x64 and Apple silicon Mac arm64 downloads in **Artifacts**. Extract the GitHub ZIP, then extract the inner platform archive. Keep the complete `AisleSignalsPrototype` folder together. On Windows, run `AisleSignalsPrototype.exe`; on Mac, run `./AisleSignalsPrototype/AisleSignalsPrototype` from Terminal in the extracted folder's parent directory. Read the bundled `READ-ME.txt`. The local app opens in a browser; keeping the executable running keeps the app available. GitHub may require sign-in to download artifacts.
+
 For a local build after the web application is compiled:
 
 ```sh
