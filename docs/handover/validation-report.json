@@ -1,0 +1,68 @@
+{
+  "status": "DESIGN_ARTIFACT_VALIDATED_NOT_APPLICATION_TESTED",
+  "date": "2026-09-13",
+  "checks": [
+    {
+      "check": "OpenAPI 3.1 structural validation",
+      "result": "PASS"
+    },
+    {
+      "check": "All handover JSON parses",
+      "result": "PASS"
+    },
+    {
+      "check": "Unique operation IDs",
+      "result": "PASS",
+      "count": 101
+    },
+    {
+      "check": "All internal schema references resolve",
+      "result": "PASS",
+      "references": 990
+    },
+    {
+      "check": "Synthetic observation validates including UUID and date formats",
+      "result": "PASS"
+    },
+    {
+      "check": "Schema rejects unsupported door action and out-of-range pulse durations",
+      "result": "PASS",
+      "limitation": "Does not test runtime authorisation or physical execution."
+    },
+    {
+      "check": "Unique requirements, valid traceability, acyclic backlog dependencies and relative complexity arithmetic",
+      "result": "PASS",
+      "requirements": 67,
+      "epics": 14,
+      "relative_core_complexity_units": 120
+    },
+    {
+      "check": "Test traceability, unique data entities and evidence variant consistency",
+      "result": "PASS",
+      "planned_acceptance_checks": 90,
+      "designed_tables": 56
+    },
+    {
+      "check": "Confirmed single-branch subscription constants and existing-laptop delivery arithmetic",
+      "result": "PASS",
+      "price_cents": 6000,
+      "included_branches": 1
+    },
+    {
+      "check": "Capacity arithmetic for declared workload",
+      "result": "PASS",
+      "media_gb_per_site_month": 3.9,
+      "events_at_100_sites": 52000
+    }
+  ],
+  "independent_review": "Five identified interface gaps resolved; bounded agent re-review found no residual blocker within those five areas.",
+  "not_performed": [
+    "Application implementation or runtime tests",
+    "Executed database migrations or RLS tests",
+    "Real camera or supplier integration",
+    "Live AI factuality/cost evaluation",
+    "Optional existing sounder software-interface commissioning",
+    "Deployment, recovery or security penetration tests",
+    "Pharmacy pilot or measured loss reduction"
+  ]
+}

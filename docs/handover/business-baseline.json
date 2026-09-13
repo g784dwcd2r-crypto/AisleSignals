@@ -1,0 +1,57 @@
+{
+  "version": "2.2",
+  "owner": "Jawahir Q.",
+  "repository": "https://github.com/g784dwcd2r-crypto/AisleSignals",
+  "delivery_team": {
+    "implementation": "Codex",
+    "supporting_roles": "bounded specialist agents",
+    "hired_engineers": 0,
+    "calendar_commitment": null
+  },
+  "pricing": {
+    "currency": "EUR",
+    "monthly_price_cents": 6000,
+    "included_pharmacy_branches": 1,
+    "subscription_scope": [
+      "organisation_id",
+      "site_id"
+    ],
+    "tax_treatment": "UNRESOLVED",
+    "billing_mode": "OWNER_MANAGED",
+    "automatic_charging": false
+  },
+  "product_ai": {
+    "proposed_monthly_cap_cents": 500,
+    "scope": [
+      "organisation_id",
+      "site_id"
+    ],
+    "new_site_automatically_entitled": false
+  },
+  "unresolved_commercial_inputs": [
+    "existing laptop OS versions, processor architecture and capacity",
+    "authorised camera stream/interface access",
+    "software installation and onboarding",
+    "detector event/media rights and licence fees",
+    "tax treatment and collection fees",
+    "software signing/distribution costs",
+    "human operational coverage"
+  ],
+  "delivery_status": "DESIGN_HANDOVER_ONLY_NOT_APPLICATION_DEPLOYMENT",
+  "deployment": {
+    "local_host": "EXISTING_PHARMACY_LAPTOP",
+    "new_hardware_purchases": false,
+    "camera_sources": "Existing supported camera/recorder software interfaces or explicitly selected existing USB camera",
+    "sleep_behaviour": "Monitoring stops during host sleep or power-off",
+    "local_audio": "Existing laptop speakers",
+    "new_relay_or_wiring": false,
+    "pilot_operating_systems": [
+      "WINDOWS",
+      "MACOS"
+    ],
+    "pilot_hosts": {
+      "WINDOWS": 1,
+      "MACOS": 1
+    }
+  }
+}

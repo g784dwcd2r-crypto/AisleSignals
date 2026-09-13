@@ -1,0 +1,812 @@
+[
+  {
+    "id": "AT-001",
+    "requirement_id": "FR-001",
+    "release": "MVP",
+    "title": "Named accounts and MFA",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Invalid issuer, audience, nonce, state and expired session tests fail; no browser-stored bearer token.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-002",
+    "requirement_id": "FR-002",
+    "release": "MVP",
+    "title": "Organisation and site access",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Client A cannot read, change, infer or export Client B data; same-organisation unauthorised-site tests also fail.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-003",
+    "requirement_id": "FR-003",
+    "release": "MVP",
+    "title": "Invitations and role changes",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A setup operator cannot invite a manager; used or expired invitation fails; removal invalidates sessions and grants.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-004",
+    "requirement_id": "FR-004",
+    "release": "MVP",
+    "title": "Shift assignment and handover",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "An unassigned shift shows degraded reviewer coverage and routes privately to the configured alternate.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-005",
+    "requirement_id": "FR-005",
+    "release": "MVP",
+    "title": "Session controls",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Old tabs lose API/media access after revocation; cookie-authenticated mutations without CSRF fail.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-006",
+    "requirement_id": "FR-006",
+    "release": "MVP",
+    "title": "Support access grants",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Expired grants fail; a health grant cannot view media or export; all grant use is audited.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-007",
+    "requirement_id": "FR-007",
+    "release": "MVP",
+    "title": "Site registry",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Each site has separate policies and status; Dublin daylight-saving boundaries preserve event ordering.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-008",
+    "requirement_id": "FR-008",
+    "release": "MVP",
+    "title": "Device enrolment",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Token reuse, wrong site and revoked certificate fail; no factory shared password is accepted.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-009",
+    "requirement_id": "FR-009",
+    "release": "MVP",
+    "title": "Camera capability register",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Stream accessibility and detection qualification have separate results; unsupported views show a reason.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-010",
+    "requirement_id": "FR-010",
+    "release": "MVP",
+    "title": "Privacy masks and exclusions",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Masked areas remain excluded in inference input and uploaded review copies; scope changes require requalification.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-011",
+    "requirement_id": "FR-011",
+    "release": "MVP",
+    "title": "Local credentials",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Secrets do not appear in logs, support bundles, URLs, exports, screenshots or source control.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-012",
+    "requirement_id": "FR-012",
+    "release": "MVP",
+    "title": "Activation gate",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Activation is blocked with named missing checks; one site's acceptance cannot activate another site.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-013",
+    "requirement_id": "FR-013",
+    "release": "MVP",
+    "title": "Coverage health",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A frozen frame or missing detector never displays as active detection; healthy unrelated views remain visible.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-014",
+    "requirement_id": "FR-014",
+    "release": "MVP",
+    "title": "Maintenance and updates",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Invalid signature, low disk or failed health check prevents promotion; restart does not erase command deduplication.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-015",
+    "requirement_id": "FR-015",
+    "release": "MVP",
+    "title": "Normalised observations",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Unknown camera, unsupported schema/class and cross-site evidence fail; product and score may remain unknown.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-016",
+    "requirement_id": "FR-016",
+    "release": "MVP",
+    "title": "Idempotent intake",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Concurrent retries create one observation; a repeated ID with different content returns conflict.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-017",
+    "requirement_id": "FR-017",
+    "release": "MVP",
+    "title": "Qualified classes only",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "No generic object detector or language model is presented as a validated concealment engine.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-018",
+    "requirement_id": "FR-018",
+    "release": "MVP",
+    "title": "Context and clip readiness",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Notification is not delayed for the full post-event clip; absent or corrupt media is clearly shown.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-019",
+    "requirement_id": "FR-019",
+    "release": "MVP",
+    "title": "Candidate grouping",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Nearby unrelated customers are not merged solely by location; grouping never creates cross-visit identity.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-020",
+    "requirement_id": "FR-020",
+    "release": "MVP",
+    "title": "Historical events",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Buffered events after reconnection cannot trigger an immediate sounder or inflate current latency metrics.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-021",
+    "requirement_id": "FR-021",
+    "release": "MVP",
+    "title": "Class controls",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Suspension is audited and visibly reduces coverage; model changes rerun the agreed evaluation set.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-022",
+    "requirement_id": "FR-022",
+    "release": "MVP",
+    "title": "Incident creation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Manual reporting works without a detector; duplicate conversion of the same candidate is controlled.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-023",
+    "requirement_id": "FR-023",
+    "release": "MVP",
+    "title": "Review and classification",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Only a manager records store-confirmed loss; no action creates a thief label or legal finding.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-024",
+    "requirement_id": "FR-024",
+    "release": "MVP",
+    "title": "Concurrent changes",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Two reviewers cannot silently overwrite one another; conflict response supplies the current version.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-025",
+    "requirement_id": "FR-025",
+    "release": "MVP",
+    "title": "Outcomes and valuation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Unknown amount stays null; recovered goods and the same avoided loss are not counted twice.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-026",
+    "requirement_id": "FR-026",
+    "release": "MVP",
+    "title": "Follow-up tasks",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Overdue tasks appear in the appropriate site inbox; closing the case does not silently discard tasks.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-027",
+    "requirement_id": "FR-027",
+    "release": "MVP",
+    "title": "Correction and reopening",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A corrected outcome updates reports and retains its audit trail; later evidence does not rewrite history.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-028",
+    "requirement_id": "FR-028",
+    "release": "MVP",
+    "title": "Restricted earlier-incident link",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "No automatic identity matching or shared watchlist is created; prior suspicion is not a new offence.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-029",
+    "requirement_id": "FR-029",
+    "release": "MVP",
+    "title": "Upload lifecycle",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Oversized, mismatched or malformed media stays unavailable and produces a traceable failure.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-030",
+    "requirement_id": "FR-030",
+    "release": "MVP",
+    "title": "Original and derivative separation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A transformation never overwrites the original or its digest; manifest records parent and transform version.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-031",
+    "requirement_id": "FR-031",
+    "release": "MVP",
+    "title": "Controlled playback",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Leaked URL, expired grant and wrong-site session cannot retrieve any byte range or thumbnail.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-032",
+    "requirement_id": "FR-032",
+    "release": "MVP",
+    "title": "Export preparation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Export rechecks current authority and retention at execution and download; no automatic external sending occurs.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-033",
+    "requirement_id": "FR-033",
+    "release": "MVP",
+    "title": "Evidence manifest",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "An independent verification tool detects modified bytes; digest is not described as proof of guilt or admissibility.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-034",
+    "requirement_id": "FR-034",
+    "release": "MVP",
+    "title": "Retention and holds",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Concurrent hold/deletion is serialised; deletion failures block new access and alert the privacy owner.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-035",
+    "requirement_id": "FR-035",
+    "release": "MVP",
+    "title": "Rights requests",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Month-end dates calculate correctly; search stays scoped; disclosure protects unrelated people.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-036",
+    "requirement_id": "FR-036",
+    "release": "MVP",
+    "title": "Private notification routing",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Duplicate dispatch is deduplicated; no acknowledgement never automatically becomes a public alarm or emergency call.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-037",
+    "requirement_id": "FR-037",
+    "release": "MVP",
+    "title": "Assistance request",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Repeated taps reuse one logical request; acknowledgement is not represented as responder arrival.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-038",
+    "requirement_id": "FR-038",
+    "release": "MVP",
+    "title": "Emergency continuity",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Loss of cloud, laptop companion or browser does not disable the existing physical panic arrangement.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-039",
+    "requirement_id": "FR-039",
+    "release": "OPTION",
+    "title": "Commissioned attention sounder",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Wrong site, missing permission, stale live context or incomplete commissioning blocks authorisation.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-040",
+    "requirement_id": "FR-040",
+    "release": "OPTION",
+    "title": "Safe command execution",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Replays, reboot and crash after dispatch cannot cause a second pulse; uncertain physical state stays unknown.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-041",
+    "requirement_id": "FR-041",
+    "release": "OPTION",
+    "title": "Local stop and output testing",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Expiry, duplicate, unavailable existing interface, watchdog and emergency-stop tests pass at each commissioned output.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-042",
+    "requirement_id": "FR-042",
+    "release": "MVP",
+    "title": "Incident draft assistant",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Schema failure or unsupported identities/amounts returns to manual completion; staff approval remains required.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-043",
+    "requirement_id": "FR-043",
+    "release": "MVP",
+    "title": "Job permissions and limits",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "No AI job can execute shell/SQL, activate a sounder, disclose evidence or send a message externally.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-044",
+    "requirement_id": "FR-044",
+    "release": "MVP",
+    "title": "Spending and fallbacks",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Budget exhaustion, timeout and supplier outage never block review, evidence capture or manual reports.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-045",
+    "requirement_id": "FR-045",
+    "release": "MVP",
+    "title": "Quality and change control",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Critical unsupported assertions prevent release; improvements cannot be claimed from training examples alone.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-046",
+    "requirement_id": "FR-046",
+    "release": "P2",
+    "title": "Approved procedure assistant",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Missing or conflicting procedure yields no confident instruction; revoked documents disappear from retrieval.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-047",
+    "requirement_id": "FR-047",
+    "release": "MVP",
+    "title": "Operational dashboard",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Totals reconcile to scoped records; missing observations and downtime remain visible.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-048",
+    "requirement_id": "FR-048",
+    "release": "MVP",
+    "title": "Financial reporting",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "No report totals guessed alert values as savings; reversals and corrections change the relevant period transparently.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-049",
+    "requirement_id": "FR-049",
+    "release": "MVP",
+    "title": "Weekly digest",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "The report still works without AI; no person-level risk scores or cross-customer footage are included.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-050",
+    "requirement_id": "FR-050",
+    "release": "MVP",
+    "title": "Auditable actions",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Runtime users cannot update/delete audit records; independently stored checkpoints reveal later changes.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-051",
+    "requirement_id": "FR-051",
+    "release": "MVP",
+    "title": "Processing controls",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Live data activation requires completed site-specific records; project approval does not fabricate a legal basis.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-052",
+    "requirement_id": "FR-052",
+    "release": "MVP",
+    "title": "Customer offboarding",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Terminated access fails immediately online; restored backups cannot revive deleted or revoked access.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-053",
+    "requirement_id": "FR-053",
+    "release": "MVP",
+    "title": "Sensitive feature exclusions",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Contract, UI, database and permissions contain no hidden enabled route to an excluded feature.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-054",
+    "requirement_id": "FR-054",
+    "release": "MVP",
+    "title": "Durable work queue",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Worker crashes and expired leases do not lose committed work or duplicate final business effects.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-055",
+    "requirement_id": "FR-055",
+    "release": "MVP",
+    "title": "Database isolation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Wrong-tenant references fail; connection-pool reuse cannot retain the previous request's tenant context.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-056",
+    "requirement_id": "FR-056",
+    "release": "MVP",
+    "title": "Recovery and backups",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Demonstrate a 15-minute database RPO and four-hour core-service RTO under the scoped pilot recovery test.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-057",
+    "requirement_id": "FR-057",
+    "release": "MVP",
+    "title": "Observability",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Alerts identify the affected site/service without exposing video, camera passwords or incident narratives in logs.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-058",
+    "requirement_id": "FR-058",
+    "release": "MVP",
+    "title": "Release pipeline",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A failing critical check prevents deployment; rollback keeps previously committed incidents readable.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-059",
+    "requirement_id": "FR-059",
+    "release": "MVP",
+    "title": "Offline and degradation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Internet recovery labels old events historical; expired commands never run; unsupported offline functions say unavailable.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-060",
+    "requirement_id": "FR-060",
+    "release": "MVP",
+    "title": "Accessibility and usability",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A pharmacist can complete the core flow using keyboard or touch; sound is supplementary to visible notifications.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-061",
+    "requirement_id": "FR-061",
+    "release": "P2",
+    "title": "Read-only import",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Wrong site, ambiguous units, duplicated batches and invalid rows are rejected or quarantined with an import report.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-062",
+    "requirement_id": "FR-062",
+    "release": "P2",
+    "title": "Complete reconciliation",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Incomplete periods cannot produce a definitive theft claim; batch context never supports live nonpayment conclusions.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-063",
+    "requirement_id": "FR-063",
+    "release": "P2",
+    "title": "Stock investigations",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "A variance cannot be automatically assigned to a shopper or employee; source corrections remain versioned.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-064",
+    "requirement_id": "FR-064",
+    "release": "P2",
+    "title": "Expiry and recall coordination",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Stale notices or absent batch data show unknown; AI cannot infer availability or order a substitution.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-065",
+    "requirement_id": "FR-065",
+    "release": "P2",
+    "title": "Aggregate forecasting",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Below the minimum data threshold show insufficient evidence; no personal criminality or clinical forecast is produced.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-066",
+    "requirement_id": "FR-066",
+    "release": "MVP",
+    "title": "One branch subscription and AI budget",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "Creating a branch cannot charge a customer or enable paid capacity automatically; a separate approved subscription or explicit trial is required, and unknown tax terms cannot publish a checkout.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "AT-067",
+    "requirement_id": "FR-067",
+    "release": "MVP",
+    "title": "Existing laptop only",
+    "method": "Automated integration/browser and supervised UAT as applicable",
+    "expected": "OS-specific install, startup, sleep/resume, disk/CPU guard, encrypted spool and laptop speaker tests pass; unsupported existing equipment is disclosed rather than replaced.",
+    "status": "NOT_RUN"
+  },
+  {
+    "id": "CT-01",
+    "title": "Tenant and site isolation",
+    "setup": "Use valid actors from two organisations and two sites within one organisation; test read/write/count/search/range media/export/jobs.",
+    "expected": "Every unauthorised resource remains invisible; no existence leak.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-02",
+    "title": "RLS connection reuse",
+    "setup": "Reuse a pooled connection after each tenant transaction and after an exception.",
+    "expected": "No stale context or cross-tenant row appears; runtime is not owner/BYPASSRLS.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-03",
+    "title": "Duplicate source race",
+    "setup": "Submit one event concurrently 20 times; then same ID with modified payload.",
+    "expected": "One observation; changed payload conflict; one intended notification effect.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-04",
+    "title": "Review conflict",
+    "setup": "Two reviewers submit the same expected_version with different decisions.",
+    "expected": "One commits; one receives conflict; no silent overwriting.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-05",
+    "title": "Hold versus deletion race",
+    "setup": "Race a hold and expiry on the same asset under transaction locks.",
+    "expected": "A valid hold is respected or the hold reports already-deleted state; no phantom available object.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-06",
+    "title": "Media revocation",
+    "setup": "Revoke membership during range playback and use a leaked grant URL.",
+    "expected": "Subsequent reads fail including thumbnails; no permanent public link.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-07",
+    "title": "Upload deception",
+    "setup": "Supply false MIME, wrong digest, excessive size and damaged video.",
+    "expected": "Quarantine and explicit validation failure; unsafe object never becomes available.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-08",
+    "title": "Queue lease fencing",
+    "setup": "Pause a worker beyond lease; let another worker claim and finish.",
+    "expected": "Expired worker cannot commit stale results; final effect stays idempotent.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-09",
+    "title": "Command crash window",
+    "setup": "Crash executor before and after output write; restart and redeliver same command.",
+    "expected": "At most one dispatch; uncertain state UNKNOWN; no new-ID blind retry.",
+    "status": "NOT_RUN",
+    "release": "OPTION",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-10",
+    "title": "Command authority and expiry",
+    "setup": "Use wrong-site, consumed, expired, uncommissioned and stale-context requests.",
+    "expected": "All rejected before physical output; no test command reaches live relay.",
+    "status": "NOT_RUN",
+    "release": "OPTION",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-11",
+    "title": "Budget concurrency",
+    "setup": "Run concurrent AI jobs near subscribed branch monthly cap and replay usage settlement.",
+    "expected": "Atomic reservations never exceed cap; no double settlement; manual workflow remains.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-12",
+    "title": "Prompt injection",
+    "setup": "Put action instructions and unsupported amounts/identity in untrusted input.",
+    "expected": "No tool escalation; report requires supported facts and staff review.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-13",
+    "title": "Restore and deletion journal",
+    "setup": "Restore an older backup containing since-deleted assets and revoked users.",
+    "expected": "Apply current journals before opening access; deleted/revoked state is not resurrected.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-14",
+    "title": "Month-end rights deadline",
+    "setup": "Exercise January 31, leap February and DST boundaries.",
+    "expected": "Ordinary due date is one calendar month, not a fixed 30-day addition.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-15",
+    "title": "Companion lease and outage",
+    "setup": "Disconnect beyond 15-minute capture lease and then reconnect.",
+    "expected": "New AisleSignals capture stops on expiry; queued old events are historical; no old command runs.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-16",
+    "title": "Staff safety and ambiguity",
+    "setup": "Use own bags, returns, companion payment, crowds and accessibility aids.",
+    "expected": "No appearance/identity/guilt inference; uncertain evidence can be dismissed or left unresolved.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-17",
+    "title": "Stock completeness",
+    "setup": "Omit transfers, corrupt units and import the same batch twice.",
+    "expected": "No definitive reconciliation on incomplete input; deterministic validated arithmetic; duplicates controlled.",
+    "status": "NOT_RUN",
+    "release": "P2",
+    "severity": "P2_CRITICAL"
+  },
+  {
+    "id": "CT-18",
+    "title": "Offboarding",
+    "setup": "Terminate one tenant while another remains live.",
+    "expected": "Scoped export/revocation/deletion only; other tenant unaffected; companion leases expire.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-19",
+    "title": "Device token bootstrap and renewal",
+    "setup": "Enrol a valid device, exchange certificate without bearer, let bearer expire and renew; repeat with revoked/expired certificate.",
+    "expected": "Valid enrolled certificate obtains scoped token; expired/revoked certificate fails; bearer expiry alone does not deadlock renewal.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-20",
+    "title": "Candidate playback without incident",
+    "setup": "Create a candidate with valid evidence and null incident; review and dismiss under authorised and wrong-site users.",
+    "expected": "Authorised review works without case creation; incorrect site or expired media fails.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-21",
+    "title": "Machine upload acknowledgement",
+    "setup": "Complete a device upload with 202, wait through validation, then poll as owner and another device.",
+    "expected": "Only owner sees committed evidence/digest; local spool is not released on 202 or validation failure.",
+    "status": "NOT_RUN",
+    "release": "MVP",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-22",
+    "title": "Live-context challenge replay",
+    "setup": "Submit wrong nonce, stale frame, nonadvancing sequence, wrong device and a duplicate valid response.",
+    "expected": "Only fresh authenticated source establishes context; replay cannot refresh expiry.",
+    "status": "NOT_RUN",
+    "release": "OPTION",
+    "severity": "RELEASE_CRITICAL"
+  },
+  {
+    "id": "CT-23",
+    "title": "Signed command envelope",
+    "setup": "Alter pulse/device/expiry, use unknown key/algorithm and replay the verified command after restart.",
+    "expected": "Signature/payload binding and persistent dispatch ledger prevent altered or repeated output.",
+    "status": "NOT_RUN",
+    "release": "OPTION",
+    "severity": "RELEASE_CRITICAL"
+  }
+]

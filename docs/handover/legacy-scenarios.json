@@ -1,0 +1,370 @@
+[
+  {
+    "id": "S01",
+    "release": "P1",
+    "scenario": "Item appears to enter a personal bag",
+    "preconditions": "Qualified shelf view and supported model.",
+    "expected_behaviour": "Send possible concealment clip for review; product remains unknown unless established.",
+    "negative_or_acceptance_test": "Ordinary removal of a phone from a bag must be tested; no public alarm."
+  },
+  {
+    "id": "S02",
+    "release": "P1",
+    "scenario": "Item appears to enter a coat or pocket",
+    "preconditions": "Visible hands and adequate temporal context.",
+    "expected_behaviour": "Private review alert with visible action and uncertainty.",
+    "negative_or_acceptance_test": "A hidden hand alone is insufficient; test coats and accessibility aids."
+  },
+  {
+    "id": "S03",
+    "release": "P1",
+    "scenario": "Several items swept from shelf",
+    "preconditions": "Shelf sweeping class independently qualified.",
+    "expected_behaviour": "Group related observations and request staff review.",
+    "negative_or_acceptance_test": "Restocking and collecting multiple purchased products remain benign alternatives."
+  },
+  {
+    "id": "S04",
+    "release": "P2",
+    "scenario": "Package removal or in-store consumption",
+    "preconditions": "Supplier class available and validated at site.",
+    "expected_behaviour": "Review event and distinguish legitimate use or packaging damage.",
+    "negative_or_acceptance_test": "No guessed product identity or price; do not infer theft from eating alone."
+  },
+  {
+    "id": "S05",
+    "release": "P2",
+    "scenario": "Visible item carried through exit",
+    "preconditions": "Exit and till context available.",
+    "expected_behaviour": "Record unresolved item movement for review.",
+    "negative_or_acceptance_test": "Paid item, prior purchase and companion payment cases must not be auto-labelled theft."
+  },
+  {
+    "id": "S06",
+    "release": "P2",
+    "scenario": "Apparent non-scan at till",
+    "preconditions": "Reliable till view and authorised transaction feed.",
+    "expected_behaviour": "Link relevant video and transaction exception.",
+    "negative_or_acceptance_test": "Barcode not visible does not establish a missing scan; no automatic employee allegation."
+  },
+  {
+    "id": "S07",
+    "release": "P2",
+    "scenario": "Possible barcode substitution",
+    "preconditions": "Item identification and transaction context validated.",
+    "expected_behaviour": "Flag mismatch with sources and confidence.",
+    "negative_or_acceptance_test": "Similar packaging or wrong product model must yield uncertainty."
+  },
+  {
+    "id": "S08",
+    "release": "P2",
+    "scenario": "Refund void or discount anomaly",
+    "preconditions": "Documented EPOS permissions and business rules.",
+    "expected_behaviour": "Queue exception for authorised manager review.",
+    "negative_or_acceptance_test": "Legitimate returns, authorisation and reversals must be represented."
+  },
+  {
+    "id": "S09",
+    "release": "P1",
+    "scenario": "Customer puts product back",
+    "preconditions": "Context shows return to shelf or reviewer establishes it.",
+    "expected_behaviour": "Correct classification and outcome; retain correction trail.",
+    "negative_or_acceptance_test": "Earlier alert must not remain a confirmed loss or enrol an identity."
+  },
+  {
+    "id": "S10",
+    "release": "P1",
+    "scenario": "Customer uses own shopping bag",
+    "preconditions": "Bag use permitted under shop policy.",
+    "expected_behaviour": "Use context and calibrated class; reviewer may dismiss.",
+    "negative_or_acceptance_test": "Mere possession or use of a bag is not proof of concealment or intent."
+  },
+  {
+    "id": "S11",
+    "release": "P2",
+    "scenario": "Companion pays for the basket",
+    "preconditions": "Transaction association captures uncertainty.",
+    "expected_behaviour": "Allow reviewer to attach payment evidence and clear case.",
+    "negative_or_acceptance_test": "Do not conclude nonpayment from one person not visiting the till."
+  },
+  {
+    "id": "S12",
+    "release": "P2",
+    "scenario": "Payment appears after a delay",
+    "preconditions": "Watermark and source event time available.",
+    "expected_behaviour": "Mark integration stale; attach later payment without silent revision.",
+    "negative_or_acceptance_test": "Delayed feed cannot generate a real-time unpaid claim."
+  },
+  {
+    "id": "S13",
+    "release": "P1",
+    "scenario": "Staff member replenishes shelves",
+    "preconditions": "Scheduled restocking or authorised review context.",
+    "expected_behaviour": "Dismiss or suppress known work-period candidates where appropriate.",
+    "negative_or_acceptance_test": "No face-based employee exemption; avoid masking an aisle all day."
+  },
+  {
+    "id": "S14",
+    "release": "P2",
+    "scenario": "Staff stock removal without recorded movement",
+    "preconditions": "Authorised restricted-area monitoring and stock feed.",
+    "expected_behaviour": "Create stock investigation item for limited reviewers.",
+    "negative_or_acceptance_test": "Personal medicine purchase or legitimate transfer must remain possible."
+  },
+  {
+    "id": "S15",
+    "release": "P2",
+    "scenario": "Stock count shows shortage",
+    "preconditions": "Opening counts and all authorised movement types available.",
+    "expected_behaviour": "Calculate unit variance and ask for investigation.",
+    "negative_or_acceptance_test": "Missing delivery, expiry, damage and count error must not become theft labels."
+  },
+  {
+    "id": "S16",
+    "release": "P2",
+    "scenario": "Two people exchange an item",
+    "preconditions": "Clear continuous video and validated event class.",
+    "expected_behaviour": "Present event sequence for human context.",
+    "negative_or_acceptance_test": "No collusion inference from association, friendship or proximity."
+  },
+  {
+    "id": "S17",
+    "release": "P1",
+    "scenario": "Customer has disability aid or stroller",
+    "preconditions": "Representative benign tests and qualified views.",
+    "expected_behaviour": "Apply the same observable-event rules and permit abstention.",
+    "negative_or_acceptance_test": "Mobility aid, stroller or body movement differences are not standalone triggers."
+  },
+  {
+    "id": "S18",
+    "release": "P1",
+    "scenario": "Child handles an item",
+    "preconditions": "Context available; restricted evidence access.",
+    "expected_behaviour": "Review cautiously and minimise retained footage.",
+    "negative_or_acceptance_test": "No child identity enrolment or automatic accusation."
+  },
+  {
+    "id": "S19",
+    "release": "P1",
+    "scenario": "View is occluded or item is hidden",
+    "preconditions": "Quality checks and model abstention supported.",
+    "expected_behaviour": "Show insufficient visibility or coverage gap.",
+    "negative_or_acceptance_test": "System must not fabricate product identity or a completed action."
+  },
+  {
+    "id": "S20",
+    "release": "P1",
+    "scenario": "Crowded aisle breaks tracking",
+    "preconditions": "Temporary visit tracking only.",
+    "expected_behaviour": "Split or mark association uncertain.",
+    "negative_or_acceptance_test": "Do not transfer a suspected action to another nearby customer."
+  },
+  {
+    "id": "S21",
+    "release": "P2",
+    "scenario": "Customer stays near high-value shelf",
+    "preconditions": "Aggregate analytics separately justified.",
+    "expected_behaviour": "Use aggregate exposure analysis or ordinary assistance process.",
+    "negative_or_acceptance_test": "Dwell time alone must not trigger a crime prediction."
+  },
+  {
+    "id": "S22",
+    "release": "P1",
+    "scenario": "Camera covered moved or frozen",
+    "preconditions": "Stream and scene-health monitoring.",
+    "expected_behaviour": "Show affected zone unavailable and notify maintenance.",
+    "negative_or_acceptance_test": "Frozen image must not be marked live; requalify moved camera."
+  },
+  {
+    "id": "S23",
+    "release": "P1",
+    "scenario": "No reviewer acknowledges alert",
+    "preconditions": "On-duty and alternate routing configured.",
+    "expected_behaviour": "Private reminder then private escalation with limits.",
+    "negative_or_acceptance_test": "No automatic siren because a timer expired."
+  },
+  {
+    "id": "S24",
+    "release": "P1",
+    "scenario": "Staff requests assistance",
+    "preconditions": "Authenticated local device and agreed response plan.",
+    "expected_behaviour": "Send immediate request to named staff; record routing status.",
+    "negative_or_acceptance_test": "Notification delivery must not be described as responder arrival."
+  },
+  {
+    "id": "S25",
+    "release": "P1",
+    "scenario": "Staff activates panic procedure",
+    "preconditions": "Existing physical panic route remains available.",
+    "expected_behaviour": "Use commissioned emergency procedure; optional app notice.",
+    "negative_or_acceptance_test": "No cloud dependency for the established physical panic path."
+  },
+  {
+    "id": "S26",
+    "release": "P1 option",
+    "scenario": "Manager starts attention sounder",
+    "preconditions": "Fresh context and authentication; commissioned output.",
+    "expected_behaviour": "Send expiring idempotent command and show actual feedback.",
+    "negative_or_acceptance_test": "Wrong site, expired command, missing confirmation or replay never actuates."
+  },
+  {
+    "id": "S27",
+    "release": "P2 option",
+    "scenario": "Armed after-hours door intrusion",
+    "preconditions": "Independent commissioned door sensor and arming state.",
+    "expected_behaviour": "Run the alarm installer approved rule and route.",
+    "negative_or_acceptance_test": "Cleaning staff and opening schedule tests must pass; no AI-only public activation."
+  },
+  {
+    "id": "S28",
+    "release": "G",
+    "scenario": "Possible weapon or visible assault",
+    "preconditions": "Dedicated model and emergency workflow separately validated.",
+    "expected_behaviour": "Private urgent review or manual panic under site plan.",
+    "negative_or_acceptance_test": "Never claim life-safety reliability; test safe props only and no automated confrontation."
+  },
+  {
+    "id": "S29",
+    "release": "P1 restricted",
+    "scenario": "Staff links earlier incident",
+    "preconditions": "Authorised manager and lawful incident retention.",
+    "expected_behaviour": "Record human-reported association with evidence and reason.",
+    "negative_or_acceptance_test": "Previous suspicion does not establish current theft; allow correction."
+  },
+  {
+    "id": "S30",
+    "release": "G",
+    "scenario": "Automatic returning-person candidate",
+    "preconditions": "All legal and technical recognition gates satisfied.",
+    "expected_behaviour": "Private candidate only with independent human review.",
+    "negative_or_acceptance_test": "Feature disabled in P1; no siren, enrolment or exclusion triggered by a match."
+  },
+  {
+    "id": "S31",
+    "release": "G",
+    "scenario": "False returning-person match",
+    "preconditions": "Recognition option lawfully enabled.",
+    "expected_behaviour": "Dismiss, correct record, review threshold and retain limited audit.",
+    "negative_or_acceptance_test": "A match score cannot establish identity or a new offence."
+  },
+  {
+    "id": "S32",
+    "release": "G",
+    "scenario": "Expired identity record",
+    "preconditions": "Lawful recognition option with hard expiry.",
+    "expected_behaviour": "Remove templates and derived references under approved schedule.",
+    "negative_or_acceptance_test": "Expiry must affect caches and candidate indexes; no unreviewed indefinite retention."
+  },
+  {
+    "id": "S33",
+    "release": "X",
+    "scenario": "Shared watchlist across clients",
+    "preconditions": "Not part of this product.",
+    "expected_behaviour": "Reject configuration and any cross-tenant identity lookup.",
+    "negative_or_acceptance_test": "Isolation negative tests must show no cross-client candidates."
+  },
+  {
+    "id": "S34",
+    "release": "P1",
+    "scenario": "Internet or supplier analysis outage",
+    "preconditions": "Health signal and documented offline capability.",
+    "expected_behaviour": "Show degraded coverage; queue only supported local observations.",
+    "negative_or_acceptance_test": "No claim of ongoing detection if supplier requires internet."
+  },
+  {
+    "id": "S35",
+    "release": "P1",
+    "scenario": "Old alert arrives after reconnection",
+    "preconditions": "Capture time and arrival time preserved.",
+    "expected_behaviour": "Mark historical, deduplicate and route for later review.",
+    "negative_or_acceptance_test": "No expired response command may execute."
+  },
+  {
+    "id": "S36",
+    "release": "P1",
+    "scenario": "Gateway disk full or overheated",
+    "preconditions": "Capacity telemetry and reserve thresholds.",
+    "expected_behaviour": "Expire disposable buffers, protect held evidence and flag coverage loss.",
+    "negative_or_acceptance_test": "No silent loss of held evidence or normal-status display."
+  },
+  {
+    "id": "S37",
+    "release": "P1",
+    "scenario": "Recorder and gateway clocks disagree",
+    "preconditions": "Clock health and offset estimates available.",
+    "expected_behaviour": "Flag uncertain ordering and suspend tight sales correlation.",
+    "negative_or_acceptance_test": "Preserve original timestamps and offset rather than falsifying source time."
+  },
+  {
+    "id": "S38",
+    "release": "P1",
+    "scenario": "Duplicate observation or command",
+    "preconditions": "Stable source ID and idempotency record.",
+    "expected_behaviour": "One logical observation and at most one actuation.",
+    "negative_or_acceptance_test": "Same key with different payload must fail with conflict."
+  },
+  {
+    "id": "S39",
+    "release": "P1",
+    "scenario": "Authorised evidence disclosure",
+    "preconditions": "Manager scope and recorded recipient purpose.",
+    "expected_behaviour": "Produce controlled package with manifest and audit.",
+    "negative_or_acceptance_test": "No public permanent link; expired or revoked access fails."
+  },
+  {
+    "id": "S40",
+    "release": "P1",
+    "scenario": "Access request correction or deletion",
+    "preconditions": "Identity verification and privacy workflow.",
+    "expected_behaviour": "Locate scoped records, protect bystanders and apply lawful decision.",
+    "negative_or_acceptance_test": "Restore test must reapply deletion before data becomes accessible."
+  },
+  {
+    "id": "S41",
+    "release": "P1",
+    "scenario": "Unauthorised user or another client requests video",
+    "preconditions": "Tenant and object-level access controls.",
+    "expected_behaviour": "Deny without revealing other client metadata.",
+    "negative_or_acceptance_test": "Direct media URL, API and export tests all fail closed."
+  },
+  {
+    "id": "S42",
+    "release": "P1",
+    "scenario": "Alarm reports accepted but no physical feedback",
+    "preconditions": "Commissioned output has no state sensor.",
+    "expected_behaviour": "Show command sent with unverified physical state.",
+    "negative_or_acceptance_test": "No false success and no new-ID blind retry."
+  },
+  {
+    "id": "S43",
+    "release": "P1",
+    "scenario": "Provider app has no supported integration",
+    "preconditions": "Vendor contract check fails Route B prerequisite.",
+    "expected_behaviour": "Use Route A with explicit scope or select another supplier.",
+    "negative_or_acceptance_test": "No scraping private interfaces or promising our alarm controls in a disconnected app."
+  },
+  {
+    "id": "S44",
+    "release": "P1",
+    "scenario": "Model update causes alert flood",
+    "preconditions": "Versioned model and deployment metrics.",
+    "expected_behaviour": "Disable class or roll back, retain unaffected coverage.",
+    "negative_or_acceptance_test": "No direct promotion from a live feedback label into production training."
+  },
+  {
+    "id": "S45",
+    "release": "P1",
+    "scenario": "Customer contract ends",
+    "preconditions": "Authorised export and documented deletion plan.",
+    "expected_behaviour": "Detach gateway, revoke keys and confirm deletion timetable.",
+    "negative_or_acceptance_test": "No live access after termination; backups expire as stated."
+  },
+  {
+    "id": "S46",
+    "release": "X",
+    "scenario": "Automatically lock door after suspected theft",
+    "preconditions": "Excluded actuation type.",
+    "expected_behaviour": "Reject command at API and gateway.",
+    "negative_or_acceptance_test": "No deployed permission or adapter for detention or escape control."
+  }
+]

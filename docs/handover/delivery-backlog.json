@@ -1,0 +1,321 @@
+[
+  {
+    "id": "E01",
+    "title": "Discovery and integration spike",
+    "work_package": "W1",
+    "release": "MVP",
+    "complexity_weight": 10,
+    "dependencies": [],
+    "requirement_ids": [
+      "FR-007",
+      "FR-008",
+      "FR-009",
+      "FR-010",
+      "FR-011",
+      "FR-012",
+      "FR-013",
+      "FR-014",
+      "FR-050",
+      "FR-051",
+      "FR-052",
+      "FR-053",
+      "FR-067"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E02",
+    "title": "Repository infrastructure and CI",
+    "work_package": "W1",
+    "release": "MVP",
+    "complexity_weight": 8,
+    "dependencies": [],
+    "requirement_ids": [
+      "FR-054",
+      "FR-055",
+      "FR-056",
+      "FR-057",
+      "FR-058",
+      "FR-059",
+      "FR-060"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E03",
+    "title": "Identity tenancy and role enforcement",
+    "work_package": "W2",
+    "release": "MVP",
+    "complexity_weight": 10,
+    "dependencies": [
+      "E02"
+    ],
+    "requirement_ids": [
+      "FR-001",
+      "FR-002",
+      "FR-003",
+      "FR-004",
+      "FR-005",
+      "FR-006",
+      "FR-050",
+      "FR-051",
+      "FR-052",
+      "FR-053"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E04",
+    "title": "Site device and policy management",
+    "work_package": "W2",
+    "release": "MVP",
+    "complexity_weight": 10,
+    "dependencies": [
+      "E01",
+      "E03"
+    ],
+    "requirement_ids": [
+      "FR-007",
+      "FR-008",
+      "FR-009",
+      "FR-010",
+      "FR-011",
+      "FR-012",
+      "FR-013",
+      "FR-014",
+      "FR-066",
+      "FR-067"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E05",
+    "title": "Incident workflow and console",
+    "work_package": "W3",
+    "release": "MVP",
+    "complexity_weight": 14,
+    "dependencies": [
+      "E03"
+    ],
+    "requirement_ids": [
+      "FR-022",
+      "FR-023",
+      "FR-024",
+      "FR-025",
+      "FR-026",
+      "FR-027",
+      "FR-028",
+      "FR-047",
+      "FR-048",
+      "FR-049"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E06",
+    "title": "Evidence ingest playback and exports",
+    "work_package": "W3-W4",
+    "release": "MVP",
+    "complexity_weight": 14,
+    "dependencies": [
+      "E03",
+      "E04"
+    ],
+    "requirement_ids": [
+      "FR-029",
+      "FR-030",
+      "FR-031",
+      "FR-032",
+      "FR-033",
+      "FR-034",
+      "FR-035"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E07",
+    "title": "Laptop companion and detector adapter",
+    "work_package": "W4",
+    "release": "MVP",
+    "complexity_weight": 14,
+    "dependencies": [
+      "E01",
+      "E04",
+      "E06"
+    ],
+    "requirement_ids": [
+      "FR-007",
+      "FR-008",
+      "FR-009",
+      "FR-010",
+      "FR-011",
+      "FR-012",
+      "FR-013",
+      "FR-014",
+      "FR-015",
+      "FR-016",
+      "FR-017",
+      "FR-018",
+      "FR-019",
+      "FR-020",
+      "FR-021",
+      "FR-067"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E08",
+    "title": "Notifications duty routing and assistance",
+    "work_package": "W4-W5",
+    "release": "MVP",
+    "complexity_weight": 8,
+    "dependencies": [
+      "E05"
+    ],
+    "requirement_ids": [
+      "FR-001",
+      "FR-002",
+      "FR-003",
+      "FR-004",
+      "FR-005",
+      "FR-006",
+      "FR-036",
+      "FR-037",
+      "FR-038"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E09",
+    "title": "Bounded incident drafting",
+    "work_package": "W5",
+    "release": "MVP",
+    "complexity_weight": 6,
+    "dependencies": [
+      "E05",
+      "E06"
+    ],
+    "requirement_ids": [
+      "FR-042",
+      "FR-043",
+      "FR-044",
+      "FR-045"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E10",
+    "title": "Retention audit rights and offboarding",
+    "work_package": "W5-W6",
+    "release": "MVP",
+    "complexity_weight": 10,
+    "dependencies": [
+      "E03",
+      "E06"
+    ],
+    "requirement_ids": [
+      "FR-029",
+      "FR-030",
+      "FR-031",
+      "FR-032",
+      "FR-033",
+      "FR-034",
+      "FR-035",
+      "FR-050",
+      "FR-051",
+      "FR-052",
+      "FR-053"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E11",
+    "title": "Operational metrics and reporting",
+    "work_package": "W5-W6",
+    "release": "MVP",
+    "complexity_weight": 6,
+    "dependencies": [
+      "E05",
+      "E07"
+    ],
+    "requirement_ids": [
+      "FR-047",
+      "FR-048",
+      "FR-049",
+      "FR-054",
+      "FR-055",
+      "FR-056",
+      "FR-057",
+      "FR-058",
+      "FR-059",
+      "FR-060"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E12",
+    "title": "Recovery performance and release hardening",
+    "work_package": "W6",
+    "release": "MVP",
+    "complexity_weight": 10,
+    "dependencies": [
+      "E06",
+      "E07",
+      "E08",
+      "E09",
+      "E10",
+      "E11"
+    ],
+    "requirement_ids": [
+      "FR-054",
+      "FR-055",
+      "FR-056",
+      "FR-057",
+      "FR-058",
+      "FR-059",
+      "FR-060"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E13",
+    "title": "Optional commissioned sounder",
+    "work_package": "After core gate",
+    "release": "OPTION",
+    "complexity_weight": 8,
+    "dependencies": [
+      "E04",
+      "E05",
+      "E08",
+      "E12"
+    ],
+    "requirement_ids": [
+      "FR-039",
+      "FR-040",
+      "FR-041"
+    ],
+    "status": "PLANNED"
+  },
+  {
+    "id": "E14",
+    "title": "Read-only stock and procedure extensions",
+    "work_package": "After pilot gate",
+    "release": "P2",
+    "complexity_weight": 20,
+    "dependencies": [
+      "E05",
+      "E10",
+      "E11",
+      "E12"
+    ],
+    "requirement_ids": [
+      "FR-046",
+      "FR-061",
+      "FR-062",
+      "FR-063",
+      "FR-064",
+      "FR-065"
+    ],
+    "status": "PLANNED"
+  }
+]

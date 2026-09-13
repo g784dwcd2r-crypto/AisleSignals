@@ -1,0 +1,538 @@
+[
+  {
+    "id": "FR-001",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Named accounts and MFA",
+    "behaviour": "Authenticate staff through managed OIDC; require individual accounts and authenticator MFA. Shared hardware never creates shared identity.",
+    "acceptance": "Invalid issuer, audience, nonce, state and expired session tests fail; no browser-stored bearer token."
+  },
+  {
+    "id": "FR-002",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Organisation and site access",
+    "behaviour": "Resolve active organisation from an authenticated membership and enforce permitted sites on every operation.",
+    "acceptance": "Client A cannot read, change, infer or export Client B data; same-organisation unauthorised-site tests also fail."
+  },
+  {
+    "id": "FR-003",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Invitations and role changes",
+    "behaviour": "Managers invite eligible roles only within their own authority; invitations expire after seven days and are one use.",
+    "acceptance": "A setup operator cannot invite a manager; used or expired invitation fails; removal invalidates sessions and grants."
+  },
+  {
+    "id": "FR-004",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Shift assignment and handover",
+    "behaviour": "Assign a named reviewer and alternate; hand over pending work explicitly; show missing coverage.",
+    "acceptance": "An unassigned shift shows degraded reviewer coverage and routes privately to the configured alternate."
+  },
+  {
+    "id": "FR-005",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Session controls",
+    "behaviour": "Use server-side opaque sessions, idle lock, CSRF validation and session revocation; reauthenticate privileged actions.",
+    "acceptance": "Old tabs lose API/media access after revocation; cookie-authenticated mutations without CSRF fail."
+  },
+  {
+    "id": "FR-006",
+    "release": "MVP",
+    "module": "Access",
+    "title": "Support access grants",
+    "behaviour": "Grant support access to a specific site, purpose, scope and expiry; default access is operational metadata only.",
+    "acceptance": "Expired grants fail; a health grant cannot view media or export; all grant use is audited."
+  },
+  {
+    "id": "FR-007",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Site registry",
+    "behaviour": "Record legal entity, address, Europe/Dublin timezone, hours, contacts and pilot owner before activation.",
+    "acceptance": "Each site has separate policies and status; Dublin daylight-saving boundaries preserve event ordering."
+  },
+  {
+    "id": "FR-008",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Device enrolment",
+    "behaviour": "Exchange a one-use, ten-minute enrolment token and device-generated CSR for a site-bound credential.",
+    "acceptance": "Token reuse, wrong site and revoked certificate fail; no factory shared password is accepted."
+  },
+  {
+    "id": "FR-009",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Camera capability register",
+    "behaviour": "Record exact camera/recorder model, firmware, stream path reference, codec, view and approved event classes.",
+    "acceptance": "Stream accessibility and detection qualification have separate results; unsupported views show a reason."
+  },
+  {
+    "id": "FR-010",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Privacy masks and exclusions",
+    "behaviour": "Exclude consultation rooms, prescription screens, audio and unnecessary areas; version local capture policy.",
+    "acceptance": "Masked areas remain excluded in inference input and uploaded review copies; scope changes require requalification."
+  },
+  {
+    "id": "FR-011",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Local credentials",
+    "behaviour": "Keep camera secrets in the local protected credential store; cloud inventory holds opaque references.",
+    "acceptance": "Secrets do not appear in logs, support bundles, URLs, exports, screenshots or source control."
+  },
+  {
+    "id": "FR-012",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Activation gate",
+    "behaviour": "Activate a site only after role assignment, view tests, processing scope, notifications and commissioning records pass.",
+    "acceptance": "Activation is blocked with named missing checks; one site's acceptance cannot activate another site."
+  },
+  {
+    "id": "FR-013",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Coverage health",
+    "behaviour": "Measure frame freshness, camera decode, detector status, clock offset, laptop companion disk and connectivity separately.",
+    "acceptance": "A frozen frame or missing detector never displays as active detection; healthy unrelated views remain visible."
+  },
+  {
+    "id": "FR-014",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Maintenance and updates",
+    "behaviour": "Install signed, compatible laptop companion updates in stages with a previous-version rollback and local recovery procedure.",
+    "acceptance": "Invalid signature, low disk or failed health check prevents promotion; restart does not erase command deduplication."
+  },
+  {
+    "id": "FR-015",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Normalised observations",
+    "behaviour": "Validate source event ID, mapped camera, interval, model version, score scale, quality and evidence references.",
+    "acceptance": "Unknown camera, unsupported schema/class and cross-site evidence fail; product and score may remain unknown."
+  },
+  {
+    "id": "FR-016",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Idempotent intake",
+    "behaviour": "Deduplicate exact provider/device events transactionally using source identity and stable source event ID.",
+    "acceptance": "Concurrent retries create one observation; a repeated ID with different content returns conflict."
+  },
+  {
+    "id": "FR-017",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Qualified classes only",
+    "behaviour": "Enable concealment or sweeping only when the contracted detector and camera view pass site acceptance.",
+    "acceptance": "No generic object detector or language model is presented as a validated concealment engine."
+  },
+  {
+    "id": "FR-018",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Context and clip readiness",
+    "behaviour": "Send an eligible alert with available preceding context; attach following footage asynchronously with explicit readiness.",
+    "acceptance": "Notification is not delayed for the full post-event clip; absent or corrupt media is clearly shown."
+  },
+  {
+    "id": "FR-019",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Candidate grouping",
+    "behaviour": "Group a validated event sequence conservatively; preserve separate observations and uncertain associations.",
+    "acceptance": "Nearby unrelated customers are not merged solely by location; grouping never creates cross-visit identity."
+  },
+  {
+    "id": "FR-020",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Historical events",
+    "behaviour": "Preserve capture and arrival time; flag stale or uncertain-time observations as historical.",
+    "acceptance": "Buffered events after reconnection cannot trigger an immediate sounder or inflate current latency metrics."
+  },
+  {
+    "id": "FR-021",
+    "release": "MVP",
+    "module": "Detection",
+    "title": "Class controls",
+    "behaviour": "Version thresholds and routing by provider/model/site; allow a manager to suspend a noisy class.",
+    "acceptance": "Suspension is audited and visibly reduces coverage; model changes rerun the agreed evaluation set."
+  },
+  {
+    "id": "FR-022",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Incident creation",
+    "behaviour": "Open a case from a reviewed candidate or a manual factual report; keep observation and incident identities separate.",
+    "acceptance": "Manual reporting works without a detector; duplicate conversion of the same candidate is controlled."
+  },
+  {
+    "id": "FR-023",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Review and classification",
+    "behaviour": "Capture benign, insufficient evidence, suspected incident or store-confirmed loss with reasons and supporting evidence.",
+    "acceptance": "Only a manager records store-confirmed loss; no action creates a thief label or legal finding."
+  },
+  {
+    "id": "FR-024",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Concurrent changes",
+    "behaviour": "Use expected record version for workflow, ownership, review and financial changes.",
+    "acceptance": "Two reviewers cannot silently overwrite one another; conflict response supplies the current version."
+  },
+  {
+    "id": "FR-025",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Outcomes and valuation",
+    "behaviour": "Record loss, recovery and payment outcomes separately using EUR minor units and an explicit cost basis.",
+    "acceptance": "Unknown amount stays null; recovered goods and the same avoided loss are not counted twice."
+  },
+  {
+    "id": "FR-026",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Follow-up tasks",
+    "behaviour": "Create tasks with assignee, due date and reason; closure identifies outstanding action ownership.",
+    "acceptance": "Overdue tasks appear in the appropriate site inbox; closing the case does not silently discard tasks."
+  },
+  {
+    "id": "FR-027",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Correction and reopening",
+    "behaviour": "Append corrections and manager reopening reasons while preserving prior versions and original observations.",
+    "acceptance": "A corrected outcome updates reports and retains its audit trail; later evidence does not rewrite history."
+  },
+  {
+    "id": "FR-028",
+    "release": "MVP",
+    "module": "Review",
+    "title": "Restricted earlier-incident link",
+    "behaviour": "Permit an authorised manager to link a specific earlier case with an evidence-based reason and retention review.",
+    "acceptance": "No automatic identity matching or shared watchlist is created; prior suspicion is not a new offence."
+  },
+  {
+    "id": "FR-029",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Upload lifecycle",
+    "behaviour": "Create a scoped upload intent, accept bytes, validate checksum/size/type and quarantine before publication.",
+    "acceptance": "Oversized, mismatched or malformed media stays unavailable and produces a traceable failure."
+  },
+  {
+    "id": "FR-030",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Original and derivative separation",
+    "behaviour": "Preserve collected source bytes and timestamps; generate separately labelled preview/redacted variants.",
+    "acceptance": "A transformation never overwrites the original or its digest; manifest records parent and transform version."
+  },
+  {
+    "id": "FR-031",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Controlled playback",
+    "behaviour": "Serve evidence through an authenticated, revocable media proxy with site/purpose checks and range support.",
+    "acceptance": "Leaked URL, expired grant and wrong-site session cannot retrieve any byte range or thumbnail."
+  },
+  {
+    "id": "FR-032",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Export preparation",
+    "behaviour": "Managers choose cases, recipient reference, purpose and permitted variants; a job builds the package.",
+    "acceptance": "Export rechecks current authority and retention at execution and download; no automatic external sending occurs."
+  },
+  {
+    "id": "FR-033",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Evidence manifest",
+    "behaviour": "Include selected originals/derivatives, hashes, UTC/local times, collection provenance, reviews and export history.",
+    "acceptance": "An independent verification tool detects modified bytes; digest is not described as proof of guilt or admissibility."
+  },
+  {
+    "id": "FR-034",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Retention and holds",
+    "behaviour": "Apply justified retention classes, reviewed holds and expiry to media, derivatives, exports and AI drafts.",
+    "acceptance": "Concurrent hold/deletion is serialised; deletion failures block new access and alert the privacy owner."
+  },
+  {
+    "id": "FR-035",
+    "release": "MVP",
+    "module": "Evidence",
+    "title": "Rights requests",
+    "behaviour": "Record receipt, verified request scope, calendar-month due date, redaction review and authorised response.",
+    "acceptance": "Month-end dates calculate correctly; search stays scoped; disclosure protects unrelated people."
+  },
+  {
+    "id": "FR-036",
+    "release": "MVP",
+    "module": "Response",
+    "title": "Private notification routing",
+    "behaviour": "Use the staffed console first; optional push contains only a generic reference; remind at 30 seconds and escalate at 90.",
+    "acceptance": "Duplicate dispatch is deduplicated; no acknowledgement never automatically becomes a public alarm or emergency call."
+  },
+  {
+    "id": "FR-037",
+    "release": "MVP",
+    "module": "Response",
+    "title": "Assistance request",
+    "behaviour": "Let an authenticated staff member request help without classifying an offence; distinguish delivery and acknowledgement.",
+    "acceptance": "Repeated taps reuse one logical request; acknowledgement is not represented as responder arrival."
+  },
+  {
+    "id": "FR-038",
+    "release": "MVP",
+    "module": "Response",
+    "title": "Emergency continuity",
+    "behaviour": "Keep the pharmacy's established physical panic and emergency procedures independent of the cloud app.",
+    "acceptance": "Loss of cloud, laptop companion or browser does not disable the existing physical panic arrangement."
+  },
+  {
+    "id": "FR-039",
+    "release": "OPTION",
+    "module": "Response",
+    "title": "Commissioned attention sounder",
+    "behaviour": "Permit an individually authorised person to request a mapped attention output after reviewing current context.",
+    "acceptance": "Wrong site, missing permission, stale live context or incomplete commissioning blocks authorisation."
+  },
+  {
+    "id": "FR-040",
+    "release": "OPTION",
+    "module": "Response",
+    "title": "Safe command execution",
+    "behaviour": "Use one-use authorisation, signed commands, ten-second maximum TTL and a five-second maximum attention pulse.",
+    "acceptance": "Replays, reboot and crash after dispatch cannot cause a second pulse; uncertain physical state stays unknown."
+  },
+  {
+    "id": "FR-041",
+    "release": "OPTION",
+    "module": "Response",
+    "title": "Local stop and output testing",
+    "behaviour": "Require a tested stop control for the documented existing software interface, output feedback policy and test mode isolated from live outputs.",
+    "acceptance": "Expiry, duplicate, unavailable existing interface, watchdog and emergency-stop tests pass at each commissioned output."
+  },
+  {
+    "id": "FR-042",
+    "release": "MVP",
+    "module": "AI",
+    "title": "Incident draft assistant",
+    "behaviour": "Draft only from reviewed structured facts and approved evidence references; identify missing fields explicitly.",
+    "acceptance": "Schema failure or unsupported identities/amounts returns to manual completion; staff approval remains required."
+  },
+  {
+    "id": "FR-043",
+    "release": "MVP",
+    "module": "AI",
+    "title": "Job permissions and limits",
+    "behaviour": "Give each AI job a fixed input schema, model/prompt version, timeout, output limit and cost reservation.",
+    "acceptance": "No AI job can execute shell/SQL, activate a sounder, disclose evidence or send a message externally."
+  },
+  {
+    "id": "FR-044",
+    "release": "MVP",
+    "module": "AI",
+    "title": "Spending and fallbacks",
+    "behaviour": "Enforce per-tenant model budgets atomically before calls; retry at most once and retain manual workflows.",
+    "acceptance": "Budget exhaustion, timeout and supplier outage never block review, evidence capture or manual reports."
+  },
+  {
+    "id": "FR-045",
+    "release": "MVP",
+    "module": "AI",
+    "title": "Quality and change control",
+    "behaviour": "Evaluate report drafts on a held-out factual set before model/prompt changes and sample staff corrections.",
+    "acceptance": "Critical unsupported assertions prevent release; improvements cannot be claimed from training examples alone."
+  },
+  {
+    "id": "FR-046",
+    "release": "P2",
+    "module": "AI",
+    "title": "Approved procedure assistant",
+    "behaviour": "Retrieve only current approved nonclinical procedures with source/version and a direct link.",
+    "acceptance": "Missing or conflicting procedure yields no confident instruction; revoked documents disappear from retrieval."
+  },
+  {
+    "id": "FR-047",
+    "release": "MVP",
+    "module": "Reporting",
+    "title": "Operational dashboard",
+    "behaviour": "Show coverage, pending reviews, task age, review time, unresolved cases and provider failures by authorised site.",
+    "acceptance": "Totals reconcile to scoped records; missing observations and downtime remain visible."
+  },
+  {
+    "id": "FR-048",
+    "release": "MVP",
+    "module": "Reporting",
+    "title": "Financial reporting",
+    "behaviour": "Report documented cost-basis losses and recoveries separately from candidates and suspected incidents.",
+    "acceptance": "No report totals guessed alert values as savings; reversals and corrections change the relevant period transparently."
+  },
+  {
+    "id": "FR-049",
+    "release": "MVP",
+    "module": "Reporting",
+    "title": "Weekly digest",
+    "behaviour": "Generate a deterministic aggregate first and optionally summarise it with AI; suppress sparse or unsupported trends.",
+    "acceptance": "The report still works without AI; no person-level risk scores or cross-customer footage are included."
+  },
+  {
+    "id": "FR-050",
+    "release": "MVP",
+    "module": "Governance",
+    "title": "Auditable actions",
+    "behaviour": "Append actor, purpose, resource, timestamps, request ID and relevant before/after version for sensitive actions.",
+    "acceptance": "Runtime users cannot update/delete audit records; independently stored checkpoints reveal later changes."
+  },
+  {
+    "id": "FR-051",
+    "release": "MVP",
+    "module": "Governance",
+    "title": "Processing controls",
+    "behaviour": "Record controller/processor responsibilities, permitted sources, offence-data safeguards and cloud processing settings.",
+    "acceptance": "Live data activation requires completed site-specific records; project approval does not fabricate a legal basis."
+  },
+  {
+    "id": "FR-052",
+    "release": "MVP",
+    "module": "Governance",
+    "title": "Customer offboarding",
+    "behaviour": "Export authorised records, revoke people/devices/integrations and apply deletion plus backup expiry.",
+    "acceptance": "Terminated access fails immediately online; restored backups cannot revive deleted or revoked access."
+  },
+  {
+    "id": "FR-053",
+    "release": "MVP",
+    "module": "Governance",
+    "title": "Sensitive feature exclusions",
+    "behaviour": "Provide no facial embeddings, cross-visit recognition, shared offender search, door-lock adapter or clinical decision tool.",
+    "acceptance": "Contract, UI, database and permissions contain no hidden enabled route to an excluded feature."
+  },
+  {
+    "id": "FR-054",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Durable work queue",
+    "behaviour": "Use committed jobs/outbox rows, leases, fencing tokens and bounded retries for uploads, exports and notifications.",
+    "acceptance": "Worker crashes and expired leases do not lose committed work or duplicate final business effects."
+  },
+  {
+    "id": "FR-055",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Database isolation",
+    "behaviour": "Use tenant-inclusive foreign keys, runtime RLS and transaction-local context; separately enforce site and action permissions.",
+    "acceptance": "Wrong-tenant references fail; connection-pool reuse cannot retain the previous request's tenant context."
+  },
+  {
+    "id": "FR-056",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Recovery and backups",
+    "behaviour": "Back up database/WAL and media independently; restore in isolation and reapply deletion and revocation records.",
+    "acceptance": "Demonstrate a 15-minute database RPO and four-hour core-service RTO under the scoped pilot recovery test."
+  },
+  {
+    "id": "FR-057",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Observability",
+    "behaviour": "Monitor latency, coverage, queue age, disk, failed uploads, model spend, permissions and export/deletion failures.",
+    "acceptance": "Alerts identify the affected site/service without exposing video, camera passwords or incident narratives in logs."
+  },
+  {
+    "id": "FR-058",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Release pipeline",
+    "behaviour": "Validate contracts and isolation, scan dependencies, sign immutable releases and promote through staging and a canary site.",
+    "acceptance": "A failing critical check prevents deployment; rollback keeps previously committed incidents readable."
+  },
+  {
+    "id": "FR-059",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Offline and degradation",
+    "behaviour": "Serve no cached sensitive media in the web service worker; laptop companion spools only within its signed capture lease and limits.",
+    "acceptance": "Internet recovery labels old events historical; expired commands never run; unsupported offline functions say unavailable."
+  },
+  {
+    "id": "FR-060",
+    "release": "MVP",
+    "module": "Platform",
+    "title": "Accessibility and usability",
+    "behaviour": "Support keyboard review, visible focus, readable text, non-colour status and labelled controls on the two existing laptops.",
+    "acceptance": "A pharmacist can complete the core flow using keyboard or touch; sound is supplementary to visible notifications."
+  },
+  {
+    "id": "FR-061",
+    "release": "P2",
+    "module": "Stock",
+    "title": "Read-only import",
+    "behaviour": "Accept approved nonclinical SKU movements and counts through validated files or an agreed API; reject patient and payment data.",
+    "acceptance": "Wrong site, ambiguous units, duplicated batches and invalid rows are rejected or quarantined with an import report."
+  },
+  {
+    "id": "FR-062",
+    "release": "P2",
+    "module": "Stock",
+    "title": "Complete reconciliation",
+    "behaviour": "Calculate expected stock from opening count and all relevant movement classes; display missing inputs and source watermark.",
+    "acceptance": "Incomplete periods cannot produce a definitive theft claim; batch context never supports live nonpayment conclusions."
+  },
+  {
+    "id": "FR-063",
+    "release": "P2",
+    "module": "Stock",
+    "title": "Stock investigations",
+    "behaviour": "Create a task for recount, delivery, return, transfer, damage or expiry review and record the supported explanation.",
+    "acceptance": "A variance cannot be automatically assigned to a shopper or employee; source corrections remain versioned."
+  },
+  {
+    "id": "FR-064",
+    "release": "P2",
+    "module": "Stock",
+    "title": "Expiry and recall coordination",
+    "behaviour": "Match exact approved product/batch data, assign action and require pharmacist confirmation where applicable.",
+    "acceptance": "Stale notices or absent batch data show unknown; AI cannot infer availability or order a substitution."
+  },
+  {
+    "id": "FR-065",
+    "release": "P2",
+    "module": "Stock",
+    "title": "Aggregate forecasting",
+    "behaviour": "Forecast workload or incident counts by sufficiently aggregated zone/time with exposure and uncertainty.",
+    "acceptance": "Below the minimum data threshold show insufficient evidence; no personal criminality or clinical forecast is produced."
+  },
+  {
+    "id": "FR-066",
+    "release": "MVP",
+    "module": "Commercial",
+    "title": "One branch subscription and AI budget",
+    "behaviour": "Record exactly 6000 EUR cents monthly for one pharmacy branch; bind the subscription to its company and site, with a EUR 5 branch model allowance. Billing begins as an owner-managed record.",
+    "acceptance": "Creating a branch cannot charge a customer or enable paid capacity automatically; a separate approved subscription or explicit trial is required, and unknown tax terms cannot publish a checkout."
+  },
+  {
+    "id": "FR-067",
+    "release": "MVP",
+    "module": "Commissioning",
+    "title": "Existing laptop only",
+    "behaviour": "Install the companion on the pharmacy's existing laptop and connect existing supported cameras or recorder software interfaces. No appliance, capture card, GPU, relay or new camera purchase is allowed.",
+    "acceptance": "OS-specific install, startup, sleep/resume, disk/CPU guard, encrypted spool and laptop speaker tests pass; unsupported existing equipment is disclosed rather than replaced."
+  }
+]

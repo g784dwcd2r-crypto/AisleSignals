@@ -1,0 +1,23 @@
+flowchart LR
+  subgraph Pharmacy
+    C[Supported cameras or recorder] --> G[Companion on existing Windows or Mac laptop]
+    P[Existing physical panic system]
+    O[Optional existing sounder software API]
+  end
+  subgraph AisleSignals
+    A[FastAPI API and authorisation] --> D[(PostgreSQL business records and outbox)]
+    D --> W[Durable Python workers]
+    W --> S[(Private evidence storage)]
+    A --> M[Revocable media proxy]
+    M --> S
+    W --> L[Budgeted AI draft service]
+    A --> X[Separate action authorisation]
+  end
+  G -->|Authenticated events and permitted clips| A
+  G -->|Outbound command poll| X
+  X -->|Signed expiring command| G
+  G -->|At most one authorised pulse| O
+  B[React pharmacy console] --> A
+  B --> M
+  I[Managed OIDC identity] --> A
+  A -->|Private event references| B

@@ -1,0 +1,10 @@
+{
+  "pdf_pages": 31,
+  "author": "Jawahir Q.",
+  "functional_requirements_present": 67,
+  "word_footnotes": 18,
+  "unique_external_links": 32,
+  "visual_review": "All 31 pages inspected. Any subsequent changed page images inspected again, with unchanged pages verified pixel-identical. No clipping, blank pages or broken table rows identified.",
+  "bookmarked_document": true,
+  "application_test_status": "Not implemented or runtime tested by this handover operation."
+}

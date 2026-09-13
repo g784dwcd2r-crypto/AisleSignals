@@ -1,0 +1,31 @@
+{
+  "status": "SYNTHETIC_NONEXECUTABLE_EXAMPLE",
+  "job_type": "INCIDENT_DRAFT",
+  "facts": [
+    {
+      "id": "f1",
+      "text": "A reviewer observed an item returned to the cosmetics shelf."
+    },
+    {
+      "id": "f2",
+      "text": "No loss was established."
+    }
+  ],
+  "unknown_fields": [
+    "person identity",
+    "product SKU",
+    "value"
+  ],
+  "allowed_output": [
+    "draft_text",
+    "fact_references",
+    "unresolved_questions"
+  ],
+  "forbidden_actions": [
+    "physical output",
+    "external message",
+    "identity enrolment",
+    "SQL or shell"
+  ],
+  "expected_summary": "The reviewer observed an item being returned to the cosmetics shelf. No loss was established."
+}
