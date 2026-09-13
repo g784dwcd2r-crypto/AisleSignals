@@ -31,7 +31,7 @@ from .interaction_vision import (
     VisionProvider,
     validate_frames,
 )
-from .models import Input
+from .models import Input, InteractionCaseCreate
 from .store import Store, digest, encode, ident, now
 from .evidence_crypto import EvidenceCipher, PilotDatabaseLock, read_frame
 
@@ -109,6 +109,7 @@ def saved_view(item):
         ],
         "review": item["review"],
         "version": item["version"],
+        "incident_id": item.get("incident_id"),
         "evidence_kind": "sampled_jpeg_derivatives",
         "historical": item["source_kind"] == "RECORDED_VIDEO",
     }
@@ -127,6 +128,7 @@ class InteractionService:
     def __init__(self, store):
         self.store = store
         self.provider = VisionProvider()
+        self.runtime_current = lambda item: True  # Installed by the owning API process.
         db = Path(store.path).resolve()
         self.evidence_root = db.parent / (db.name + ".interaction-evidence")
         if self.evidence_root.is_symlink():
@@ -326,9 +328,9 @@ class InteractionService:
                 item = self.store.get(conn, scope, "interaction", item_id)
                 if not item or item["status"] == "cancelled" or expired(item):
                     return
-                if not self.authorized(conn, item) or cancellation.is_set():
+                if not self.authorized(conn, item) or cancellation.is_set() or not self.runtime_current(item):
                     item["status"] = "cancelled"
-                    item["error"] = "Analysis stopped because its authorisation ended."
+                    item["error"] = "Analysis stopped because its runtime context or authorisation ended."
                     self.remove_files(item_id)
                     item["frames"] = []
                     self.store.put(conn, scope, "interaction", item)
@@ -352,6 +354,7 @@ class InteractionService:
                     or cancellation.is_set()
                     or self.closed.is_set()
                     or not self.authorized(conn, current)
+                    or not self.runtime_current(current)
                 ):
                     current["status"] = "cancelled"
                     current["error"] = (
@@ -414,7 +417,7 @@ async def interaction_lifespan(app):
         app.state.interactions.close()
 
 
-def install_interactions(app, context, problem):
+def install_interactions(app, context, problem, new_incident, idempotent):
     service = app.state.interactions = InteractionService(app.state.store)
 
     def available(ctx, item_id):
@@ -475,6 +478,8 @@ def install_interactions(app, context, problem):
                     "INTERACTION_EXPIRED",
                     "This previous job was deleted or expired. Use a fresh sample and action key.",
                 )
+            if not service.runtime_current(original):
+                problem(409, "RUNTIME_CONTEXT_CHANGED", "This earlier job belongs to an ended runtime. Submit a fresh sample with a new action key.")
             return JSONResponse(
                 {"id": original["id"], "status": original["status"]}, status_code=202
             )
@@ -531,6 +536,7 @@ def install_interactions(app, context, problem):
             item = {
                 "id": item_id,
                 "run_id": str(body.run_id),
+                "runtime_context": request.headers.get("x-aislesignals-runtime"),
                 "source_kind": body.source_kind,
                 "source_label": body.source_label,
                 "created_at": now(),
@@ -619,7 +625,10 @@ def install_interactions(app, context, problem):
 
     @app.get("/api/interactions/jobs/{item_id}")
     def job(item_id: UUID, ctx=Depends(context)):
-        return job_view(available(ctx, item_id))
+        item = available(ctx, item_id)
+        if not service.runtime_current(item):
+            problem(409, "RUNTIME_CONTEXT_CHANGED", "This live job belongs to an ended runtime. Any completed observation remains available only in reviewed history.")
+        return job_view(item)
 
     @app.post("/api/interactions/jobs/{item_id}/cancel")
     def cancel(item_id: UUID, ctx=Depends(context)):
@@ -717,6 +726,75 @@ def install_interactions(app, context, problem):
         )
         return saved_view(item)
 
+    @app.post("/api/interactions/{item_id}/case", status_code=201)
+    def create_case(item_id: UUID, body: InteractionCaseCreate, request: Request, ctx=Depends(context)):
+        # Authorisation and expiry precede even a successful idempotent replay.
+        item = available(ctx, item_id)
+        if ctx.user["role"] not in {"MANAGER", "REVIEWER"}:
+            problem(403, "REVIEWER_REQUIRED", "An authorised pharmacy reviewer must create this case.")
+
+        def run():
+            if item.get("incident_id"):
+                problem(409, "INTERACTION_ALREADY_LINKED", "This observation already has a linked case. Refresh and open that case.", item["version"])
+            if item["version"] != body.expected_version:
+                problem(409, "VERSION_CONFLICT", "This observation changed. Reload and review the latest version before creating a case.", item["version"])
+            if item["status"] != "completed" or not item.get("result"):
+                problem(409, "INTERACTION_NOT_READY", "Wait for a completed observation before creating a case.")
+            if not item.get("review"):
+                problem(409, "INTERACTION_REVIEW_REQUIRED", "Review the sampled frames and record a staff outcome before creating a case.")
+            if not item["frames"]:
+                problem(404, "EVIDENCE_UNAVAILABLE", "The sampled evidence is unavailable. No linked case was created.")
+            try:
+                for index in range(len(item["frames"])):
+                    read_frame(service.evidence_root, item, index, service.cipher, MAX_JPEG_BYTES)
+            except (OSError, ValueError, VisionError):
+                problem(404, "EVIDENCE_UNAVAILABLE", "The sampled evidence is missing or failed integrity checks. No linked case was created.")
+            # BEGIN IMMEDIATE in the request context serialises both records and
+            # the retry receipt. No copied media or retention extension is made.
+            incident = new_incident(ctx, body.title, body.notes)
+            incident["interaction_source"] = {
+                "id": item["id"], "version": item["version"],
+                "run_id": item["run_id"], "source_kind": item["source_kind"],
+                "source_label": item["source_label"], "created_at": item["created_at"],
+                "expires_at": item["expires_at"], "observation": item["result"],
+                "review": item["review"], "frames": item["frames"],
+                "linked_at": now(), "linked_by": {"id": ctx.user["id"], "name": ctx.user["name"]},
+                "evidence_kind": "sampled_jpeg_derivatives",
+                "retention_notice": "Case linkage preserves this metadata snapshot only. Sampled JPEGs retain their original 24-hour expiry and can be deleted earlier. Original CCTV is not copied or preserved.",
+            }
+            ctx.put("incident", incident)
+            item["incident_id"] = incident["id"]
+            item["version"] += 1
+            ctx.put("interaction", item)
+            ctx.audit("INTERACTION_CASE_LINKED", "incident", incident["id"],
+                      "Staff linked a reviewed product observation. Case classification remains unassessed; no identity, intent, payment or criminality finding was inferred.")
+            return {"incident": incident, "interaction": saved_view(item)}
+
+        return idempotent(ctx, request, body.model_dump(), run)
+
+    @app.get("/api/incidents/{incident_id}/interaction-source")
+    def case_source(incident_id: UUID, ctx=Depends(context)):
+        incident = ctx.get("incident", str(incident_id))
+        source = incident.get("interaction_source")
+        if not source:
+            problem(404, "INTERACTION_SOURCE_UNAVAILABLE", "This case has no linked product observation.")
+        current = ctx.store.get(ctx.conn, ctx.user, "interaction", source["id"])
+        state = "expired" if expired(source) or (current is not None and expired(current)) else "deleted" if current is None else "available"
+        if state == "available" and (current.get("incident_id") != incident["id"] or current.get("status") != "completed"):
+            state = "unavailable"
+        if state == "available":
+            try:
+                if current["frames"] != source["frames"]:
+                    raise ValueError("Linked manifest changed")
+                for index in range(len(source["frames"])):
+                    read_frame(service.evidence_root, current, index, service.cipher, MAX_JPEG_BYTES)
+            except (OSError, ValueError, VisionError):
+                state = "unavailable"
+        return {"source": source, "evidence_status": state, "frames": [
+            {"at_seconds": frame["at_seconds"], "url": f"/api/interactions/{source['id']}/frames/{index}"}
+            for index, frame in enumerate(source["frames"])
+        ] if state == "available" else []}
+
     @app.delete("/api/interactions/{item_id}")
     def delete(item_id: UUID, ctx=Depends(context)):
         item = ctx.get("interaction", str(item_id))
@@ -733,6 +811,6 @@ def install_interactions(app, context, problem):
             "INTERACTION_DELETED",
             "interaction",
             item["id"],
-            "Staff deleted interaction metadata and sampled JPEG evidence.",
+            "Staff deleted the interaction and sampled JPEG evidence. Linked case metadata remains under the case record lifecycle." if item.get("incident_id") else "Staff deleted interaction metadata and sampled JPEG evidence.",
         )
         return {"deleted": True}

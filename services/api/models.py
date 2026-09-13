@@ -61,6 +61,10 @@ class IncidentCreate(Input):
     notes: str = Field(min_length=5, max_length=4000)
 
 
+class InteractionCaseCreate(IncidentCreate, Version):
+    """An explicit staff-written case request for the version they reviewed."""
+
+
 Classification = Literal[
     "UNASSESSED",
     "BENIGN",

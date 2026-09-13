@@ -205,6 +205,37 @@
   font-size: 11px;
   color: #576e5b;
 }
+.interaction-case-form,
+.interaction-case-source {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #bdcfba;
+  border-radius: 9px;
+  background: #f7faf4;
+  overflow-wrap: anywhere;
+}
+.interaction-case-form label {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0;
+  color: #31553b;
+  font-size: 13px;
+}
+.interaction-case-form input,
+.interaction-case-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.interaction-case-source p,
+.interaction-case-form p {
+  color: #4d6353;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.interaction-case-source details {
+  margin-top: 14px;
+}
 .interaction-commission,
 .interaction-evidence-policy {
   margin: 16px 0;

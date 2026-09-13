@@ -1,3 +1,4 @@
+import { runtimeHealth } from "./runtimeHealth";
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -81,10 +82,26 @@ export async function api<T>(
   method = "GET",
   payload?: unknown,
   download = false,
+  signal?: AbortSignal,
 ): Promise<T> {
   const write = method !== "GET";
   const requestCsrf = csrfToken;
+  const runtimeEpoch = runtimeHealth.requestEpoch();
+  const monitorRequest =
+    path === "/interactions/jobs" ||
+    /^\/interactions\/jobs\/[^/]+$/.test(path) ||
+    (path === "/live-events" && write);
+  const healthActive = runtimeHealth.snapshot().active;
+  const healthContext = runtimeHealth.snapshot().context;
+  if (monitorRequest && healthActive && !runtimeHealth.canMonitor())
+    throw new ApiError(
+      409,
+      "RUNTIME_CONTEXT_CHANGED",
+      "Monitoring requires a fresh local service heartbeat. Start again after recovery.",
+    );
   const headers: Record<string, string> = { Accept: "application/json" };
+  if (monitorRequest && healthContext)
+    headers["X-AisleSignals-Runtime"] = healthContext;
   if (payload !== undefined) headers["Content-Type"] = "application/json";
   if (write && csrfToken) headers["X-CSRF-Token"] = csrfToken;
   if (write && siteContext && path !== "/login")
@@ -104,9 +121,14 @@ export async function api<T>(
       credentials: "same-origin",
       cache: "no-store",
       body: payload === undefined ? undefined : JSON.stringify(payload),
-      signal: AbortSignal.timeout(12000),
+      signal: signal ?? AbortSignal.timeout(12000),
     });
   } catch {
+    if (requestCsrf && requestCsrf === csrfToken)
+      runtimeHealth.interrupt(
+        "Local API connection failed. Monitoring stopped and sound disarmed.",
+        runtimeEpoch,
+      );
     releaseSensitiveKey();
     throw new ApiError(
       0,
@@ -117,6 +139,15 @@ export async function api<T>(
     );
   }
   if (!response.ok) {
+    if (
+      requestCsrf &&
+      requestCsrf === csrfToken &&
+      (response.status >= 500 || (response.status === 409 && monitorRequest))
+    )
+      runtimeHealth.interrupt(
+        "Local service rejected the monitoring context. Start again only after fresh health checks.",
+        runtimeEpoch,
+      );
     let error;
     try {
       error = (await response.json()).error;
@@ -146,6 +177,11 @@ export async function api<T>(
   try {
     result = (download ? await response.blob() : await response.json()) as T;
   } catch {
+    if (requestCsrf && requestCsrf === csrfToken)
+      runtimeHealth.interrupt(
+        "Local API connection failed. Monitoring stopped and sound disarmed.",
+        runtimeEpoch,
+      );
     releaseSensitiveKey();
     throw new ApiError(
       0,
@@ -153,6 +189,18 @@ export async function api<T>(
       "The server response was incomplete. Your input and retry key are kept. Reconnect and retry the same action.",
     );
   }
+  if (
+    monitorRequest &&
+    healthActive &&
+    (!runtimeHealth.isCurrent(runtimeEpoch) ||
+      !runtimeHealth.canMonitor() ||
+      healthContext !== runtimeHealth.snapshot().context)
+  )
+    throw new ApiError(
+      409,
+      "RUNTIME_CONTEXT_CHANGED",
+      "Monitoring stopped because the runtime context changed. This late result was discarded.",
+    );
   const completedKey = headers["Idempotency-Key"];
   if (write && completedKey) forgetAction(path, method, payload, completedKey);
   return result;

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { runtimeHealth } from "./runtimeHealth";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   BellRing,
   Camera,
@@ -88,7 +89,17 @@ function safeLabel(label: string) {
 }
 
 /** Only real frame observations enter the engine. Source/model lifetimes are explicit. */
-export default function LiveDetection({ branchName }: { branchName: string }) {
+export default function LiveDetection({
+  branchName,
+  onOpenInteractionCase,
+}: {
+  branchName: string;
+  onOpenInteractionCase?: (id: string) => Promise<void>;
+}) {
+  const health = useSyncExternalStore(
+    runtimeHealth.subscribe,
+    runtimeHealth.snapshot,
+  );
   const [phase, setPhase] = useState<Phase>("empty");
   const [productStatus, setProductStatus] = useState<InteractionMonitorStatus>({
     state: "checking",
@@ -224,6 +235,17 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       setPhase(sourceRef.current?.ready ? "ready" : "empty");
     }
   }
+  useEffect(
+    () =>
+      runtimeHealth.onInterrupt((reason) => {
+        stop(reason);
+        soundOptions.current.movementAlarmEnabled = false;
+        setMovementAlarmEnabled(false);
+        setActiveAlert(null);
+      }),
+    [],
+  );
+
   function releaseSource() {
     sourceGeneration.current++;
     stop("Source disconnected.");
@@ -322,7 +344,11 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     }
   }
   function trigger(event: LiveBehaviourEvent, current: Source, offset: number) {
-    if (!runningRef.current || !continuityRef.current?.isFresh(maxResultAgeMs))
+    if (
+      !runtimeHealth.canMonitor() ||
+      !runningRef.current ||
+      !continuityRef.current?.isFresh(maxResultAgeMs)
+    )
       return;
     if (unsavedCount.current >= 100) {
       stop("Detection stopped: 100 event records are waiting to be saved.");
@@ -348,6 +374,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         const episode = runGeneration.current;
         const playBurst = () => {
           if (
+            !runtimeHealth.canMonitor() ||
             !runningRef.current ||
             !continuityRef.current?.isFresh(maxResultAgeMs) ||
             episode !== runGeneration.current ||
@@ -748,6 +775,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     }
   }
   async function start() {
+    if (!runtimeHealth.acknowledgeStart()) return;
     const video = videoRef.current,
       current = sourceRef.current;
     if (
@@ -857,6 +885,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         slowFrames = 0;
       const tick = async () => {
         if (
+          !runtimeHealth.canMonitor() ||
           !runningRef.current ||
           generation !== runGeneration.current ||
           document.hidden
@@ -885,6 +914,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         try {
           const poses = await detector!.detect(video, now, crop);
           if (
+            !runtimeHealth.canMonitor() ||
             !runningRef.current ||
             generation !== runGeneration.current ||
             document.hidden ||
@@ -970,6 +1000,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     }
   }
   async function testSound() {
+    if (!runtimeHealth.canMonitor()) return;
     const activation = sound().arm();
     const generation = runGeneration.current;
     const result = await activation;
@@ -1281,7 +1312,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           <button
             className="ld-primary"
             type="button"
-            disabled={!source?.ready || busy}
+            disabled={!source?.ready || busy || !health.ready}
             onClick={() => void start()}
           >
             <Play size={18} /> Start detection
@@ -1490,6 +1521,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           runId: runId.current,
           generation: runGeneration.current,
           running:
+            runtimeHealth.canMonitor() &&
             runningRef.current &&
             (continuityRef.current?.isFresh(maxResultAgeMs) ?? false),
           source: sourceRef.current,
@@ -1500,6 +1532,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         sourceKey={source?.url ?? source?.stream?.id ?? ""}
         onMonitorStatus={setProductStatus}
         onCameraSelection={chooseTrackingCamera}
+        onOpenInteractionCase={onOpenInteractionCase}
       />
       <section className="ld-event-panel" aria-labelledby="ld-events-heading">
         <div className="ld-event-heading">
