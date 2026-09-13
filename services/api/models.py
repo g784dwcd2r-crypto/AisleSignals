@@ -148,7 +148,7 @@ class LiveEventInput(Input):
     )
     detected_at: AwareDatetime
     model_version: Literal["mediapipe-pose-lite-f16-v1"]
-    rule_version: Literal["pose-rules-v1"]
+    rule_version: Literal["pose-rules-v1", "pose-rules-v2"]
     sound_requested: StrictBool
 
     @field_validator("run_id", "event_id")

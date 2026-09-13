@@ -19,6 +19,7 @@ async function fixture(
         holdDecoded: initiallyBlank,
         audio: 0,
         draws: 0,
+        poseFrames: [] as {width:number;height:number;rgb:number[]}[],
       });
       // Hold decoded-pixel readiness at the media boundary so the early manual
       // selection regression cannot accidentally pass after the first scan.
@@ -36,6 +37,17 @@ async function fixture(
         onmessage: ((event: any) => void) | null = null;
         onerror = null;
         postMessage(request: any) {
+          if (request.bitmap) {
+            const bitmap = request.bitmap;
+            const sample = new OffscreenCanvas(bitmap.width, bitmap.height);
+            const context = sample.getContext("2d")!;
+            context.drawImage(bitmap, 0, 0);
+            const pixels = context.getImageData(Math.floor(bitmap.width/2)-8,Math.floor(bitmap.height/2)-8,16,16).data;
+            const rgb=[0,0,0];
+            for(let i=0;i<pixels.length;i+=4) for(let c=0;c<3;c++) rgb[c]+=pixels[i+c]/256;
+            state.poseFrames.push({width:bitmap.width,height:bitmap.height,rgb});
+            if(state.poseFrames.length>3) state.poseFrames.shift();
+          }
           request.bitmap?.close();
           queueMicrotask(() =>
             this.onmessage?.({
@@ -250,6 +262,7 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
       exact: true,
     });
     await tile.click();
+    await page.getByRole("button",{name:"Start detection",exact:true}).click();
     await expect(tile).toHaveCSS("background-color", "rgba(68, 195, 124, 0.07)");
     await expect(tile).toHaveCSS("border-top-style", "solid");
     const crop = await tile.evaluate((element) => ({
@@ -308,6 +321,11 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     ).toBeLessThanOrEqual(1);
     expect(pixels.rgb[2]).toBeGreaterThan(pixels.rgb[0] + 40);
     expect(pixels.rgb[2]).toBeGreaterThan(pixels.rgb[1] + 40);
+    const poseFrame = await page.evaluate(() => (window as any).__grid.poseFrames.at(-1));
+    expect(poseFrame.width).toBe(pixels.width);
+    expect(poseFrame.height).toBe(pixels.height);
+    expect(poseFrame.rgb[2]).toBeGreaterThan(poseFrame.rgb[0]+40);
+    expect(poseFrame.rgb[2]).toBeGreaterThan(poseFrame.rgb[1]+40);
     await page
       .getByRole("button", { name: "Stop detection", exact: true })
       .click();
@@ -447,6 +465,7 @@ test("ambiguous frames require explicit Single camera or custom selection", asyn
   await page
     .getByRole("combobox", { name: "Camera layout", exact: true })
     .selectOption("single");
+  await page.getByRole("button",{name:"Start detection",exact:true}).click();
   await expect(
     page.getByRole("button", { name: "Select Camera 1", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -456,4 +475,34 @@ test("ambiguous frames require explicit Single camera or custom selection", asyn
   await page
     .getByRole("button", { name: "Stop detection", exact: true })
     .click();
+});
+
+test("drawing a camera area crops actual pose pixels and changing it requires a fresh worker", async ({page}) => {
+  await fixture(page,"3x2");
+  const picker=page.locator(".camera-layout-picker");
+  await expect(picker).toContainText("visible separators");
+  await page.getByRole("button",{name:"Draw camera area",exact:true}).click();
+  const preview=picker.locator(".camera-layout-preview");
+  const bounds=await preview.boundingBox();
+  if(!bounds) throw new Error("Missing camera preview");
+  await page.mouse.move(bounds.x + bounds.width*207/600,bounds.y+bounds.height*204/400);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width*394/600,bounds.y+bounds.height-1,{steps:5});
+  await page.mouse.up();
+  await expect(picker).toContainText("Camera area drawn");
+  await expect(page.getByRole("combobox",{name:"Camera layout",exact:true})).toHaveValue("single");
+  await confirm(page);
+  await page.getByRole("button",{name:"Start detection",exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__grid.poseFrames.length)).toBeGreaterThan(0);
+  const poseFrame=await page.evaluate(()=>(window as any).__grid.poseFrames.at(-1));
+  expect(poseFrame.width).toBeGreaterThanOrEqual(186);
+  expect(poseFrame.width).toBeLessThanOrEqual(188);
+  expect(poseFrame.height).toBeGreaterThan(190);
+  expect(poseFrame.rgb[0]).toBeGreaterThan(poseFrame.rgb[1]+40);
+  expect(poseFrame.rgb[2]).toBeGreaterThan(poseFrame.rgb[1]+40);
+  await page.getByRole("button",{name:"Draw camera area",exact:true}).click();
+  await expect(page.getByText("POSE TRACKING RUNNING",{exact:true})).toHaveCount(0);
+  await expect(page.getByRole("button",{name:"Start detection",exact:true})).toBeEnabled();
+  await expect(page.locator(".ld-track")).toHaveCount(0);
+  await page.getByRole("button",{name:"Stop detection",exact:true}).click();
 });

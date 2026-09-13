@@ -22,9 +22,14 @@ import {
   interactionCropPixels,
   safeInteractionFrameUrl,
 } from "./interactionCapture";
-import type { InteractionReview, SavedInteraction } from "./interactionCapture";
+import type {
+  InteractionReview,
+  SampledFrame,
+  SavedInteraction,
+} from "./interactionCapture";
 import "./interactionAnalysis.css";
 import CameraLayoutPicker from "./CameraLayoutPicker";
+import { validateCameraArea } from "./cameraGrid";
 
 type Session = {
   runId: string;
@@ -61,6 +66,12 @@ type Props = {
   branchName: string;
   sourceKey: string;
   onMonitorStatus: (status: InteractionMonitorStatus) => void;
+  onCameraSelection?: (selection: SelectedCamera | null) => void;
+};
+export type SelectedCamera = {
+  sourceKey: string;
+  crop: DetectionRect;
+  label: string;
 };
 export type InteractionMonitorStatus = {
   state:
@@ -89,6 +100,45 @@ const failureText = (failure: unknown) =>
     ? failure.message
     : "The analysis could not complete.";
 
+type SubmittedWindow = {
+  frames: SampledFrame[];
+  label: string;
+  state: "analysing" | "completed" | "failed";
+  resultId?: string;
+  expiresAt?: number;
+};
+function FrameStrip({
+  frames,
+  kind,
+}: {
+  frames: SampledFrame[];
+  kind: "Buffered" | "Submitted";
+}) {
+  return (
+    <div className="interaction-sample-strip">
+      {frames.map((frame, index) => (
+        <figure key={`${frame.capturedAt}:${index}`}>
+          <img
+            src={`data:image/jpeg;base64,${frame.jpeg_base64}`}
+            alt={`${kind} sample ${index + 1} at ${frame.at_seconds.toFixed(2)} seconds`}
+          />
+          <figcaption>
+            <strong>
+              Frame {index + 1} · {frame.at_seconds.toFixed(2)}s
+            </strong>
+            <span>
+              JPEG {frame.width} × {frame.height} px
+            </span>
+            <span>
+              Source crop {frame.sourceWidth} × {frame.sourceHeight} px
+            </span>
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
 /** Frames are sampled independently of pose detections; one job can run at a time. */
 export default function InteractionAnalysis({
   videoRef,
@@ -100,6 +150,7 @@ export default function InteractionAnalysis({
   branchName,
   sourceKey,
   onMonitorStatus,
+  onCameraSelection,
 }: Props) {
   const [enabled, setEnabled] = useState(false);
   const [automatic, setAutomatic] = useState(false);
@@ -134,7 +185,18 @@ export default function InteractionAnalysis({
     "Enable analysis to sample the selected CCTV video.",
   );
   const [error, setError] = useState("");
-  const [count, setCount] = useState(0);
+  const [samples, setSamples] = useState<SampledFrame[]>([]);
+  const count = samples.length;
+  const [submittedWindow, setSubmittedWindow] =
+    useState<SubmittedWindow | null>(null);
+  const [lastAnalysed, setLastAnalysed] = useState<{
+    start: number;
+    end: number;
+    action: string;
+  } | null>(null);
+  const [nextSubmissionIn, setNextSubmissionIn] = useState<number | null>(null);
+  const submittedPreview = useRef(submittedWindow);
+  submittedPreview.current = submittedWindow;
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [history, setHistory] = useState<SavedInteraction[]>([]);
@@ -149,6 +211,8 @@ export default function InteractionAnalysis({
   const historyRevision = useRef(0);
   const refreshRevision = useRef(0);
   const cropPreview = useRef<HTMLCanvasElement>(null);
+  const selectionCallback = useRef(onCameraSelection);
+  selectionCallback.current = onCameraSelection;
   const options = useRef({
     enabled,
     automatic,
@@ -309,13 +373,17 @@ export default function InteractionAnalysis({
     // Keep the request slot occupied until its polling loop exits; no overlapping submission.
     disarmAlarm();
     if (mounted.current) {
-      setCount(0);
+      setSamples([]);
+      setSubmittedWindow(null);
+      setLastAnalysed(null);
+      setNextSubmissionIn(null);
       setHighlight(null);
       setStatus("Analysis stopped. Pending results cannot trigger an alarm.");
     }
   }
 
   function invalidateCameraLayout() {
+    selectionCallback.current?.(null);
     cancel();
     options.current.cameraReady = false;
     options.current.cameraLabel = "";
@@ -335,12 +403,15 @@ export default function InteractionAnalysis({
     nextCrop: DetectionRect,
     tileLabel?: string,
   ) {
+    selectionCallback.current?.(null);
     cancel();
     let invalid = "";
     const video = videoRef.current;
-    if (nextEnabled && video?.videoWidth && video.videoHeight) {
+    if (nextEnabled) {
       try {
-        interactionCropPixels(video.videoWidth, video.videoHeight, nextCrop);
+        validateCameraArea(nextCrop);
+        if (video?.videoWidth && video.videoHeight)
+          interactionCropPixels(video.videoWidth, video.videoHeight, nextCrop);
       } catch (failure) {
         invalid = failureText(failure);
       }
@@ -360,10 +431,12 @@ export default function InteractionAnalysis({
       custom: nextEnabled && !tileLabel,
       label,
     });
+    if (nextEnabled && sourceKey && !invalid)
+      selectionCallback.current?.({ sourceKey, crop: { ...nextCrop }, label });
     setStatus(
       nextEnabled
         ? "Analysis area changed. Collect four new frames; the product alarm has been disarmed."
-        : "Full frame selected. Collect four new frames; the product alarm has been disarmed.",
+        : "No camera area selected. Confirm a camera layout, select Single camera, or enable a custom area before sampling. The product alarm has been disarmed.",
     );
   }
 
@@ -458,6 +531,11 @@ export default function InteractionAnalysis({
     setBusy(true);
     setElapsed(0);
     setError("");
+    setSubmittedWindow({
+      frames,
+      label: options.current.cameraLabel,
+      state: "analysing",
+    });
     setStatus("Sending four sampled frames to the local interaction model…");
     const payload = {
       run_id: current.runId,
@@ -502,6 +580,18 @@ export default function InteractionAnalysis({
         setElapsed(age);
         if (result.status === "completed" && result.result) {
           const saved = result.result;
+          setSubmittedWindow({
+            frames,
+            label: options.current.cameraLabel,
+            state: "completed",
+            resultId: saved.id,
+            expiresAt: Date.parse(saved.expires_at),
+          });
+          setLastAnalysed({
+            start: frames[0].at_seconds,
+            end: frames.at(-1)!.at_seconds,
+            action: interactionLabels[saved.action],
+          });
           historyRevision.current++;
           setHistory((previous) =>
             [saved, ...previous.filter((item) => item.id !== saved.id)].slice(
@@ -561,6 +651,7 @@ export default function InteractionAnalysis({
             result.error || "The local model could not analyse this sequence.",
           );
         if (result.status === "cancelled") {
+          setSubmittedWindow(null);
           setStatus("Analysis cancelled. No alarm was triggered.");
           return;
         }
@@ -586,6 +677,11 @@ export default function InteractionAnalysis({
         active.generation === generation.current
       ) {
         setError(failureText(failure));
+        setSubmittedWindow({
+          frames,
+          label: options.current.cameraLabel,
+          state: "failed",
+        });
         disarmAlarm(
           "Analysis failed. Product alarm is off; check the service before recommissioning.",
         );
@@ -653,6 +749,9 @@ export default function InteractionAnalysis({
     try {
       await api(`/interactions/${item.id}`, "DELETE");
       if (mounted.current) {
+        setSubmittedWindow((previous) =>
+          previous?.resultId === item.id ? null : previous,
+        );
         historyRevision.current++;
         setHistory((previous) => previous.filter((row) => row.id !== item.id));
       }
@@ -676,8 +775,23 @@ export default function InteractionAnalysis({
     window.addEventListener("pagehide", pageHide);
     const timer = setInterval(() => {
       const configuration = options.current;
+      if (
+        submittedPreview.current?.expiresAt &&
+        Date.now() >= submittedPreview.current.expiresAt
+      )
+        setSubmittedWindow(null);
       const current = configuration.readSession();
       const video = videoRef.current;
+      setNextSubmissionIn(
+        configuration.automatic
+          ? Math.max(
+              0,
+              Math.ceil(
+                (10_000 - (performance.now() - lastSubmitted.current)) / 1000,
+              ),
+            )
+          : null,
+      );
       const ready =
         !!current.running &&
         !!current.source &&
@@ -741,7 +855,7 @@ export default function InteractionAnalysis({
               configuration.cropEnabled ? cropPreview.current : null,
             ),
           );
-          setCount(buffer.current.sequence(now).length);
+          setSamples(buffer.current.snapshot(now));
         } catch (failure) {
           cancel();
           setEnabled(false);
@@ -764,6 +878,7 @@ export default function InteractionAnalysis({
     }, 250);
     return () => {
       mounted.current = false;
+      selectionCallback.current?.(null);
       cancel();
       cancelRef.current = null;
       silenceRef.current = null;
@@ -827,7 +942,7 @@ export default function InteractionAnalysis({
               : monitorState === "collecting"
                 ? `${automatic ? "Automatic" : "Manual"} product analysis: collecting ${count}/4 fresh sampled frames. No product classification has been requested for this window yet.`
                 : automatic
-                  ? "Automatic product analysis has fresh frames and is waiting for its next submission slot. Only one model job runs at a time."
+                  ? `Automatic product analysis has fresh frames. ${nextSubmissionIn ? `Next submission in ${nextSubmissionIn}s.` : "Waiting for the next submission slot."} Only one model job runs at a time.`
                   : "Four fresh frames are ready. Select Analyse recent sequence, or enable Analyse automatically. Sound requires its separate staff sound check.";
   useEffect(() => {
     onMonitorStatus({
@@ -1119,6 +1234,67 @@ export default function InteractionAnalysis({
           {refreshing ? "Checking…" : "Refresh model & history"}
         </button>
       </div>
+      <section
+        className="interaction-sampling"
+        aria-label="Current sampled frames"
+      >
+        <div className="interaction-sampling-heading">
+          <h3>Current sampled frames</h3>
+          <span>{automatic ? "Automatic monitoring" : "Manual test"}</span>
+        </div>
+        <p>
+          {cameraReady
+            ? `${cameraChoice.label}. `
+            : "Choose a camera area to begin. "}
+          {samples.length
+            ? "These local previews update as fresh frames arrive. They are not a continuous recording."
+            : "No fresh samples yet. Enable analysis, confirm a camera and start detection."}
+        </p>
+        <FrameStrip frames={samples} kind="Buffered" />
+        <p className="interaction-schedule" role="status">
+          {!automatic
+            ? "Manual test: select Analyse recent sequence when four fresh frames are ready."
+            : busy
+              ? "One sequence is being analysed. New samples continue locally; no other model job is queued."
+              : !enabled || !cameraReady || !sourceReady || !!cropError
+                ? "Automatic monitoring is waiting for enabled analysis, a confirmed camera and fresh playing video."
+                : nextSubmissionIn
+                  ? `Next automatic submission in ${nextSubmissionIn}s, once four fresh frames are ready.`
+                  : count < 4
+                    ? "Automatic monitoring is collecting four fresh frames for its next submission."
+                    : "Automatic monitoring is ready for its next submission slot."}
+        </p>
+        <p className="interaction-last-interval">
+          {lastAnalysed
+            ? `Last analysed interval: ${lastAnalysed.start.toFixed(2)}–${lastAnalysed.end.toFixed(2)}s of source video · ${lastAnalysed.action}. Only the sampled moments were analysed.`
+            : "No completed analysis in this camera session yet."}
+        </p>
+      </section>
+      {submittedWindow && (
+        <section
+          className="interaction-sampling interaction-submitted"
+          aria-label="Submitted sequence"
+        >
+          <div className="interaction-sampling-heading">
+            <h3>Submitted sequence</h3>
+            <span>
+              {submittedWindow.state === "analysing"
+                ? "Analysing these four frames"
+                : submittedWindow.state === "completed"
+                  ? "Analysis completed"
+                  : "Analysis failed"}
+            </span>
+          </div>
+          <p>
+            {submittedWindow.label} ·{" "}
+            {submittedWindow.frames[0].at_seconds.toFixed(2)}–
+            {submittedWindow.frames.at(-1)!.at_seconds.toFixed(2)}s of source
+            video. These exact submitted JPEGs stay fixed while the current
+            samples above advance.
+          </p>
+          <FrameStrip frames={submittedWindow.frames} kind="Submitted" />
+        </section>
+      )}
       <p className="interaction-status" role="status">
         {status}
       </p>

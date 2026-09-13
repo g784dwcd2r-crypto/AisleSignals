@@ -2,6 +2,17 @@
 
 13 September 2026. Accounts and footage used in automated checks are synthetic. Existing local preview records were preserved separately; they are not published as fixtures.
 
+## Recording-review improvements
+
+The [detection-quality review](detection-quality-review.md) records the three supplied recordings, implemented tracking/camera/sampling fixes and a separately evaluated person-detector candidate that was not adopted.
+
+- Coordinating lead reproduced **235 frontend unit tests**, production build, TypeScript and formatting checks.
+- **All 66 browser journeys passed across the full run and one targeted retry**. The full run passed 65; the new pointer-drawn-area test used an unsuitable label locator for the select element. Using its exposed combobox role fixed the fixture, and the unchanged pointer/crop/worker assertions then passed. Actual pose bitmap dimensions and dominant camera colours match the selected product JPEGs for all three grid shapes.
+- **13 live-event API tests passed**, including preserved v1 history, accepted `pose-rules-v2` provenance and rejection of unknown versions. An older invalid-input example was advanced to v3 because v2 is now explicitly supported. Scope, CSRF and authority checks are unchanged.
+- Visible protected-browser verification showed 1/4 sampling progress, Camera 3-only JPEGs, local automatic model completion, an advancing current buffer and a fixed submitted four-frame strip with timestamps/dimensions. The synthetic pattern returned `UNCLEAR`; no sound was armed. This checks wiring and evidence presentation, not retail accuracy.
+
+The preceding camera-layout source `b87f76f` subsequently passed all nine jobs in [workflow 34782199540](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34782199540), including Windows/Mac executable builds. Those remote results do not yet qualify the newer recording-review changes described above. Earlier downloaded archives remain their explicitly labelled source versions.
+
 ## Camera-layout and product-readiness update
 
 The subsequent shared-window layout change adds local 2 × 2 / 3 × 2 / 2 × 3 proposals, measured source-coordinate crops, explicit camera confirmation, manual/inset-board fallback and camera-bound cancellation. Pose and product-model readiness are displayed separately. This updates source and the local browser application; the previously downloaded executable archives still identify `c6c0b20`.

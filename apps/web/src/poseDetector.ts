@@ -1,4 +1,5 @@
 import type { PoseDetector, PosePoint } from "./liveDetectionTypes";
+import { poseFrameRegion } from "./poseFrame";
 
 /** A dedicated worker owns the model. Only one bounded frame is in flight. */
 export async function createPoseDetector(
@@ -90,24 +91,28 @@ export async function createPoseDetector(
   }
   return {
     close,
-    async detect(video, timestampMs) {
+    async detect(video, timestampMs, crop = null) {
       if (closed) throw new Error("The detector is closed.");
       if (pending || capturing)
         throw new Error("A frame is already being analysed.");
       if (!video.videoWidth || !video.videoHeight)
         throw new Error("The video has no decoded frame.");
+      const region = poseFrameRegion(video.videoWidth, video.videoHeight, crop);
       capturing = true;
-      const ratio = Math.min(
-        1,
-        640 / Math.max(video.videoWidth, video.videoHeight),
-      );
       let bitmap: ImageBitmap;
       try {
-        bitmap = await createImageBitmap(video, {
-          resizeWidth: Math.max(1, Math.round(video.videoWidth * ratio)),
-          resizeHeight: Math.max(1, Math.round(video.videoHeight * ratio)),
-          resizeQuality: "low",
-        });
+        bitmap = await createImageBitmap(
+          video,
+          region.x,
+          region.y,
+          region.width,
+          region.height,
+          {
+            resizeWidth: region.outputWidth,
+            resizeHeight: region.outputHeight,
+            resizeQuality: "high",
+          },
+        );
       } finally {
         capturing = false;
       }

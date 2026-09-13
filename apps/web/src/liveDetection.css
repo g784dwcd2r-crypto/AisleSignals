@@ -265,6 +265,30 @@
   width: 100%;
   object-fit: contain;
 }
+.ld-camera-context {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 18px;
+  color: #dceee4;
+  background: #243b32;
+  font-size: 12px;
+}
+.ld-camera-context strong,
+.ld-camera-context span {
+  display: block;
+}
+.ld-camera-context span {
+  margin-top: 5px;
+  line-height: 1.5;
+}
+@media (max-width: 600px) {
+  .ld-camera-context {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 .ld-screen canvas {
   pointer-events: none;
   position: absolute;

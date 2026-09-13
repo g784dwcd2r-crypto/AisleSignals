@@ -15,9 +15,11 @@ If the same shared window changes from an introduction, advertisement or single 
 
 The preview uses the same measured source coordinates as the image sampler. A proposal does not silently start product analysis on an entire mosaic. Changing the source, board, layout or selected camera cancels pending analysis, clears the old frame sequence and disarms product sound. Confirm the new selection before continuing. Editing the existing custom-area percentages switches back to an explicitly custom source area.
 
+**Draw camera area** also lets you drag around the actual picture, excluding the browser or recorder controls. Confirm its box with **Use this layout**. Changes during monitoring stop the pose worker; select **Start detection** again to load fresh tracking state for the new area. The capture remains selected.
+
 ## Current coverage
 
-Product analysis processes **one selected camera tile at a time**. The other tiles are not simultaneously product-analysed. Body keypoints still use the full source view; for the clearest pose tracking, share a single camera view. These two statuses are displayed separately so body tracking cannot imply that product classification is available or enabled.
+Product analysis processes **one selected camera tile at a time**. The other tiles are not simultaneously product-analysed. Body tracking also uses the confirmed camera area, cropped before resizing, and projects its boxes back onto the source view. Before camera confirmation, pose-only tracking may still use the full source. The two statuses remain separate so body tracking cannot imply that product classification is available or enabled.
 
 An all-camera scheduler is not implemented in this change. It would require separate bounded frame buffers and immutable result/alarm context per camera, while keeping one model job in flight. With the current global ten-second submission interval, four/six-camera round-robin analysis would check an individual camera at best about every forty/sixty seconds, and potentially slower. That is not continuous all-camera coverage.
 

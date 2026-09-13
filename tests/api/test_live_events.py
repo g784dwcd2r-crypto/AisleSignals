@@ -90,6 +90,20 @@ def test_persistent_pose_metadata_server_descriptions_and_no_incident_side_effec
     assert sign_in(restarted).get(PATH).json() == [event]
 
 
+def test_updated_rules_preserve_versioned_history_and_reject_unknown_rule_versions(app):
+    client = sign_in(app)
+    old = write(client, sample()).json()
+    current = write(client, sample(event_id=str(uuid4()), rule_version="pose-rules-v2",
+                                  source_label="Synthetic view · Camera 3 · 3x2 grid"))
+    assert current.status_code == 200
+    assert current.json()["rule_version"] == "pose-rules-v2"
+    assert "Camera 3" in current.json()["source_label"]
+    assert old["rule_version"] == "pose-rules-v1"
+    assert write(client, sample(event_id=str(uuid4()), rule_version="invented-rules")).status_code == 422
+    versions = {item["rule_version"] for item in client.get(PATH).json()}
+    assert versions == {"pose-rules-v1", "pose-rules-v2"}
+
+
 def test_auth_csrf_origin_and_idempotency_required_for_create_and_ack(app):
     anonymous = TestClient(app, base_url=BASE, headers={"Origin": BASE})
     assert anonymous.get(PATH).status_code == 401
@@ -209,7 +223,7 @@ def test_strict_input_rejects_identity_media_versions_controls_and_invalid_numbe
         {"source_time_seconds": 43_201}, {"source_time_seconds": "1.5"},
         {"source_time_seconds": True}, {"sound_requested": "true"},
         {"sound_requested": 1}, {"model_version": "latest"},
-        {"rule_version": "pose-rules-v2"}, {"detected_at": "2026-01-01T00:00:00"},
+        {"rule_version": "pose-rules-v3"}, {"detected_at": "2026-01-01T00:00:00"},
         {"detected_at": 12345}, {"detected_at": "12345"},
         {"organisation_id": "other"}, {"site_id": "other"},
         {"label": "Theft"}, {"detail": "private narrative"},

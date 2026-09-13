@@ -58,6 +58,19 @@
   text-align: center;
   font-size: 12px;
 }
+.camera-layout-drawing {
+  cursor: crosshair;
+  touch-action: none;
+}
+.camera-layout-drawing .camera-layout-tile {
+  pointer-events: none;
+}
+.camera-drawn-area {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid #fff2a8;
+  background: #79eab226;
+}
 .live-detection .camera-layout-preview .camera-layout-tile {
   position: absolute;
   border: 2px dashed #ffe28b;

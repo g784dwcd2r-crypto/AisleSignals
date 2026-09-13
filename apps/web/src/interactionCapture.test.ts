@@ -104,6 +104,10 @@ describe("camera and aisle area sampling", () => {
       at_seconds: 4.25,
       capturedAt: 5000,
       jpeg_base64: "c3ludGhldGlj",
+      width: 768,
+      height: 432,
+      sourceWidth: 960,
+      sourceHeight: 540,
     });
     expect(canvas.width).toBe(768);
     expect(canvas.height).toBe(432);
@@ -117,11 +121,47 @@ function sample(buffer: InteractionFrameBuffer, media: number, wall: number) {
       at_seconds: media,
       capturedAt: wall,
       jpeg_base64: "synthetic-frame",
+      width: 320,
+      height: 180,
+      sourceWidth: 320,
+      sourceHeight: 180,
     });
   return action;
 }
 
 describe("interaction sequence sampling", () => {
+  it("reports every partial frame while submission still requires four", () => {
+    const buffer = new InteractionFrameBuffer();
+    for (let i = 0; i <= 15; i++) {
+      sample(buffer, i / 4, i * 250);
+      const count = Math.min(4, Math.floor(i / 5) + 1);
+      expect(buffer.snapshot(i * 250)).toHaveLength(count);
+      expect(buffer.sequence(i * 250)).toHaveLength(count === 4 ? 4 : 0);
+    }
+  });
+  it("freezes a snapshot independently of later samples and resets", () => {
+    const buffer = new InteractionFrameBuffer();
+    for (let i = 0; i <= 15; i++) sample(buffer, i / 4, i * 250);
+    const submitted = buffer.sequence(3750);
+    for (let i = 16; i <= 25; i++) sample(buffer, i / 4, i * 250);
+    expect(buffer.snapshot(6250).at(-1)?.at_seconds).toBe(6.25);
+    expect(submitted.map((frame) => frame.at_seconds)).toEqual([
+      0, 1.25, 2.5, 3.75,
+    ]);
+    submitted[2].at_seconds = 99;
+    expect(buffer.snapshot(6250)[0].at_seconds).toBe(2.5);
+    buffer.reset();
+    expect(buffer.snapshot(6250)).toEqual([]);
+    expect(submitted).toHaveLength(4);
+  });
+  it.each([2001, -1, NaN, Infinity])(
+    "does not display stale or invalid partial progress at %s",
+    (now) => {
+      const buffer = new InteractionFrameBuffer();
+      sample(buffer, 0, 0);
+      expect(buffer.snapshot(now)).toEqual([]);
+    },
+  );
   it("requires four chronological frames without depending on pose detections", () => {
     const buffer = new InteractionFrameBuffer();
     for (let i = 0; i <= 15; i++) sample(buffer, i / 4, i * 250);

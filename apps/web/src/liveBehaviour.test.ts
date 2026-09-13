@@ -348,7 +348,9 @@ describe("anonymous per-source track association", () => {
     expect(returned.id).not.toBe(first.id);
     expect(
       engine.update(
-        Array.from({ length: 100 }, () => pose()),
+        Array.from({ length: 100 }, (_, index) =>
+          pose("down", "down", 0.2 + (index % 20) * 0.03),
+        ),
         1_600,
       ).tracks,
     ).toHaveLength(12);
@@ -365,6 +367,195 @@ describe("anonymous per-source track association", () => {
     expect(POSE_CONNECTIONS.every(([from, to]) => from >= 11 && to < 33)).toBe(
       true,
     );
+  });
+});
+
+describe("crowded-view display stability without joined behaviour", () => {
+  it("retains unique IDs for stationary nearby people while pausing overlapping hand evidence", () => {
+    const engine = new LiveBehaviourEngine();
+    let expected: number[] | undefined;
+    for (let now = 0; now <= 5000; now += 250) {
+      const phase = now % 1500 < 750 ? "reach" : "waist";
+      const people = [pose(phase, "down", 0.45), pose(phase, "down", 0.55)];
+      const reversed = now % 500 !== 0;
+      const result = engine.update(reversed ? people.reverse() : people, now);
+      const ids = result.tracks.map((track) => track.id);
+      expected ??= ids;
+      expect(ids).toEqual(reversed ? [...expected].reverse() : expected);
+      expect(
+        result.tracks.every(
+          (track) => track.label === "Tracking overlap · paused",
+        ),
+      ).toBe(true);
+      expect(result.events).toEqual([]);
+    }
+  });
+
+  it("collapses duplicate torso detections without composing their different hands or creating extra IDs", () => {
+    const engine = new LiveBehaviourEngine();
+    const first = engine.update([pose()], 0).tracks[0];
+    for (let now = 250; now <= 3000; now += 250) {
+      const phase = now % 1500 < 750 ? "reach" : "waist";
+      const result = engine.update(
+        [pose(phase), pose(phase === "reach" ? "waist" : "reach"), pose(phase)],
+        now,
+      );
+      expect(result.tracks).toHaveLength(1);
+      expect(result.tracks[0].id).toBe(first.id);
+      expect(result.tracks[0].label).toBe("Tracking overlap · paused");
+      expect(result.events).toEqual([]);
+    }
+    expect(cycle(engine, 3250)).toEqual([]);
+  });
+
+  it("keeps close but distinct torsos instead of using broad box overlap suppression", () => {
+    const result = new LiveBehaviourEngine().update(
+      [pose("down", "down", 0.45), pose("down", "down", 0.55)],
+      0,
+    );
+    expect(result.tracks).toHaveLength(2);
+    expect(new Set(result.tracks.map((track) => track.id)).size).toBe(2);
+  });
+
+  it("invalidates all crossing candidates before any array-order-dependent alarm can publish", () => {
+    for (const reverse of [false, true]) {
+      const engine = new LiveBehaviourEngine();
+      cycle(engine, 0);
+      for (const now of [1200, 1400, 1600]) engine.update([pose("reach")], now);
+      for (const now of [1800, 2000]) engine.update([pose("waist")], now);
+      const overlap = [
+        pose("waist", "down", 0.49),
+        pose("down", "waist", 0.54),
+      ];
+      const result = engine.update(reverse ? overlap.reverse() : overlap, 2200);
+      expect(result.events).toEqual([]);
+      expect(result.tracks.every((track) => track.status !== "alert")).toBe(
+        true,
+      );
+      engine.update([pose()], 2400);
+      engine.update([pose()], 2600);
+      expect(cycle(engine, 2800)).toEqual([]);
+    }
+  });
+});
+
+describe("observed-limb exclusions and display-only smoothing", () => {
+  it("hides a confident distant foot instead of stretching its box and skeleton onto a counter", () => {
+    const engine = new LiveBehaviourEngine();
+    const initial = engine.update([pose()], 0).tracks[0];
+    const stretched = pose();
+    stretched[31] = { ...stretched[31], x: 0.99, y: 0.99 };
+    const track = engine.update([stretched], 250).tracks[0];
+    expect(track.id).toBe(initial.id);
+    expect(track.landmarks[31].visibility).toBe(0);
+    expect(track.box.width).toBeCloseTo(initial.box.width);
+    expect(track.box.height).toBeCloseTo(initial.box.height);
+    expect(stretched[31].visibility).toBe(0.99);
+  });
+
+  it("excludes a stretched elbow and its wrist from behaviour even if both have high model confidence", () => {
+    const engine = new LiveBehaviourEngine();
+    cycle(engine, 0);
+    const corrupted = pose("reach");
+    corrupted[13] = { ...corrupted[13], x: 0.99, y: 0.85 };
+    const result = engine.update([corrupted], 1200);
+    expect(result.tracks[0].landmarks[13].visibility).toBe(0);
+    expect(result.tracks[0].landmarks[15].visibility).toBe(0);
+    expect(result.events).toEqual([]);
+    expect(cycle(engine, 1400)).toEqual([]);
+  });
+
+  it("damps small stationary pose jitter without smoothing the event geometry", () => {
+    const engine = new LiveBehaviourEngine();
+    engine.update([pose()], 0);
+    const jittered = pose().map((point) => ({ ...point, x: point.x + 0.01 }));
+    const result = engine.update([jittered], 250);
+    expect(result.tracks[0].landmarks[11].x).toBeGreaterThan(pose()[11].x);
+    expect(result.tracks[0].landmarks[11].x).toBeLessThan(jittered[11].x);
+    expect(result.events).toEqual([]);
+    // Existing raw 200ms evidence timings remain unchanged by display smoothing.
+    const ruleEngine = new LiveBehaviourEngine();
+    cycle(ruleEngine, 0);
+    expect(cycle(ruleEngine, 1200)[0].atMs).toBe(2200);
+  });
+
+  it("never carries missing or insufficient-confidence landmarks forward", () => {
+    const engine = new LiveBehaviourEngine();
+    engine.update([pose("waist")], 0);
+    const hidden = pose("reach");
+    hidden[15].visibility = 0.6;
+    const missing = engine.update([hidden], 250).tracks[0];
+    expect(missing.landmarks[15].visibility).toBe(0);
+    const returned = pose("down");
+    const result = engine.update([returned], 500);
+    expect(result.tracks[0].landmarks[15].x).toBe(returned[15].x);
+    expect(result.tracks[0].landmarks[15].y).toBe(returned[15].y);
+    expect(result.events).toEqual([]);
+  });
+
+  it("resets display smoothing across a missed observation and does not invent a tracked pose", () => {
+    const engine = new LiveBehaviourEngine();
+    const original = engine.update([pose()], 0).tracks[0];
+    expect(engine.update([], 250).tracks).toEqual([]);
+    const moved = pose("down", "down", 0.51);
+    const returned = engine.update([moved], 500).tracks[0];
+    expect(returned.id).toBe(original.id);
+    expect(returned.landmarks[11].x).toBe(moved[11].x);
+  });
+
+  it("does not turn a smoothed wrist that remains at the waist into a third raw waist observation", () => {
+    const engine = new LiveBehaviourEngine();
+    cycle(engine, 0);
+    for (const now of [1200, 1400, 1600]) engine.update([pose("reach")], now);
+    const edge = pose("waist");
+    edge[15].y = 0.697;
+    engine.update([edge], 1800);
+    engine.update([edge], 2000);
+    const outside = pose("waist");
+    outside[15].y = 0.6982;
+    const result = engine.update([outside], 2200);
+    // The displayed blend falls within the 0.698 waist boundary; the actual
+    // current wrist is outside, so it must reset the raw dwell instead of emit.
+    expect(result.tracks[0].landmarks[15].y).toBeLessThan(0.698);
+    expect(result.events).toEqual([]);
+  });
+});
+
+describe("sensitivity at the supported 250ms processing cadence", () => {
+  it("makes sensitive timing observably earlier while keeping balanced three-sample evidence", () => {
+    const times = [];
+    for (const sensitivity of ["sensitive", "balanced"] as const) {
+      const engine = new LiveBehaviourEngine({ sensitivity });
+      const events: LiveBehaviourEvent[] = [];
+      for (const start of [0, 1500])
+        for (const [offset, position] of [
+          [0, "reach"],
+          [250, "reach"],
+          [500, "reach"],
+          [750, "waist"],
+          [1000, "waist"],
+          [1250, "waist"],
+        ] as const)
+          events.push(
+            ...engine.update([pose(position)], start + offset).events,
+          );
+      expect(events).toHaveLength(1);
+      times.push(events[0].atMs);
+    }
+    expect(times).toEqual([2500, 2750]);
+  });
+
+  it("still rejects one-sample flickers at 250ms and resets hidden evidence in sensitive mode", () => {
+    const engine = new LiveBehaviourEngine({ sensitivity: "sensitive" });
+    for (let now = 0; now <= 5000; now += 250)
+      expect(
+        engine.update([pose(now % 500 === 0 ? "reach" : "waist")], now).events,
+      ).toEqual([]);
+    cycle(engine, 5250);
+    const hidden = pose("reach");
+    hidden[15].visibility = 0.1;
+    expect(engine.update([hidden], 6500).events).toEqual([]);
+    expect(cycle(engine, 6750)).toEqual([]);
   });
 });
 

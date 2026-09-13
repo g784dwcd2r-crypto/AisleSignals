@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { resolve } from 'node:path';
 
 const jobId = 'dddddddd-1111-4111-8111-111111111111';
@@ -15,8 +16,9 @@ async function open(page: Page) {
 
 // Provider responses below are explicit fixtures for workflow tests. They do not
 // demonstrate model accuracy. Actual pretrained inference is tested separately.
-async function modelWorkflow(page: Page, { concealment = false, delayed = false, reviewConflict = false, unavailable = false } = {}) {
+async function modelWorkflow(page: Page, { concealment = false, delayed = false, delayMs = 1800, reviewConflict = false, unavailable = false } = {}) {
   let submitted: any = null;
+  const submissions: { payload: any; receivedAt: number }[] = [];
   let item: any = null;
   let cancelled = 0;
   let deleted = false;
@@ -45,6 +47,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
   await page.route('**/api/interactions', route => route.fulfill({ json: { items: item && !deleted ? [item] : [] } }));
   await page.route('**/api/interactions/jobs', async route => {
     submitted = route.request().postDataJSON();
+    submissions.push({ payload: submitted, receivedAt: Date.now() });
     expect(route.request().headers()['x-csrf-token']).toBeTruthy();
     expect(route.request().headers()['idempotency-key']).toMatch(/^[a-f0-9-]{36}$/i);
     const action = concealment ? 'POSSIBLE_CONCEALMENT' : 'NORMAL_SHOPPING';
@@ -61,7 +64,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     await route.fulfill({ json: { id: jobId, status: 'pending' } });
   });
   await page.route(`**/api/interactions/jobs/${jobId}`, async route => {
-    if (delayed) await new Promise(resolve => setTimeout(resolve, 1800));
+    if (delayed) await new Promise(resolve => setTimeout(resolve, delayMs));
     await route.fulfill({ json: { id: jobId, status: 'completed', result: item } }).catch(() => {});
   });
   await page.route(`**/api/interactions/jobs/${jobId}/cancel`, async route => {
@@ -89,7 +92,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     deleted = true;
     await route.fulfill({ json: { deleted: true } });
   });
-  return { submitted: () => submitted, cancelled: () => cancelled, setReady: (next: boolean) => { ready = next; } };
+  return { submitted: () => submitted, submissions, cancelled: () => cancelled, setReady: (next: boolean) => { ready = next; } };
 }
 
 async function commission(page: Page) {
@@ -112,6 +115,120 @@ async function collect(page: Page, arm = false) {
   if (arm) await commission(page);
   await expect(page.getByRole('button', { name: 'Analyse recent sequence', exact: true })).toBeEnabled({ timeout: 12000 });
 }
+
+// An original, continuously changing canvas source keeps these sampling tests
+// independent of the six-second recorded fixture and any physical camera.
+async function syntheticCamera(page: Page) {
+  await page.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 480;
+      canvas.height = 270;
+      const context = canvas.getContext('2d')!;
+      let frame = 0;
+      const draw = () => {
+        context.fillStyle = `rgb(${30 + (frame * 11) % 170}, 70, 110)`;
+        context.fillRect(0, 0, 480, 270);
+        context.fillStyle = '#fff';
+        context.font = '24px sans-serif';
+        context.fillText(`SYNTHETIC SAMPLE ${frame++}`, 24, 120);
+      };
+      draw();
+      const stream = canvas.captureStream(10);
+      const timer = setInterval(() => {
+        if (stream.getVideoTracks()[0].readyState === 'ended') clearInterval(timer);
+        else draw();
+      }, 100);
+      return stream;
+    };
+  });
+}
+
+async function startSyntheticCamera(page: Page, automatic = false) {
+  await open(page);
+  await page.getByRole('button', { name: 'Connect camera', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Camera layout', exact: true }).selectOption('single');
+  await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
+  if (automatic) await page.getByLabel('Analyse automatically', { exact: true }).check();
+  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
+}
+
+test('partial progress advances and the submitted JPEG evidence stays fixed while fresh samples change', async ({ page }) => {
+  const probe = await modelWorkflow(page, { delayed: true, delayMs: 3000 });
+  await syntheticCamera(page);
+  await startSyntheticCamera(page);
+  const current = page.getByRole('region', { name: 'Current sampled frames', exact: true });
+  const analyse = page.getByRole('button', { name: 'Analyse recent sequence', exact: true });
+  for (const count of [1, 2, 3]) {
+    await expect(page.getByText(`${count}/4 fresh sampled frames`, { exact: true })).toBeVisible();
+    await expect(current.getByRole('img')).toHaveCount(count);
+    await expect(analyse).toBeDisabled();
+  }
+  await expect(page.getByText('4/4 fresh sampled frames', { exact: true })).toBeVisible();
+  expect(probe.submitted()).toBeNull();
+  await analyse.click();
+  await expect.poll(() => probe.submitted()).not.toBeNull();
+  const payload = probe.submitted();
+  const frozen = page.getByRole('region', { name: 'Submitted sequence', exact: true });
+  await expect(frozen.getByRole('img')).toHaveCount(4);
+  await expect(frozen).toContainText('Analysing these four frames');
+  const expectedImages = payload.frames.map((frame: any) => `data:image/jpeg;base64,${frame.jpeg_base64}`);
+  const imageSources = () => frozen.getByRole('img').evaluateAll(images => images.map(image => image.getAttribute('src')));
+  expect(await imageSources()).toEqual(expectedImages);
+  await expect(frozen.getByText('JPEG 480 × 270 px', { exact: true })).toHaveCount(4);
+  await expect.poll(() => frozen.getByRole('img').evaluateAll(images => images.every(image => (image as HTMLImageElement).naturalWidth === 480 && (image as HTMLImageElement).naturalHeight === 270))).toBe(true);
+  await expect.poll(() => current.getByRole('img').last().getAttribute('src')).not.toBe(expectedImages[3]);
+  expect(await imageSources()).toEqual(expectedImages);
+  await expect(frozen).toContainText('Analysis completed');
+  await expect(current).toContainText(`Last analysed interval: ${payload.frames[0].at_seconds.toFixed(2)}–${payload.frames[3].at_seconds.toFixed(2)}s`);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+  await expect(current.getByRole('img')).toHaveCount(0);
+  await expect(frozen).toHaveCount(0);
+  await expect(current).toContainText('No completed analysis in this camera session yet.');
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
+});
+
+test('automatic countdown decreases without shortening the ten-second submission cadence', async ({ page }) => {
+  const probe = await modelWorkflow(page);
+  await syntheticCamera(page);
+  await startSyntheticCamera(page, true);
+  await expect.poll(() => probe.submissions.length, { timeout: 12000 }).toBe(1);
+  const schedule = page.locator('.interaction-schedule');
+  await expect(schedule).toContainText('Next automatic submission in');
+  const remaining = Number((await schedule.textContent())!.match(/in (\d+)s/)![1]);
+  expect(remaining).toBeGreaterThan(0);
+  await expect.poll(async () => Number((await schedule.textContent())?.match(/in (\d+)s/)?.[1] ?? remaining)).toBeLessThan(remaining);
+  expect(probe.submissions).toHaveLength(1);
+  await expect.poll(() => probe.submissions.length, { timeout: 12000 }).toBe(2);
+  // Allow at most 100ms for loopback request dispatch variation; the client
+  // continues to enforce its unchanged 10,000ms start-to-start submission gate.
+  expect(probe.submissions[1].receivedAt - probe.submissions[0].receivedAt).toBeGreaterThanOrEqual(9900);
+  await page.getByLabel('Analyse automatically', { exact: true }).uncheck();
+  await expect(schedule).toContainText('Manual test: select Analyse recent sequence');
+  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+});
+
+test('unchecking the camera area clears evidence and requires an explicit new selection', async ({ page }) => {
+  const probe = await modelWorkflow(page, { delayed: true });
+  await syntheticCamera(page);
+  await startSyntheticCamera(page);
+  const current = page.getByRole('region', { name: 'Current sampled frames', exact: true });
+  await expect(page.getByRole('button', { name: 'Analyse recent sequence', exact: true })).toBeEnabled({ timeout: 12000 });
+  await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
+  await expect.poll(() => probe.submitted()).not.toBeNull();
+  await page.getByLabel('Analyse this camera/aisle area', { exact: true }).uncheck();
+  await expect(page.locator('.interaction-status')).toContainText('No camera area selected.');
+  await expect(page.locator('.interaction-status')).not.toContainText('Full frame selected');
+  await expect(current.getByRole('img')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Submitted sequence', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Start detection', exact: true })).toBeEnabled();
+  await expect.poll(() => probe.cancelled()).toBeGreaterThan(0);
+  await expect(page.getByRole('button', { name: 'Analysing…', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
+});
 
 test('product analysis samples actual video without pose gates, displays evidence, accepts review and deletes', async ({ page }) => {
   const probe = await modelWorkflow(page);
@@ -137,6 +254,7 @@ test('product analysis samples actual video without pose gates, displays evidenc
   expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(0);
   await page.locator('.interaction-result').getByRole('button', { name: 'Delete result & frames', exact: true }).click();
   await expect(page.locator('.interaction-result')).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Submitted sequence', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
 });
 
@@ -191,7 +309,8 @@ test('camera-area selection crops sampled source pixels and changing the area cl
   await page.getByLabel('Analysis left %', { exact: true }).fill('10');
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
   await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Start detection', exact: true })).toBeEnabled();
+  await expect(page.getByText('0/4 fresh sampled frames', { exact: true })).toBeVisible();
 });
 
 test('fresh concealment shows visual attention while uncommissioned sound remains off', async ({ page }) => {
@@ -236,8 +355,8 @@ test('disarming during pending audio activation prevents a late test tone', asyn
   await open(page);
   await page.getByLabel('Choose CCTV recording').setInputFiles(resolve('tests/fixtures/synthetic-video.webm'));
   await page.getByLabel('Enable product interaction analysis', { exact: true }).check();
-  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
   await page.getByRole('combobox', { name: 'Camera layout', exact: true }).selectOption('single');
+  await page.getByRole('button', { name: 'Start detection', exact: true }).click();
   await page.getByRole('button', { name: 'Test product alarm sound', exact: true }).click();
   await page.getByRole('button', { name: 'Stop sound & disarm product alarm', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).__productAudioResumeDelivered)).toBe(true);

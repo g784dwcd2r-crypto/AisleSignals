@@ -46,6 +46,7 @@ type Observation = {
   scale: number;
   quality: number;
   box: DetectionRect;
+  duplicate: boolean;
 };
 type HandState = {
   phase: "idle" | "reaching" | "returning" | "waist" | "leave";
@@ -57,6 +58,7 @@ type HandState = {
 type TrackState = {
   id: number;
   observed: Observation;
+  displayed: PosePoint[];
   lastSeenAt: number;
   hands: [HandState, HandState];
   zoneSince: number | null;
@@ -110,6 +112,70 @@ function observe(
   );
   // Very small/degenerate poses cannot support reliable hand-to-body geometry.
   if (scale < 0.045 || scale > 0.7) return null;
+  const accepted = landmarks
+    .slice(0, 33)
+    .map((point) =>
+      quality(point) >= MIN_VISIBILITY
+        ? { ...point }
+        : { ...point, visibility: 0, presence: 0 },
+    );
+  const hide = (index: number) => {
+    accepted[index] = { ...accepted[index], visibility: 0, presence: 0 };
+  };
+  // Generous torso-relative bone limits reject a confident foot/elbow attached
+  // to a distant counter. Rejected parents also suppress downstream joints.
+  // These are observed-point exclusions, never reconstructed body positions.
+  for (const [parent, child, maximum] of [
+    [11, 13, 1.3],
+    [12, 14, 1.3],
+    [13, 15, 1.3],
+    [14, 16, 1.3],
+    [15, 17, 0.5],
+    [15, 19, 0.5],
+    [15, 21, 0.5],
+    [16, 18, 0.5],
+    [16, 20, 0.5],
+    [16, 22, 0.5],
+    [23, 25, 1.8],
+    [24, 26, 1.8],
+    [25, 27, 1.8],
+    [26, 28, 1.8],
+    [27, 29, 0.7],
+    [27, 31, 0.7],
+    [28, 30, 0.7],
+    [28, 32, 0.7],
+  ] as const) {
+    if (
+      quality(accepted[parent]) < MIN_VISIBILITY ||
+      quality(accepted[child]) < MIN_VISIBILITY ||
+      distance(accepted[parent], accepted[child], aspectRatio) > scale * maximum
+    )
+      hide(child);
+  }
+  for (let index = 0; index <= 10; index++) {
+    if (
+      quality(accepted[index]) < MIN_VISIBILITY ||
+      distance(accepted[index], shoulders, aspectRatio) > scale * 1.15
+    )
+      hide(index);
+  }
+  return {
+    landmarks: accepted,
+    center: midpoint(shoulders, hips),
+    hips,
+    scale,
+    quality:
+      torsoQuality.reduce((total, value) => total + value, 0) / TORSO.length,
+    box: bounds(accepted, scale, aspectRatio),
+    duplicate: false,
+  };
+}
+
+function bounds(
+  landmarks: PosePoint[],
+  scale: number,
+  aspectRatio: number,
+): DetectionRect {
   const visible = landmarks.filter((point) => quality(point) >= MIN_VISIBILITY);
   const left = Math.max(
     0,
@@ -127,15 +193,72 @@ function observe(
     1,
     Math.max(...visible.map((point) => point.y)) + scale * 0.12,
   );
-  return {
-    landmarks: landmarks.map((point) => ({ ...point })),
-    center: midpoint(shoulders, hips),
-    hips,
-    scale,
-    quality:
-      torsoQuality.reduce((total, value) => total + value, 0) / TORSO.length,
-    box: { x: left, y: top, width: right - left, height: bottom - top },
-  };
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function distinctObservations(
+  observations: Observation[],
+  aspectRatio: number,
+): Observation[] {
+  const result: Observation[] = [];
+  for (const observation of observations) {
+    const duplicateIndex = result.findIndex((other) => {
+      const scale = Math.min(observation.scale, other.scale);
+      const ratio = observation.scale / other.scale;
+      return (
+        ratio >= 0.9 &&
+        ratio <= 1.1 &&
+        TORSO.every(
+          (index) =>
+            distance(
+              observation.landmarks[index],
+              other.landmarks[index],
+              aspectRatio,
+            ) <=
+            scale * 0.1,
+        )
+      );
+    });
+    if (duplicateIndex < 0) result.push(observation);
+    else {
+      // Keep one whole observation; combining different wrists would fabricate
+      // a sequence. Duplicate/occluded torsos are display-only until separated.
+      const previous = result[duplicateIndex];
+      const best =
+        observation.quality > previous.quality ? observation : previous;
+      result[duplicateIndex] = { ...best, duplicate: true };
+    }
+  }
+  return result;
+}
+
+function displayLandmarks(
+  observation: Observation,
+  previous: PosePoint[],
+  elapsed: number,
+  aspectRatio: number,
+): PosePoint[] {
+  const alpha = 1 - Math.exp(-Math.max(0, elapsed) / 200);
+  return observation.landmarks.map((point, index) => {
+    const before = previous[index];
+    if (quality(point) < MIN_VISIBILITY)
+      return { ...point, visibility: 0, presence: 0 };
+    if (
+      !before ||
+      quality(before) < MIN_VISIBILITY ||
+      elapsed <= 0 ||
+      elapsed > 500 ||
+      distance(point, before, aspectRatio) > observation.scale * 0.35
+    )
+      return { ...point };
+    // Display smoothing only. Matching, dwell and alarm geometry use the
+    // current accepted observation above, never these interpolated points.
+    return {
+      ...point,
+      x: before.x + alpha * (point.x - before.x),
+      y: before.y + alpha * (point.y - before.y),
+    };
+  });
 }
 
 function newHand(): HandState {
@@ -229,10 +352,13 @@ export class LiveBehaviourEngine {
       this.reset();
     this.timestamp = timestampMs;
     this.aspectRatio = frameAspectRatio;
-    const observations = poses
-      .slice(0, MAX_POSES)
-      .map((landmarks) => observe(landmarks, frameAspectRatio))
-      .filter((value): value is Observation => value !== null);
+    const observations = distinctObservations(
+      poses
+        .slice(0, MAX_POSES)
+        .map((landmarks) => observe(landmarks, frameAspectRatio))
+        .filter((value): value is Observation => value !== null),
+      frameAspectRatio,
+    );
     const previous = this.tracks.filter(
       (track) => timestampMs - track.lastSeenAt <= TRACK_RETENTION_MS,
     );
@@ -250,26 +376,27 @@ export class LiveBehaviourEngine {
         return displacement <= 0.85 ? displacement : Infinity;
       }),
     );
-    // Ambiguity is intentionally conservative: no assignment may share a prior
-    // track, and neither side may have a nearly equivalent second candidate.
-    const ambiguous = observations.map((observation, index) => {
-      const nearby = observations.some(
-        (other, otherIndex) =>
-          otherIndex !== index &&
-          distance(observation.center, other.center, frameAspectRatio) <
-            Math.min(observation.scale, other.scale) * 0.7,
-      );
-      const ranked = costs[index].filter(Number.isFinite).sort((a, b) => a - b);
-      return nearby || (ranked.length > 1 && ranked[1] - ranked[0] < 0.22);
-    });
+    // Display association and permission to accumulate behaviour are separate:
+    // nearby people may have obvious unique matches while their arms overlap.
+    const overlapping = observations.map(
+      (observation, index) =>
+        observation.duplicate ||
+        observations.some(
+          (other, otherIndex) =>
+            otherIndex !== index &&
+            distance(observation.center, other.center, frameAspectRatio) <
+              Math.min(observation.scale, other.scale) * 0.7,
+        ),
+    );
     const assignments = observations.map((_, observationIndex) => {
       const ranked = costs[observationIndex]
         .map((cost, index) => ({ cost, index }))
         .filter(({ cost }) => Number.isFinite(cost))
         .sort((a, b) => a.cost - b.cost);
       let matched: number | null = null;
-      let uncertain = ambiguous[observationIndex];
-      if (!uncertain && ranked.length) {
+      let associationUncertain =
+        ranked.length > 1 && ranked[1].cost - ranked[0].cost < 0.22;
+      if (!associationUncertain && ranked.length) {
         const candidate = ranked[0];
         const rivals = costs
           .map((row, index) => ({ cost: row[candidate.index], index }))
@@ -280,17 +407,18 @@ export class LiveBehaviourEngine {
           (rivals.length === 1 || rivals[1].cost - rivals[0].cost >= 0.22)
         )
           matched = candidate.index;
-        else uncertain = true;
+        else associationUncertain = true;
       }
       return {
         matched,
-        uncertain,
+        associationUncertain,
+        uncertain: overlapping[observationIndex] || associationUncertain,
         candidates: ranked.map(({ index }) => index),
       };
     });
     const invalidated = new Set<number>();
-    // Resolve all uncertainty before updating any history. Otherwise array order
-    // could let an earlier pose emit before a later pose invalidates its match.
+    // Actual association ambiguity invalidates every affected match before any
+    // observation can emit. Nearby-but-unique display matches remain usable.
     for (let pass = 0; pass <= assignments.length; pass++) {
       let changed = false;
       for (const assignment of assignments) {
@@ -299,10 +427,11 @@ export class LiveBehaviourEngine {
           invalidated.has(assignment.matched)
         ) {
           assignment.matched = null;
+          assignment.associationUncertain = true;
           assignment.uncertain = true;
           changed = true;
         }
-        if (assignment.uncertain)
+        if (assignment.associationUncertain)
           for (const candidate of assignment.candidates)
             if (!invalidated.has(candidate)) {
               invalidated.add(candidate);
@@ -311,6 +440,15 @@ export class LiveBehaviourEngine {
       }
       if (!changed) break;
     }
+    const pausedEvidence = new Set(invalidated);
+    for (const assignment of assignments)
+      if (assignment.uncertain)
+        assignment.candidates.forEach((candidate) =>
+          pausedEvidence.add(candidate),
+        );
+    for (const assignment of assignments)
+      if (assignment.matched !== null && pausedEvidence.has(assignment.matched))
+        assignment.uncertain = true;
     const used = new Set<number>();
     const visible: LiveTrack[] = [];
     const events: LiveBehaviourEvent[] = [];
@@ -323,6 +461,12 @@ export class LiveBehaviourEngine {
           ? previous[matched]
           : this.newTrack(observation, timestampMs);
       if (matched !== null) used.add(matched);
+      track.displayed = displayLandmarks(
+        observation,
+        matched !== null ? track.displayed : [],
+        timestampMs - track.lastSeenAt,
+        frameAspectRatio,
+      );
       track.observed = observation;
       track.lastSeenAt = timestampMs;
       let watch = false;
@@ -335,8 +479,8 @@ export class LiveBehaviourEngine {
       const alert = !uncertain && timestampMs < track.alertUntil;
       visible.push({
         id: track.id,
-        landmarks: observation.landmarks,
-        box: observation.box,
+        landmarks: track.displayed,
+        box: bounds(track.displayed, observation.scale, frameAspectRatio),
         quality: observation.quality,
         status: alert ? "alert" : watch || uncertain ? "watch" : "normal",
         label: alert
@@ -353,6 +497,7 @@ export class LiveBehaviourEngine {
     previous.forEach((track, index) => {
       if (!used.has(index) && !invalidated.has(index)) {
         clearEvidence(track);
+        track.displayed = [];
         next.push(track);
       }
     });
@@ -364,6 +509,7 @@ export class LiveBehaviourEngine {
     return {
       id: this.nextId++,
       observed,
+      displayed: [],
       lastSeenAt: timestampMs,
       hands: [newHand(), newHand()],
       zoneSince: null,
@@ -405,7 +551,9 @@ export class LiveBehaviourEngine {
       wrist.y <= observation.hips.y + scale * 0.25 &&
       (Math.abs(wrist.x - observation.hips.x) * aspectRatio >= scale * 0.7 ||
         wrist.y < observation.hips.y - scale * 1.1);
-    const dwell = this.settings.sensitivity === "sensitive" ? 250 : 350;
+    const sensitive = this.settings.sensitivity === "sensitive";
+    const dwell = sensitive ? 250 : 350;
+    const minimumSamples = sensitive ? 2 : 3;
     state.cycles = state.cycles.filter((at) => now - at <= CYCLE_WINDOW_MS);
     if (
       (state.phase === "returning" || state.phase === "waist") &&
@@ -428,7 +576,10 @@ export class LiveBehaviourEngine {
       if (!reaching) {
         state.phase = "idle";
         state.samples = 0;
-      } else if (++state.samples >= 3 && now - state.since >= dwell) {
+      } else if (
+        ++state.samples >= minimumSamples &&
+        now - state.since >= dwell
+      ) {
         state.phase = "returning";
         state.reachedAt = now;
       }
@@ -442,7 +593,10 @@ export class LiveBehaviourEngine {
       if (!atWaist) {
         state.phase = "returning";
         state.samples = 0;
-      } else if (++state.samples >= 3 && now - state.since >= dwell) {
+      } else if (
+        ++state.samples >= minimumSamples &&
+        now - state.since >= dwell
+      ) {
         state.cycles.push(now);
         state.phase = "leave";
         const requiredCycles = 2;

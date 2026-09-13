@@ -14,7 +14,15 @@ import {
 } from "lucide-react";
 import { api } from "./api";
 import InteractionAnalysis from "./interactionAnalysis";
-import type { InteractionMonitorStatus } from "./interactionAnalysis";
+import type {
+  InteractionMonitorStatus,
+  SelectedCamera,
+} from "./interactionAnalysis";
+import {
+  poseFrameRegion,
+  poseZoneInCamera,
+  projectPoseTracks,
+} from "./poseFrame";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import { createPoseDetector } from "./poseDetector";
 import { watchVideoContinuity } from "./monitoringContinuity";
@@ -88,6 +96,10 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     guidance: "Checking the separate local product model.",
   });
   const [source, setSource] = useState<Source | null>(null);
+  const [selectedCamera, setSelectedCamera] = useState<SelectedCamera | null>(
+    null,
+  );
+  const selectedCameraRef = useRef<SelectedCamera | null>(null);
   const [status, setStatus] = useState(
     "Connect a CCTV view or choose a recording to begin.",
   );
@@ -227,6 +239,31 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     setMetrics({ fps: 0, latency: 0, frames: 0 });
     setActiveAlert(null);
     setError("");
+  }
+
+  function chooseTrackingCamera(selection: SelectedCamera | null) {
+    const current = sourceRef.current;
+    const key = current?.url ?? current?.stream?.id ?? "";
+    const next = selection?.sourceKey === key ? selection : null;
+    if (JSON.stringify(next) === JSON.stringify(selectedCameraRef.current))
+      return;
+    // Recreate the pose worker on restart: VIDEO tracking state cannot cross cameras.
+    if (runningRef.current || loadingRef.current)
+      stop(
+        "Camera area changed. Start detection again to track this camera with fresh model state.",
+        false,
+      );
+    selectedCameraRef.current = next;
+    setSelectedCamera(next);
+    clearOverlay();
+    setActiveAlert(null);
+    setMovementAlarmEnabled(false);
+  }
+
+  function showCameraSetup() {
+    document
+      .getElementById("camera-layout-heading")
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
   async function refreshEvents() {
@@ -441,6 +478,36 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     const w = canvas.width,
       h = canvas.height;
     context.clearRect(0, 0, w, h);
+    const camera =
+      selectedCamera?.sourceKey === (source?.url ?? source?.stream?.id ?? "")
+        ? selectedCamera
+        : null;
+    if (camera && (camera.crop.width < 1 || camera.crop.height < 1)) {
+      const area = camera.crop;
+      context.fillStyle = "rgba(0,0,0,.38)";
+      context.fillRect(0, 0, w, area.y * h);
+      context.fillRect(
+        0,
+        (area.y + area.height) * h,
+        w,
+        (1 - area.y - area.height) * h,
+      );
+      context.fillRect(0, area.y * h, area.x * w, area.height * h);
+      context.fillRect(
+        (area.x + area.width) * w,
+        area.y * h,
+        (1 - area.x - area.width) * w,
+        area.height * h,
+      );
+      context.strokeStyle = "#fff3a7";
+      context.lineWidth = 2;
+      context.strokeRect(
+        area.x * w,
+        area.y * h,
+        area.width * w,
+        area.height * h,
+      );
+    }
     if (zoneEnabled) {
       context.fillStyle = "rgba(255,190,80,.12)";
       context.strokeStyle = "#ffbf61";
@@ -511,7 +578,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         });
       }
     }
-  }, [tracks, skeleton, dimensions, zone, zoneEnabled]);
+  }, [tracks, skeleton, dimensions, zone, zoneEnabled, selectedCamera, source]);
 
   function chooseFile(file: File | undefined) {
     if (!file) return;
@@ -705,6 +772,22 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     runId.current = crypto.randomUUID();
     let detector: PoseDetector | null = null;
     try {
+      const sourceKey = current.url ?? current.stream?.id ?? "";
+      const camera =
+        selectedCameraRef.current?.sourceKey === sourceKey
+          ? selectedCameraRef.current
+          : null;
+      const crop = camera?.crop ?? null;
+      const region = poseFrameRegion(video.videoWidth, video.videoHeight, crop);
+      const trackedSource = camera
+        ? {
+            ...current,
+            label: `${current.label.slice(0, 70)} · ${camera.label}`.slice(
+              0,
+              120,
+            ),
+          }
+        : current;
       const audioResult = await soundActivation;
       if (!mounted.current || generation !== runGeneration.current) return;
       setSoundStatus(
@@ -721,7 +804,10 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       modelLoad.current = null;
       engineRef.current = new LiveBehaviourEngine({
         sensitivity,
-        restrictedZone: zoneEnabled ? zone : null,
+        restrictedZone: poseZoneInCamera(
+          zoneEnabled ? zone : null,
+          region.area,
+        ),
       });
       if (current.kind === "RECORDED_VIDEO" && video.ended)
         video.currentTime = 0;
@@ -797,7 +883,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         const mediaTime = presented.mediaTime;
         lastSequence = presented.sequence;
         try {
-          const poses = await detector!.detect(video, now);
+          const poses = await detector!.detect(video, now, crop);
           if (
             !runningRef.current ||
             generation !== runGeneration.current ||
@@ -840,9 +926,9 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             const result = engineRef.current!.update(
               poses,
               mediaTime * 1000,
-              video.videoWidth / video.videoHeight,
+              region.width / region.height,
             );
-            setTracks(result.tracks);
+            setTracks(projectPoseTracks(result.tracks, region.area));
             frames++;
             setMetrics({
               fps: Math.min(4, 1000 / Math.max(intervalMs, now - lastSample)),
@@ -851,11 +937,11 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             });
             setStatus(
               result.tracks.length
-                ? `Analysing ${result.tracks.length} person${result.tracks.length === 1 ? "" : "s"}. Labels describe observed pose patterns.`
-                : "No clear body pose. Detection needs a visible torso and arms; check the camera view.",
+                ? `${result.tracks.length} usable body track${result.tracks.length === 1 ? "" : "s"}. This is not a count of everyone visible.`
+                : "No clear body pose. People may still be present; use a closer camera area with a visible torso and arms.",
             );
             for (const event of result.events)
-              trigger(event, current, mediaTime);
+              trigger(event, trackedSource, mediaTime);
           }
           lastSample = now;
         } catch (failure) {
@@ -1063,6 +1149,29 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             {productStatus.guidance}{" "}
             <a href="#interaction-heading">Product analysis settings</a>
           </p>
+        </div>
+        <div className="ld-camera-context">
+          <div>
+            <strong>
+              {selectedCamera?.sourceKey ===
+              (source?.url ?? source?.stream?.id ?? "")
+                ? selectedCamera?.label
+                : "Full source · camera area not selected"}
+            </strong>
+            <span>
+              {selectedCamera?.sourceKey ===
+              (source?.url ?? source?.stream?.id ?? "")
+                ? "Body tracking and product sampling use this camera area."
+                : "Choose the camera picture to exclude browser controls and improve available detail."}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={!source?.ready}
+            onClick={showCameraSetup}
+          >
+            Choose camera area
+          </button>
         </div>
         <div
           className="ld-screen"
@@ -1390,6 +1499,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         branchName={branchName}
         sourceKey={source?.url ?? source?.stream?.id ?? ""}
         onMonitorStatus={setProductStatus}
+        onCameraSelection={chooseTrackingCamera}
       />
       <section className="ld-event-panel" aria-labelledby="ld-events-heading">
         <div className="ld-event-heading">

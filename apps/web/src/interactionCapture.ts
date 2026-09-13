@@ -42,6 +42,10 @@ export type SampledFrame = {
   at_seconds: number;
   jpeg_base64: string;
   capturedAt: number;
+  width: number;
+  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
 };
 export const INTERACTION_FRESH_MS = 15_000;
 
@@ -167,15 +171,23 @@ export class InteractionFrameBuffer {
     this.frames.push(frame);
     this.frames = this.frames.slice(-6);
   }
-  sequence(now: number): SampledFrame[] {
+  /** Partial progress is useful before a complete sequence can be submitted. */
+  snapshot(now: number): SampledFrame[] {
     const frames = this.frames.slice(-4);
+    const last = frames.at(-1);
     if (
-      frames.length < 4 ||
-      now - frames[3].capturedAt > 2000 ||
-      frames[3].at_seconds - frames[0].at_seconds > 8
+      !last ||
+      !Number.isFinite(now) ||
+      now < last.capturedAt ||
+      now - last.capturedAt > 2000 ||
+      last.at_seconds - frames[0].at_seconds > 8
     )
       return [];
     return frames.map((frame) => ({ ...frame }));
+  }
+  sequence(now: number): SampledFrame[] {
+    const frames = this.snapshot(now);
+    return frames.length === 4 ? frames : [];
   }
   get count() {
     return this.frames.length;
@@ -292,6 +304,10 @@ export function captureInteractionFrame(
     at_seconds: Math.round(video.currentTime * 1000) / 1000,
     jpeg_base64: jpeg,
     capturedAt: now,
+    width: canvas.width,
+    height: canvas.height,
+    sourceWidth: region.width,
+    sourceHeight: region.height,
   };
 }
 

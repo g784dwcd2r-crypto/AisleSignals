@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
+import type { PointerEvent } from "react";
 import { mapCameraGridToArea, validateCameraArea } from "./cameraGrid";
 import type { CameraArea, CameraGridLayout, CameraTile } from "./cameraGrid";
 import { detectCameraLayout } from "./cameraLayoutDetection";
@@ -42,6 +43,11 @@ export default function CameraLayoutPicker({
   );
   const [error, setError] = useState("");
   const [previewReady, setPreviewReady] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const [drawArea, setDrawArea] = useState<CameraArea | null>(null);
+  const drawOrigin = useRef<{ x: number; y: number; pointer: number } | null>(
+    null,
+  );
   const [dimensions, setDimensions] = useState({ width: 16, height: 9 });
   const canvas = useRef<HTMLCanvasElement>(null);
   const callbacks = useRef({ onInvalidate, onSelect });
@@ -92,6 +98,8 @@ export default function CameraLayoutPicker({
     );
   }
   function chooseLayout(next: CameraGridLayout) {
+    setDrawing(false);
+    setDrawArea(null);
     invalidate();
     scan.current.done = true;
     setError("");
@@ -118,6 +126,8 @@ export default function CameraLayoutPicker({
     }
   }
   function detectAgain() {
+    setDrawing(false);
+    setDrawArea(null);
     invalidate();
     setError("");
     chosenLayout.current = "";
@@ -135,6 +145,8 @@ export default function CameraLayoutPicker({
     );
   }
   function changeBoard(key: keyof CameraArea, value: string) {
+    setDrawing(false);
+    setDrawArea(null);
     invalidate();
     const fields = { ...boardFields, [key]: value };
     setBoardFields(fields);
@@ -173,6 +185,82 @@ export default function CameraLayoutPicker({
     }
   }
 
+  function startDrawing() {
+    invalidate();
+    scan.current.done = true;
+    chosenLayout.current = "";
+    currentTiles.current = [];
+    setLayout("");
+    setTiles([]);
+    setDrawArea(null);
+    setError("");
+    drawOrigin.current = null;
+    const video = videoRef.current;
+    if (video && video.readyState >= 2 && canvas.current)
+      canvas.current
+        .getContext("2d")
+        ?.drawImage(video, 0, 0, canvas.current.width, canvas.current.height);
+    setDrawing(true);
+    setMessage(
+      "Drag a rectangle around the actual camera picture, excluding browser controls. You can also use the percentage fields. Then confirm the area.",
+    );
+  }
+  function pointerPosition(event: PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)),
+    };
+  }
+  function drawStart(event: PointerEvent<HTMLDivElement>) {
+    if (!drawing || event.button !== 0) return;
+    const point = pointerPosition(event);
+    drawOrigin.current = { ...point, pointer: event.pointerId };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrawArea(null);
+    event.preventDefault();
+  }
+  function rectangle(event: PointerEvent<HTMLDivElement>) {
+    const start = drawOrigin.current;
+    if (!start || start.pointer !== event.pointerId) return null;
+    const end = pointerPosition(event);
+    return {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y),
+    };
+  }
+  function drawEnd(event: PointerEvent<HTMLDivElement>) {
+    const area = rectangle(event);
+    drawOrigin.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!area) return;
+    try {
+      board.current = validateCameraArea(area);
+      boardValid.current = true;
+      setBoardFields({
+        x: (area.x * 100).toFixed(1),
+        y: (area.y * 100).toFixed(1),
+        width: (area.width * 100).toFixed(1),
+        height: (area.height * 100).toFixed(1),
+      });
+      setGeometry("single", mapCameraGridToArea("single", board.current));
+      setDrawing(false);
+      setDrawArea(null);
+      setError("");
+      setMessage(
+        "Camera area drawn. Inspect the box and select Use this layout. Body tracking and product sampling will use this area after you restart detection.",
+      );
+    } catch {
+      setDrawArea(null);
+      setError(
+        "Draw an area at least 5% wide and high, or enter its percentages below.",
+      );
+    }
+  }
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -201,6 +289,9 @@ export default function CameraLayoutPicker({
       setSelected(0);
       setError("");
       setPreviewReady(false);
+      setDrawing(false);
+      setDrawArea(null);
+      drawOrigin.current = null;
       setMessage(
         sourceKey
           ? "Checking this source locally for visible camera separators. Product analysis waits for your camera selection."
@@ -322,8 +413,9 @@ export default function CameraLayoutPicker({
     >
       <h3 id="camera-layout-heading">Choose the camera to analyse</h3>
       <p>
-        Body keypoints cover the full source. Product analysis uses one selected
-        camera tile only; this does not monitor every tile simultaneously.
+        Body tracking and product sampling use the confirmed camera area.
+        Product analysis covers one camera at a time; other tiles are not
+        analysed.
       </p>
       <p className="camera-layout-status" role="status">
         {customArea
@@ -349,6 +441,14 @@ export default function CameraLayoutPicker({
           ))}
         </select>
       </label>
+      <button
+        type="button"
+        disabled={!sourceKey || !previewReady}
+        onClick={startDrawing}
+        aria-pressed={drawing}
+      >
+        Draw camera area
+      </button>
       <details className="camera-board-options">
         <summary>Exclude recorder or browser borders</summary>
         <p>
@@ -373,14 +473,35 @@ export default function CameraLayoutPicker({
         </div>
       </details>
       <div
-        className="camera-layout-preview"
+        className={`camera-layout-preview${drawing ? " camera-layout-drawing" : ""}`}
         style={{ aspectRatio: `${dimensions.width}/${dimensions.height}` }}
+        onPointerDown={drawStart}
+        onPointerMove={(event) => {
+          const area = rectangle(event);
+          if (area) setDrawArea(area);
+        }}
+        onPointerUp={drawEnd}
+        onPointerCancel={() => {
+          drawOrigin.current = null;
+          setDrawArea(null);
+        }}
       >
         <canvas ref={canvas} aria-label="Local camera layout preview" />
         {!previewReady && (
           <span className="camera-layout-placeholder">
             Video preview appears when a decoded frame is available.
           </span>
+        )}
+        {drawArea && (
+          <span
+            className="camera-drawn-area"
+            style={{
+              left: `${drawArea.x * 100}%`,
+              top: `${drawArea.y * 100}%`,
+              width: `${drawArea.width * 100}%`,
+              height: `${drawArea.height * 100}%`,
+            }}
+          />
         )}
         {tiles.map((tile) => (
           <button

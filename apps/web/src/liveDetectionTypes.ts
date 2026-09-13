@@ -42,11 +42,12 @@ export type PoseDetector = {
   detect: (
     video: HTMLVideoElement,
     timestampMs: number,
+    crop?: DetectionRect | null,
   ) => Promise<PosePoint[][]>;
   close: () => void;
 };
 export const LIVE_MODEL_VERSION = "mediapipe-pose-lite-f16-v1";
-export const LIVE_RULE_VERSION = "pose-rules-v1";
+export const LIVE_RULE_VERSION = "pose-rules-v2";
 
 export type LiveEventInput = {
   run_id: string;
@@ -61,7 +62,8 @@ export type LiveEventInput = {
   rule_version: typeof LIVE_RULE_VERSION;
   sound_requested: boolean;
 };
-export type SavedLiveEvent = LiveEventInput & {
+export type SavedLiveEvent = Omit<LiveEventInput, "rule_version"> & {
+  rule_version: "pose-rules-v1" | typeof LIVE_RULE_VERSION;
   id: string;
   label: string;
   detail: string;
