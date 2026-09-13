@@ -37,10 +37,11 @@ def free_port():
         return probe.getsockname()[1]
 
 
-def fake_server(tmp_path, *, ready=True, mode="pilot"):
-    script = tmp_path / ("fake_ready.py" if ready else "fake_unready.py")
+def fake_server(tmp_path, *, ready=True, mode="pilot", kind="api"):
+    script = tmp_path / (f"fake_ready_{kind}.py" if ready else f"fake_unready_{kind}.py")
+    body = json.dumps({"status": "ok", "mode": mode} if kind == "api" else {"data": [{"id": "qwen3-vl:4b"}]})
     script.write_text(textwrap.dedent(f"""
-        import json, sys
+        import json, sys, time
         from pathlib import Path
         status = Path(__file__).with_suffix('.status.json')
         status.write_text(json.dumps({{'stage':'imports'}}))
@@ -60,8 +61,14 @@ def fake_server(tmp_path, *, ready=True, mode="pilot"):
                 self.server_port = self.server_address[1]
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                body = b'{{"status":"ok","mode":"{mode}"}}'
-                self.send_response({200 if ready else 503})
+                fault = Path(__file__).with_suffix('.fault')
+                behavior = fault.read_text() if fault.exists() else ''
+                if behavior in ('hang-once', 'transient'):
+                    fault.unlink()
+                if behavior in ('hang-once', 'hang'):
+                    time.sleep(600)
+                body = {body!r}.encode()
+                self.send_response(503 if behavior == 'transient' else {200 if ready else 503})
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -74,7 +81,8 @@ def fake_server(tmp_path, *, ready=True, mode="pilot"):
     port = free_port()
     # This is a subprocess integration test, not a two-second startup promise.
     # Deadline/cancellation tests below set their own deliberately short bounds.
-    return launcher.OwnedService("api", [sys.executable, str(script), str(port)], port, "/api/health", 10)
+    return launcher.OwnedService(kind, [sys.executable, str(script), str(port)], port,
+                                 "/api/health" if kind == "api" else "/v1/models", 10)
 
 
 def fake_startup_diagnostic(service):
@@ -343,13 +351,261 @@ def test_permanent_model_failure_restarts_api_with_provider_interlock(config, mo
     supervisor.services = [vision, api]
     calls = []
     monkeypatch.setattr(supervisor, 'resumed', lambda: False)
-    monkeypatch.setattr(supervisor.stop_event, 'wait', lambda _: len(calls) > 1)
-    monkeypatch.setattr(supervisor, 'stop_service', lambda item: calls.append(('stop', item.name)))
+    monkeypatch.setattr(supervisor.stop_event, 'wait', lambda _: supervisor.stop_event.is_set())
+    monkeypatch.setattr(supervisor, 'stop_service', lambda item, **_: calls.append(('stop', item.name)))
     def start(item):
         calls.append(('start', item.name, supervisor.env['AISLESIGNALS_VISION_DISABLED']))
+        supervisor.stop_event.set()
         return True
     monkeypatch.setattr(supervisor, 'start', start)
     assert supervisor.monitor() == 0
-    assert calls == [('stop', 'api'), ('start', 'api', '1')]
+    assert calls == [('stop', 'api'), ('stop', 'vision'), ('start', 'api', '1')]
     assert vision.disabled
     assert supervisor.last_state == 'DEGRADED'
+
+
+def accelerate_monitor(supervisor, monkeypatch):
+    """Only synthetic services: shorten health cadence/deadline and backoff."""
+    monkeypatch.setattr(launcher, "HEALTH_INTERVAL_SECONDS", 0.03)
+    original_probe = launcher.probe_service
+    monkeypatch.setattr(launcher, "probe_service", lambda *args, **kwargs:
+                        original_probe(*args, **{**kwargs, "timeout": min(0.15, kwargs["timeout"])}))
+    original_wait = supervisor.stop_event.wait
+    monkeypatch.setattr(supervisor.stop_event, "wait", lambda seconds: original_wait(min(seconds, 0.03)))
+
+
+@pytest.mark.parametrize("kind", ["api", "vision"])
+def test_hung_live_process_is_recovered_and_old_api_generation_stopped(config, tmp_path, monkeypatch, kind):
+    supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
+    service = fake_server(tmp_path, kind=kind)
+    api = fake_server(tmp_path) if kind == "vision" else service
+    timer = threading.Timer(12, supervisor.stop_event.set)
+    try:
+        assert supervisor.start(service), fake_startup_diagnostic(service)
+        if api is not service:
+            assert supervisor.start(api), fake_startup_diagnostic(api)
+        old_process, old_api = service.process, api.process
+        Path(service.command[1]).with_suffix(".fault").write_text("hang-once")
+        assert old_process.poll() is None  # The old exit-only loop never handles this fault.
+        accelerate_monitor(supervisor, monkeypatch)
+        stopped = []
+        original_stop = supervisor.stop_service
+        def stop(item, **kwargs):
+            stopped.append((item.name, kwargs.get("abort", False)))
+            original_stop(item, **kwargs)
+        monkeypatch.setattr(supervisor, "stop_service", stop)
+        def report(detail):
+            if "service recovered" in detail:
+                supervisor.stop_event.set()
+        supervisor.reporter = report
+        timer.start()
+        assert supervisor.monitor() == 0
+        assert service.restarts == 1
+        assert service.process.pid != old_process.pid
+        assert old_process.poll() is not None
+        assert api.process.pid != old_api.pid
+        assert old_api.poll() is not None
+        assert supervisor.rearm_required
+        assert supervisor.last_state == "REARM_REQUIRED"
+        if kind == "vision":
+            assert stopped[:2] == [("api", True), ("vision", False)]
+            assert api.dependency_restarts == 1
+        runtime = json.loads((config.data_dir / "runtime-status.json").read_text())
+        assert runtime["camera_monitoring"] == "NOT_VERIFIED"
+        assert runtime["rearm_required"] is True
+        assert runtime["recovery_generation"] == 1
+    finally:
+        timer.cancel()
+        supervisor.shutdown()
+
+
+def test_one_transient_http_failure_keeps_owned_process_and_resets_health_streak(config, tmp_path, monkeypatch):
+    service = fake_server(tmp_path)
+    supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
+    timer = threading.Timer(5, supervisor.stop_event.set)
+    try:
+        assert supervisor.start(service), fake_startup_diagnostic(service)
+        old_process = service.process
+        Path(service.command[1]).with_suffix(".fault").write_text("transient")
+        accelerate_monitor(supervisor, monkeypatch)
+        states = []
+        original_status = supervisor.status
+        def status(state, detail, **kwargs):
+            states.append(state)
+            original_status(state, detail, **kwargs)
+            if state == "SERVICES_READY" and "DEGRADED" in states:
+                supervisor.stop_event.set()
+        monkeypatch.setattr(supervisor, "status", status)
+        timer.start()
+        assert supervisor.monitor() == 0
+        assert states[:2] == ["DEGRADED", "SERVICES_READY"]
+        assert service.process is old_process
+        assert service.restarts == 0
+        assert not supervisor.rearm_required
+        assert service.health.consecutive_failures == 0
+    finally:
+        timer.cancel()
+        supervisor.shutdown()
+
+
+def test_persistent_hang_exhausts_restart_budget_and_leaves_no_child(config, tmp_path, monkeypatch):
+    service = fake_server(tmp_path)
+    supervisor = launcher.Supervisor(replace(config, restart_limit=2), os.environ.copy(), reporter=lambda _: None)
+    try:
+        assert supervisor.start(service), fake_startup_diagnostic(service)
+        Path(service.command[1]).with_suffix(".fault").write_text("hang")
+        service.timeout = 0.35
+        accelerate_monitor(supervisor, monkeypatch)
+        assert supervisor.monitor() == 1
+        assert service.restarts == 2
+        assert service.process is None
+        assert supervisor.last_state == "FAILED"
+        assert supervisor.rearm_required
+    finally:
+        supervisor.shutdown()
+
+
+def test_recovery_port_taken_by_unrelated_listener_is_never_adopted_or_stopped(config, tmp_path, monkeypatch):
+    service = fake_server(tmp_path)
+    supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
+    try:
+        assert supervisor.start(service), fake_startup_diagnostic(service)
+        supervisor.stop_service(service)
+        with socket.socket() as unrelated:
+            if os.name != "nt":
+                unrelated.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            unrelated.bind(("127.0.0.1", service.port))
+            unrelated.listen()
+            accelerate_monitor(supervisor, monkeypatch)
+            assert supervisor.recover(service) == 1
+            assert service.process is None
+            assert service.restarts == config.restart_limit
+            assert unrelated.fileno() >= 0
+            with socket.create_connection(("127.0.0.1", service.port), timeout=1):
+                accepted, _ = unrelated.accept()
+                accepted.close()
+    finally:
+        supervisor.shutdown()
+
+
+def test_stop_during_hung_health_check_cancels_without_spawning_recovery(config, tmp_path, monkeypatch):
+    service = fake_server(tmp_path)
+    supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
+    timer = threading.Timer(0.2, supervisor.stop_event.set)
+    try:
+        assert supervisor.start(service), fake_startup_diagnostic(service)
+        Path(service.command[1]).with_suffix(".fault").write_text("hang")
+        monkeypatch.setattr(launcher, "HEALTH_INTERVAL_SECONDS", 0.02)
+        timer.start()
+        before = time.monotonic()
+        assert supervisor.monitor() == 0
+        assert time.monotonic() - before < 1.5
+        assert service.restarts == 0
+    finally:
+        timer.cancel()
+        supervisor.shutdown()
+    assert service.process is None
+
+
+def test_recovery_does_not_bypass_sleep_interlock(config, tmp_path, monkeypatch):
+    service = fake_server(tmp_path)
+    supervisor = launcher.Supervisor(config, {}, reporter=lambda _: None)
+    monkeypatch.setattr(supervisor.stop_event, "wait", lambda _: False)
+    monkeypatch.setattr(supervisor, "start", lambda _: pytest.fail("Must not restart after sleep"))
+    supervisor.last_wall -= 30
+    assert supervisor.recover(service) == 3
+    assert supervisor.resume_detected and supervisor.rearm_required
+
+
+def test_fresh_api_child_revokes_session_authority_without_deleting_accounts_or_cases(tmp_path):
+    from services.api.store import Store
+    store = Store(str(tmp_path / "synthetic-protected.sqlite3"), mode="pilot")
+    with store.transaction() as conn:
+        conn.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?,?)", (
+            "synthetic-user", "synthetic@example.invalid", "Synthetic tester", "MANAGER",
+            "synthetic-org", "synthetic-site", "synthetic-salt", "not-a-valid-password"))
+        conn.execute("INSERT INTO sessions VALUES (?,?,?,?,?)", (
+            "synthetic-old-session", "synthetic-user", "synthetic-csrf", time.time(), time.time()))
+        conn.execute("INSERT INTO session_scopes VALUES (?,?,?)", (
+            "synthetic-old-session", "synthetic-org", "synthetic-site"))
+        conn.execute("INSERT INTO entities VALUES (?,?,?,?,?,?)", (
+            "synthetic-case", "incident", "synthetic-org", "synthetic-site", "{}", "2026-09-13"))
+    launcher.invalidate_prior_sessions(store)
+    with store.transaction() as conn:
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM session_scopes").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM users").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM entities WHERE kind='incident'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("previous,rearm,final", [
+    ("SERVICES_READY", False, "STOPPED"),
+    ("FAILED", True, "FAILED"),
+    ("REARM_REQUIRED", True, "REARM_REQUIRED"),
+])
+def test_shutdown_blocks_real_runtime_projection_before_graceful_cleanup(config, monkeypatch, previous, rearm, final):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    monkeypatch.setenv("AISLESIGNALS_MODE", "pilot")
+    # Importing the API module creates its default app. Give that constructor
+    # its own temporary DB and close it only when this test caused the import.
+    first_import = "services.api.app" not in sys.modules
+    monkeypatch.setenv("AISLESIGNALS_DB_PATH", str(config.data_dir / "import-only.db"))
+    monkeypatch.setenv("AISLESIGNALS_PILOT_SUPERVISED_CHILD", "1")
+    monkeypatch.setenv("AISLESIGNALS_VISION_DISABLED", "0")
+    from services.api.app import create_app, app as imported_app
+    if first_import:
+        imported_app.state.interactions.close()
+    app = create_app(config.database, config.root / "apps/web/dist", mode="pilot")
+    # Exercise the actual safe projection and worker fence without a network
+    # listener or a fake implementation of their readiness rules.
+    health = next(route.endpoint for route in app.routes if route.path == "/api/runtime/health")
+    caller = SimpleNamespace(user={"site_id": "synthetic-site"})
+    supervisor = launcher.Supervisor(config, {}, reporter=lambda _: None)
+    stamp = datetime.now(timezone.utc).isoformat()
+    for name in ("vision", "api"):
+        service = launcher.OwnedService(name, [], 23456, "/api/health", 1,
+                                       process=SimpleNamespace(poll=lambda: None))
+        service.health.state = "READY"
+        service.last_checked_at = stamp
+        supervisor.services.append(service)
+    supervisor.status("SERVICES_READY", "Synthetic healthy services")
+    bound = {"runtime_context": health(caller)["context"]}
+    assert app.state.interactions.runtime_current(bound)
+    supervisor.last_state, supervisor.rearm_required = previous, rearm
+    stopped = []
+    def cleanup(service, **options):
+        projected = health(caller)
+        assert projected["state"] == "STOPPED"
+        assert not projected["monitoring_allowed"] and projected["context"] is None
+        assert not app.state.interactions.runtime_current(bound)
+        assert supervisor.stop_event.is_set()
+        assert options == {"abort": False}
+        stopped.append(service.name)
+        service.process = None
+    monkeypatch.setattr(supervisor, "stop_service", cleanup)
+    try:
+        supervisor.shutdown()
+        assert stopped == ["api", "vision"]
+        assert supervisor.last_state == final
+        assert supervisor.rearm_required is rearm
+    finally:
+        app.state.interactions.close()
+
+
+def test_shutdown_report_failure_aborts_api_and_still_closes_owned_containment(config, monkeypatch):
+    from types import SimpleNamespace
+    supervisor = launcher.Supervisor(config, {}, reporter=lambda _: None)
+    supervisor.last_state = "FAILED"
+    supervisor.rearm_required = True
+    supervisor.services = [launcher.OwnedService(name, [], 23456, "/api/health", 1)
+                           for name in ("vision", "api")]
+    calls = []
+    supervisor.windows_job = SimpleNamespace(close=lambda: calls.append(("containment", "closed")))
+    def fail_report(*_, **__):
+        raise OSError("Synthetic report write failure")
+    monkeypatch.setattr(supervisor, "status", fail_report)
+    monkeypatch.setattr(supervisor, "stop_service", lambda item, **options: calls.append((item.name, options["abort"])))
+    supervisor.shutdown()
+    assert calls == [("api", True), ("vision", False), ("containment", "closed")]
+    assert supervisor.last_state == "FAILED" and supervisor.rearm_required

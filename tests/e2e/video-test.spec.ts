@@ -156,7 +156,7 @@ test('local video analysis finds timestamped activity without uploads or live re
   expect(summary).not.toHaveProperty('video_bytes');
   expect(requests.filter(request => !['GET', 'HEAD'].includes(request.method))).toEqual([]);
   expect(requests.every(request => !`${request.url}${request.body ?? ''}`.includes('synthetic-video'))).toBe(true);
-  expect(requests.every(request => new URL(request.url).origin === 'http://127.0.0.1:8799')).toBe(true);
+  expect(requests.every(request => new URL(request.url).origin === new URL(page.url()).origin)).toBe(true);
   await page.getByRole('button', { name: 'Remove video', exact: true }).click();
   await expect(video).toHaveCount(0);
   await expect(page.getByText('Analysis complete', { exact: true })).toHaveCount(0);

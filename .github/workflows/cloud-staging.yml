@@ -1,0 +1,49 @@
+name: Cloud staging checks
+
+on:
+  push:
+    branches: [main, codex/cloud-staging]
+    paths:
+      - 'services/cloud/**'
+      - 'tests/cloud/**'
+      - 'deployment/render-staging.yaml'
+      - '.github/workflows/cloud-staging.yml'
+  pull_request:
+    paths:
+      - 'services/cloud/**'
+      - 'tests/cloud/**'
+      - 'deployment/render-staging.yaml'
+      - '.github/workflows/cloud-staging.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cloud:
+    name: Stateless staging API and configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.14'
+          cache: pip
+          cache-dependency-path: |
+            services/cloud/requirements.txt
+            services/cloud/requirements-test.txt
+      - run: python -m pip install -r services/cloud/requirements-test.txt
+      - name: Locate PostgreSQL tools for disposable integration tests
+        run: |
+          cloud_postgres_bin="$(pg_config --bindir)"
+          test -x "$cloud_postgres_bin/initdb"
+          test -x "$cloud_postgres_bin/pg_ctl"
+          echo "$cloud_postgres_bin" >> "$GITHUB_PATH"
+      - run: python -m pytest tests/cloud -q
+        env:
+          CLOUD_RUN_POSTGRES_TESTS: '1'

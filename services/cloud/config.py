@@ -1,0 +1,93 @@
+"""Explicit cloud-only configuration; exception text never contains values."""
+
+from dataclasses import dataclass, field
+import os
+import re
+from collections.abc import Mapping
+from urllib.parse import parse_qsl, urlsplit
+
+
+class ConfigurationError(ValueError):
+    pass
+
+
+def _hostname(value: str) -> str:
+    if len(value) > 253 or not re.fullmatch(
+        r"[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?", value
+    ) or any(not part or len(part) > 63 or part.startswith("-") or part.endswith("-")
+             for part in value.split(".")):
+        raise ConfigurationError("Cloud allowed hosts must be explicit hostnames.")
+    return value.lower()
+
+
+@dataclass(frozen=True)
+class CloudSettings:
+    environment: str
+    allowed_hosts: tuple[str, ...]
+    database_url: str | None = field(repr=False)
+    database_sslmode: str
+    bind_host: str
+    port: int
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
+        values = os.environ if env is None else env
+        environment = values.get("CLOUD_ENV", "staging")
+        if environment not in {"staging", "development"}:
+            raise ConfigurationError("CLOUD_ENV must be staging or development.")
+        on_render = values.get("RENDER") == "true"
+        if on_render and environment != "staging":
+            raise ConfigurationError("Render requires CLOUD_ENV=staging.")
+        hosts = [v.strip() for v in values.get("CLOUD_ALLOWED_HOSTS", "").split(",") if v.strip()]
+        if hostname := values.get("RENDER_EXTERNAL_HOSTNAME"):
+            hosts.append(hostname)
+        if not hosts and environment == "development":
+            hosts = ["localhost", "127.0.0.1"]
+        if not hosts or len(hosts) > 16:
+            raise ConfigurationError("Configure CLOUD_ALLOWED_HOSTS or RENDER_EXTERNAL_HOSTNAME.")
+        allowed_hosts = tuple(dict.fromkeys(_hostname(host) for host in hosts))
+        try:
+            port = int(values.get("PORT", "10000"))
+            if not 1024 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            raise ConfigurationError("PORT must be an integer between 1024 and 65535.") from None
+
+        sslmode = values.get("CLOUD_DATABASE_SSLMODE", "require")
+        database_url = values.get("DATABASE_URL") or None
+        if sslmode not in {"require", "disable"}:
+            raise ConfigurationError("CLOUD_DATABASE_SSLMODE must be require or development-only disable.")
+        if sslmode == "disable" and environment != "development":
+            raise ConfigurationError("Database TLS is required in staging.")
+        if database_url:
+            try:
+                parsed = urlsplit(database_url)
+                # Keep libpq's service/file/environment indirection out of this scaffold.
+                query = parse_qsl(parsed.query, strict_parsing=True, max_num_fields=1)
+                if (
+                    len(database_url) > 8192
+                    or any(ord(c) < 32 for c in database_url)
+                    or parsed.scheme not in {"postgres", "postgresql"}
+                    or not parsed.hostname
+                    or not parsed.username
+                    or not parsed.path.startswith("/")
+                    or len(parsed.path) < 2
+                    or "/" in parsed.path[1:]
+                    or parsed.fragment
+                    or (query and query != [("sslmode", sslmode)])
+                    or (parsed.port is not None and not 1 <= parsed.port <= 65535)
+                    or (environment == "staging" and not parsed.password)
+                    or (sslmode == "disable" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})
+                ):
+                    raise ValueError
+                _hostname(parsed.hostname) if parsed.hostname != "::1" else None
+            except (ValueError, UnicodeError):
+                raise ConfigurationError("DATABASE_URL must be a valid PostgreSQL URL with the configured TLS mode.") from None
+        return cls(
+            environment=environment,
+            allowed_hosts=allowed_hosts,
+            database_url=database_url,
+            database_sslmode=sslmode,
+            bind_host="0.0.0.0" if on_render else "127.0.0.1",
+            port=port,
+        )

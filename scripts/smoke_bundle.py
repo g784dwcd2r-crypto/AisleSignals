@@ -67,7 +67,7 @@ def main() -> None:
     origin = f"http://127.0.0.1:{port}"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect(), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
-    def request(path, *, method="GET", body=None, csrf=None, key=None, site=None):
+    def request(path, *, method="GET", body=None, csrf=None, key=None, site=None, runtime=None):
         headers = {"Content-Type": "application/json", "Origin": origin}
         if csrf:
             headers["X-CSRF-Token"] = csrf
@@ -75,6 +75,8 @@ def main() -> None:
             headers["Idempotency-Key"] = key
         if site:
             headers["X-AisleSignals-Site"] = site
+        if runtime:
+            headers["X-AisleSignals-Runtime"] = runtime
         value = urllib.request.Request(origin + path, data=json.dumps(body).encode() if body is not None else None, headers=headers, method=method)
         with opener.open(value, timeout=8) as response:
             return json.load(response)
@@ -161,22 +163,42 @@ def main() -> None:
                     assert users["users"][0]["email"] == "packaging@example.invalid"
                     status = request("/api/interactions/status")
                     assert status["ready"] is False and status["mode"] == "disabled"
+                    # Exercise the real packaged launcher-to-API report contract,
+                    # including the casework-only provider interlock.
+                    runtime_deadline = time.monotonic() + 10
+                    while time.monotonic() < runtime_deadline:
+                        runtime = request("/api/runtime/health", site=session["current_site_id"])
+                        if runtime["monitoring_allowed"]:
+                            break
+                        time.sleep(0.1)
+                    assert runtime["supervised"] is True and runtime["monitoring_allowed"] is True
+                    assert runtime["product_available"] is False
+                    assert runtime["site_id"] == session["current_site_id"]
+                    assert len(runtime["context"]) == 64 and len(runtime["runtime_id"]) == 32
                     output = io.BytesIO()
                     Image.new("RGB", (64, 64), "blue").save(output, "JPEG")
                     frame = base64.b64encode(output.getvalue()).decode()
-                    job = request("/api/interactions/jobs", method="POST", csrf=session["csrf_token"],
-                                  site=session["current_site_id"], key=str(uuid4()), body={
+                    job_body = {
                         "run_id": str(uuid4()), "source_kind": "RECORDED_VIDEO", "source_label": "Synthetic packaging pixels",
                         "frames": [{"at_seconds": at, "jpeg_base64": frame} for at in [0, 2, 4]],
-                    })
+                    }
+                    try:
+                        request("/api/interactions/jobs", method="POST", csrf=session["csrf_token"],
+                                site=session["current_site_id"], key=str(uuid4()), body=job_body)
+                    except urllib.error.HTTPError as error:
+                        assert error.code == 409
+                    else:
+                        raise AssertionError("Supervised bundle accepted a live job without runtime context")
+                    job = request("/api/interactions/jobs", method="POST", csrf=session["csrf_token"],
+                                  site=session["current_site_id"], runtime=runtime["context"], key=str(uuid4()), body=job_body)
                     for _ in range(80):
-                        result = request("/api/interactions/jobs/" + job["id"])
+                        result = request("/api/interactions/jobs/" + job["id"], site=session["current_site_id"], runtime=runtime["context"])
                         if result["status"] not in {"pending", "running"}:
                             break
                         time.sleep(0.1)
                     assert result["status"] == "failed" and "result" not in result
                     request("/api/logout", method="POST", body={}, csrf=session["csrf_token"], site=session["current_site_id"])
-                    print("PASS packaged pilot: startup, assets, account tools, private owner setup, administration, no demo identity, named login, JPEG job and disabled provider; no physical camera/model acceptance")
+                    print("PASS packaged pilot: startup, assets, account tools, private owner setup, administration, no demo identity, named login, supervised runtime fence, JPEG job and disabled provider; no physical camera/model acceptance")
                     return
                 session = request("/api/login", method="POST", body={"email": "manager@harbour.demo", "password": "AisleDemo!2026"})
                 assert session["csrf_token"] and session["user"]["role"] == "MANAGER"

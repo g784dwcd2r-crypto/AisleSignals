@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { runtimeHealth } from "./runtimeHealth";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RefObject } from "react";
 import {
   BellRing,
   BrainCircuit,
   Check,
+  ClipboardList,
   RefreshCw,
   ScanEye,
   Square,
@@ -25,11 +27,14 @@ import {
 import type {
   InteractionReview,
   SampledFrame,
-  SavedInteraction,
+  SavedInteraction as SampledInteraction,
 } from "./interactionCapture";
 import "./interactionAnalysis.css";
 import CameraLayoutPicker from "./CameraLayoutPicker";
 import { validateCameraArea } from "./cameraGrid";
+import type { Incident } from "./types";
+
+type SavedInteraction = SampledInteraction & { incident_id?: string | null };
 
 type Session = {
   runId: string;
@@ -67,6 +72,7 @@ type Props = {
   sourceKey: string;
   onMonitorStatus: (status: InteractionMonitorStatus) => void;
   onCameraSelection?: (selection: SelectedCamera | null) => void;
+  onOpenInteractionCase?: (id: string) => Promise<void>;
 };
 export type SelectedCamera = {
   sourceKey: string;
@@ -151,7 +157,12 @@ export default function InteractionAnalysis({
   sourceKey,
   onMonitorStatus,
   onCameraSelection,
+  onOpenInteractionCase,
 }: Props) {
+  const health = useSyncExternalStore(
+    runtimeHealth.subscribe,
+    runtimeHealth.snapshot,
+  );
   const [enabled, setEnabled] = useState(false);
   const [automatic, setAutomatic] = useState(false);
   const [alarmEnabled, setAlarmEnabled] = useState(false);
@@ -202,6 +213,24 @@ export default function InteractionAnalysis({
   const [history, setHistory] = useState<SavedInteraction[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [mutation, setMutation] = useState<string | null>(null);
+  const [caseDraft, setCaseDraft] = useState<{
+    id: string;
+    version: number;
+    title: string;
+    notes: string;
+  } | null>(null);
+  const caseWrite = useRef(false);
+  const caseRequest = useRef<{
+    path: string;
+    payload: { expected_version: number; title: string; notes: string };
+    key: string;
+  } | null>(null);
+  function clearCaseRequest() {
+    const pending = caseRequest.current;
+    if (pending)
+      forgetAction(pending.path, "POST", pending.payload, pending.key);
+    caseRequest.current = null;
+  }
   const [highlight, setHighlight] = useState<string | null>(null);
   const [soundStatus, setSoundStatus] = useState(
     "Product interaction alarm is off.",
@@ -381,6 +410,21 @@ export default function InteractionAnalysis({
       setStatus("Analysis stopped. Pending results cannot trigger an alarm.");
     }
   }
+
+  useEffect(
+    () =>
+      runtimeHealth.onInterrupt((reason) => {
+        options.current.enabled = false;
+        options.current.automatic = false;
+        setEnabled(false);
+        setAutomatic(false);
+        cancel();
+        setStatus(
+          reason + " Enable analysis again after restarting detection.",
+        );
+      }),
+    [],
+  );
 
   function invalidateCameraLayout() {
     selectionCallback.current?.(null);
@@ -762,6 +806,67 @@ export default function InteractionAnalysis({
     }
   }
 
+  async function createCase() {
+    if (!caseDraft || caseWrite.current || mutation) return;
+    caseWrite.current = true;
+    setMutation(caseDraft.id);
+    setError("");
+    historyRevision.current++;
+    const path = `/interactions/${caseDraft.id}/case`;
+    const payload = {
+      expected_version: caseDraft.version,
+      title: caseDraft.title.trim(),
+      notes: caseDraft.notes.trim(),
+    };
+    if (
+      caseRequest.current &&
+      (caseRequest.current.path !== path ||
+        JSON.stringify(caseRequest.current.payload) !== JSON.stringify(payload))
+    )
+      clearCaseRequest();
+    caseRequest.current = {
+      path,
+      payload,
+      key: idempotencyKey(path, "POST", payload),
+    };
+    try {
+      const result = await api<{
+        incident: Incident;
+        interaction: SavedInteraction;
+      }>(path, "POST", payload);
+      clearCaseRequest();
+      if (!mounted.current) return;
+      historyRevision.current++;
+      setHistory((previous) =>
+        previous.map((item) =>
+          item.id === result.interaction.id ? result.interaction : item,
+        ),
+      );
+      setCaseDraft(null);
+      setStatus(
+        `Case ${result.incident.reference} created from your reviewed observation. It remains unassessed; no loss or criminality conclusion was added.`,
+      );
+    } catch (failure) {
+      if (!mounted.current) return;
+      if (
+        failure instanceof ApiError &&
+        [404, 409, 410].includes(failure.status)
+      ) {
+        clearCaseRequest();
+        setCaseDraft(null);
+        setError(
+          failure.status === 409
+            ? "This observation changed or already has a case. The latest record has been loaded; review it before choosing a new action."
+            : failureText(failure),
+        );
+        await refresh(true);
+      } else setError(failureText(failure));
+    } finally {
+      caseWrite.current = false;
+      if (mounted.current) setMutation(null);
+    }
+  }
+
   useEffect(() => {
     mounted.current = true;
     cancelRef.current = cancel;
@@ -878,6 +983,7 @@ export default function InteractionAnalysis({
     }, 250);
     return () => {
       mounted.current = false;
+      clearCaseRequest();
       selectionCallback.current?.(null);
       cancel();
       cancelRef.current = null;
@@ -992,10 +1098,14 @@ export default function InteractionAnalysis({
           <input
             type="checkbox"
             checked={enabled}
-            disabled={!model?.ready}
+            disabled={!model?.ready || !health.ready}
             onChange={(event) => {
               const next = event.target.checked;
-              if (next && !options.current.modelReady) return;
+              if (
+                next &&
+                (!options.current.modelReady || !runtimeHealth.canMonitor())
+              )
+                return;
               options.current.enabled = next;
               setEnabled(next);
               if (!next) {
@@ -1467,6 +1577,44 @@ export default function InteractionAnalysis({
                 </button>
               ),
             )}
+            {item.incident_id ? (
+              <button
+                type="button"
+                disabled={mutation !== null || !onOpenInteractionCase}
+                onClick={() => {
+                  cancel();
+                  void onOpenInteractionCase?.(item.incident_id!);
+                }}
+              >
+                <ClipboardList size={14} /> Open linked case
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={
+                  mutation !== null ||
+                  !item.review ||
+                  Date.parse(item.expires_at) <= Date.now()
+                }
+                onClick={() => {
+                  clearCaseRequest();
+                  setCaseDraft({
+                    id: item.id,
+                    version: item.version,
+                    title:
+                      `Review follow-up: ${interactionLabels[item.action]}`.slice(
+                        0,
+                        120,
+                      ),
+                    notes: "",
+                  });
+                  setError("");
+                }}
+              >
+                <ClipboardList size={14} /> Create case from reviewed
+                observation
+              </button>
+            )}
             <button
               type="button"
               className="interaction-delete"
@@ -1477,6 +1625,83 @@ export default function InteractionAnalysis({
               Delete result & frames
             </button>
           </div>
+          {!item.review && (
+            <p className="ld-hint">
+              Review the sampled frames and choose Useful, Normal shopping or
+              Unclear before creating a case.
+            </p>
+          )}
+          {item.incident_id && (
+            <p className="ld-hint">
+              The linked case retains its reviewed notes and source metadata.
+              Deleting this result removes the sampled images; it does not
+              delete the case.
+            </p>
+          )}
+          {caseDraft?.id === item.id && (
+            <form
+              className="interaction-case-form"
+              aria-label="Create case from observation"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createCase();
+              }}
+            >
+              <h4>Create a staff-reviewed case</h4>
+              <p>
+                The case starts unassessed. Write your own reviewed facts; the
+                model observation is retained separately as unverified source
+                context. Sampled images retain their original expiry and
+                deletion policy.
+              </p>
+              <label>
+                Case title
+                <input
+                  required
+                  minLength={3}
+                  maxLength={120}
+                  value={caseDraft.title}
+                  disabled={mutation !== null}
+                  onChange={(event) =>
+                    setCaseDraft({ ...caseDraft, title: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Staff reviewed notes
+                <textarea
+                  required
+                  minLength={5}
+                  maxLength={4000}
+                  rows={4}
+                  value={caseDraft.notes}
+                  disabled={mutation !== null}
+                  onChange={(event) =>
+                    setCaseDraft({ ...caseDraft, notes: event.target.value })
+                  }
+                />
+              </label>
+              <p>
+                Do not enter patient information or identifying allegations.
+                This action does not confirm theft or a financial loss.
+              </p>
+              <div className="interaction-review">
+                <button type="submit" disabled={mutation !== null}>
+                  Create reviewed case
+                </button>
+                <button
+                  type="button"
+                  disabled={mutation !== null}
+                  onClick={() => {
+                    clearCaseRequest();
+                    setCaseDraft(null);
+                  }}
+                >
+                  Cancel case creation
+                </button>
+              </div>
+            </form>
+          )}
           <small className="interaction-retention">
             {item.model} · Expires {new Date(item.expires_at).toLocaleString()}.
             Feedback records staff review; it does not automatically retrain the

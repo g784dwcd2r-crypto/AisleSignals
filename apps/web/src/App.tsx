@@ -1,3 +1,6 @@
+import { useSyncExternalStore } from "react";
+import { runtimeHealth, watchRuntimeHealth } from "./runtimeHealth";
+import type { RuntimeHealthReport } from "./runtimeHealth";
 import {
   createContext,
   useCallback,
@@ -47,6 +50,7 @@ import type {
   Candidate,
   Classification,
   Incident,
+  InteractionCaseSource,
   Outcome,
   Page,
   Runtime,
@@ -64,6 +68,7 @@ import {
   setSessionContext,
 } from "./api";
 import { date, getAlertCount, label, money } from "./format";
+import { safeInteractionFrameUrl } from "./interactionCapture";
 
 import { buildCasePatch, caseFields } from "./caseForm";
 import type { CaseForm } from "./caseForm";
@@ -412,6 +417,10 @@ function Login({
 }
 
 export default function App() {
+  const health = useSyncExternalStore(
+    runtimeHealth.subscribe,
+    runtimeHealth.snapshot,
+  );
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [startupError, setStartupError] = useState("");
@@ -444,6 +453,7 @@ export default function App() {
   const userRef = useRef<User | null>(null);
   userRef.current = user;
   const endSession = useCallback(() => {
+    runtimeHealth.end();
     authGeneration.current++;
     requestEpoch.current++;
     userRef.current = null;
@@ -484,6 +494,7 @@ export default function App() {
       }
       setData(result);
       setOffline(false);
+      return true;
     } catch (err) {
       if (
         !mounted.current ||
@@ -507,6 +518,7 @@ export default function App() {
     }
   }, [endSession]);
   const acceptSession = useCallback((result: Session) => {
+    runtimeHealth.begin(result.current_site_id);
     authGeneration.current++;
     requestEpoch.current++;
     userRef.current = result.user;
@@ -518,6 +530,18 @@ export default function App() {
     setError(null);
     setOffline(false);
   }, []);
+  useEffect(() => {
+    if (!session) return;
+    return watchRuntimeHealth(runtimeHealth, (signal) =>
+      api<RuntimeHealthReport>(
+        "/runtime/health",
+        "GET",
+        undefined,
+        false,
+        signal,
+      ),
+    );
+  }, [session]);
   useEffect(() => {
     onSessionInvalidated(() => {
       endSession();
@@ -693,6 +717,15 @@ export default function App() {
   function openIncident(id: string) {
     setIncidentId(id);
     setPage("incidents");
+  }
+  async function openInteractionCase(id: string) {
+    const generation = authGeneration.current;
+    if (
+      (await refresh()) &&
+      mounted.current &&
+      generation === authGeneration.current
+    )
+      openIncident(id);
   }
   const closeModal = useCallback(() => setModal(null), []);
   if (starting)
@@ -963,6 +996,16 @@ export default function App() {
                 </button>
               </div>
             )}
+            {health.active && (!health.ready || health.interrupted) && (
+              <div
+                className="notice amber"
+                role="status"
+                aria-label="Runtime monitoring health"
+              >
+                {health.message} Last loaded cases remain available; records may
+                need refreshing.
+              </div>
+            )}
             {offline && (
               <div className="notice amber">
                 Actions are paused. Last loaded records may be out of date;
@@ -1117,6 +1160,7 @@ export default function App() {
                   <LiveDetection
                     key={`${user.id}:${data.site.id}`}
                     branchName={data.site.name}
+                    onOpenInteractionCase={openInteractionCase}
                   />
                 )}
                 {page === "activity" && <ActivityPage data={data} />}
@@ -2044,6 +2088,118 @@ function Casebook({
     </>
   );
 }
+function CaseInteractionSource({ incident }: { incident: Incident }) {
+  const [evidence, setEvidence] = useState<{
+    source: InteractionCaseSource;
+    evidence_status: string;
+    frames: { at_seconds: number; url: string }[];
+  } | null>(null);
+  const [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
+  const [unavailableFrames, setUnavailableFrames] = useState<number[]>([]);
+  useEffect(() => {
+    let active = true;
+    setEvidence(null);
+    setError("");
+    setUnavailableFrames([]);
+    void api<typeof evidence>(`/incidents/${incident.id}/interaction-source`)
+      .then((result) => {
+        if (active) setEvidence(result);
+      })
+      .catch((failure) => {
+        if (active)
+          setError(
+            failure instanceof Error
+              ? failure.message
+              : "Unable to load the linked evidence.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [incident.id, revision]);
+  const source = incident.interaction_source!;
+  return (
+    <section
+      className="interaction-case-source"
+      aria-label="Linked product observation"
+    >
+      <h3>Linked product observation</h3>
+      <p>
+        {source.source_kind === "RECORDED_VIDEO"
+          ? "Recorded-video test"
+          : "Browser-provided CCTV source"}{" "}
+        · {source.source_label}
+      </p>
+      <p>
+        <strong>Unverified model context:</strong>{" "}
+        {label(source.observation.action)}. {source.observation.reason}
+      </p>
+      <p>
+        Staff review at linking: {label(source.review.outcome)} ·{" "}
+        {source.review.by} · {date(source.review.at)}
+      </p>
+      {source.review.note && <p>{source.review.note}</p>}
+      <p>
+        Linked by {source.linked_by.name} at {date(source.linked_at)}.
+        Observation version {source.version} · {source.observation.model}
+        {source.observation.prompt_version
+          ? ` · prompt ${source.observation.prompt_version}`
+          : ""}
+        .
+      </p>
+      <p>{source.retention_notice}</p>
+      <p role="status">
+        {error ||
+          (!evidence
+            ? "Checking source evidence…"
+            : evidence.evidence_status === "available"
+              ? `Sampled JPEGs available until ${date(source.expires_at)}.`
+              : `Sampled JPEGs ${evidence.evidence_status}. The case retains the source metadata and hashes; no images were preserved beyond their original policy.`)}
+      </p>
+      <button type="button" onClick={() => setRevision((value) => value + 1)}>
+        Refresh linked evidence
+      </button>
+      <div className="interaction-frames">
+        {evidence?.frames.map((frame, index) => {
+          const url = safeInteractionFrameUrl(frame.url, source.id);
+          return (
+            <figure key={`${revision}:${index}`}>
+              {url && !unavailableFrames.includes(index) ? (
+                <img
+                  src={url}
+                  alt={`Linked source frame ${index + 1} at ${frame.at_seconds.toFixed(2)} seconds`}
+                  onError={() =>
+                    setUnavailableFrames((previous) => [...previous, index])
+                  }
+                />
+              ) : (
+                <p>
+                  Frame unavailable or expired. Refresh the evidence status.
+                </p>
+              )}
+              <figcaption>
+                Frame {index + 1} · {frame.at_seconds.toFixed(2)}s
+              </figcaption>
+            </figure>
+          );
+        })}
+      </div>
+      <details>
+        <summary>Source identifiers and evidence hashes</summary>
+        <p>
+          Observation {source.id} · Run {source.run_id}
+        </p>
+        {source.frames.map((frame, index) => (
+          <p key={index}>
+            Frame {index + 1} · {frame.at_seconds.toFixed(2)}s · SHA-256{" "}
+            {frame.sha256}
+          </p>
+        ))}
+      </details>
+    </section>
+  );
+}
 function CaseDetail({
   incident: i,
   manager,
@@ -2237,6 +2393,9 @@ function CaseDetail({
       )}
       <div className="case-layout">
         <div className="case-main">
+          {i.interaction_source && (
+            <CaseInteractionSource key={i.id} incident={i} />
+          )}
           <Panel
             title="The reviewed facts"
             description="Separate what is established from what still needs review."
@@ -2258,7 +2417,11 @@ function CaseDetail({
                   <ArrowRight size={15} />
                 </button>
               ) : (
-                <span className="source-tag">Manual record</span>
+                <span className="source-tag">
+                  {i.interaction_source
+                    ? "Reviewed product observation"
+                    : "Manual record"}
+                </span>
               )
             }
           >

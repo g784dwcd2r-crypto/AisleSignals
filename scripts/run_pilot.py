@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -21,6 +21,11 @@ try:
 except ModuleNotFoundError:
     from scripts.pilot_preflight import (ConfigurationError, PilotConfig, default_data_dir, load_config,
         local_json, model_module, port_available, preflight, private_path_safe, source_root, write_report)
+
+try:
+    from service_health import HEALTH_INTERVAL_SECONDS, HealthState, probe_service
+except ModuleNotFoundError:
+    from scripts.service_health import HEALTH_INTERVAL_SECONDS, HealthState, probe_service
 
 
 def prepare_private_directory(path: Path) -> None:
@@ -85,9 +90,23 @@ def run_api_child() -> int:
     sys.path.insert(0, str(source_root()))
     import uvicorn
     from services.api.app import app
+    invalidate_prior_sessions(app.state.store)
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ["AISLESIGNALS_PORT"]),
                 access_log=False, proxy_headers=False, log_level="error")
     return 0
+
+
+def invalidate_prior_sessions(store) -> None:
+    """A supervised process generation never resumes a previous capture session.
+
+Deleting only session capabilities leaves accounts, casework and audit records
+intact. The API's recovery pass cancels interrupted jobs; their old session is
+also no longer authorised to submit, poll or publish results.
+"""
+    if store.mode != "pilot":
+        raise ConfigurationError("The supervised child requires a protected pilot workspace.")
+    with store.transaction() as conn:
+        conn.execute("DELETE FROM sessions")
 
 
 def present_first_owner_setup(config: PilotConfig, *, reporter=print) -> None:
@@ -122,6 +141,9 @@ class OwnedService:
     restarts: int = 0
     token: str = ""
     disabled: bool = False
+    health: HealthState = field(default_factory=HealthState)
+    last_checked_at: str | None = None
+    dependency_restarts: int = 0
 
 
 class Supervisor:
@@ -132,21 +154,32 @@ class Supervisor:
         self.reporter = reporter
         self.services: list[OwnedService] = []
         self.rearm_required = False
+        self.resume_detected = False
+        self.runtime_id = secrets.token_hex(16)
+        self.recovery_generation = 0
         self.last_state = "STARTING"
         self.last_wall = time.time()
         self.last_monotonic = time.monotonic()
         self.windows_job = None
         self.stopped = False
 
-    def status(self, state: str, detail: str) -> None:
+    def status(self, state: str, detail: str, *, announce: bool = True) -> None:
         self.last_state = state
         write_report(self.config.data_dir / "runtime-status.json", {
             "schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+            "runtime_id": self.runtime_id, "recovery_generation": self.recovery_generation,
             "state": state, "detail": detail, "camera_monitoring": "NOT_VERIFIED",
             "rearm_required": self.rearm_required,
             "services": [{"name": s.name, "running": bool(s.process and s.process.poll() is None),
-                          "restarts": s.restarts, "disabled": s.disabled} for s in self.services]})
-        self.reporter(detail)
+                          "restarts": s.restarts, "dependency_restarts": s.dependency_restarts,
+                          "disabled": s.disabled, "health": s.health.state,
+                          "consecutive_health_failures": s.health.consecutive_failures,
+                          "last_checked_at": s.last_checked_at,
+                          "probe_reason": s.health.last_result.reason if s.health.last_result else None,
+                          "probe_elapsed_ms": s.health.last_result.elapsed_ms if s.health.last_result else None}
+                         for s in self.services]})
+        if announce:
+            self.reporter(detail)
 
     def resumed(self, *, wall=None, monotonic=None) -> bool:
         wall = time.time() if wall is None else wall
@@ -156,10 +189,20 @@ class Supervisor:
         self.last_wall, self.last_monotonic = wall, monotonic
         if elapsed > 15 or gap > 15 or elapsed < 0:
             self.rearm_required = True
-        return self.rearm_required
+            self.resume_detected = True
+        return self.resume_detected
+
+    def check_health(self, service: OwnedService, *, timeout=1.0) -> bool:
+        result = probe_service(service.name, service.port, service.ready_path, service.token,
+                               timeout=timeout, stop_event=self.stop_event)
+        service.last_checked_at = datetime.now(timezone.utc).isoformat()
+        service.health.record(result)
+        return result.state == "READY"
 
     def start(self, service: OwnedService) -> bool:
-        if self.stopped or self.stop_event.is_set() or not port_available(service.port):
+        if (self.stopped or self.stop_event.is_set()
+                or (service.process is not None and service.process.poll() is None)
+                or not port_available(service.port)):
             return False
         try:
             if os.name == "nt":
@@ -178,32 +221,31 @@ class Supervisor:
             return False
         if service not in self.services:
             self.services.append(service)
+        service.health = HealthState()
         deadline = time.monotonic() + service.timeout
         while time.monotonic() < deadline and not self.stop_event.is_set():
             if self.resumed() or service.process.poll() is not None:
                 break
-            health = local_json(service.port, service.ready_path, service.token)
-            if service.process.poll() is None and isinstance(health, dict):
-                if service.name == "api" and health.get("status") == "ok" and health.get("mode") in {"pilot", "supervised-pilot", "local-pilot"}:
-                    return True
-                models = health.get("data")
-                if service.name == "vision" and isinstance(models, list) and any(isinstance(m, dict) and m.get("id") == "qwen3-vl:4b" for m in models):
-                    return True
+            ready = self.check_health(service, timeout=min(1.0, max(0.001, deadline - time.monotonic())))
+            if self.resumed() or self.stop_event.is_set():
+                break
+            if service.process.poll() is None and ready:
+                return True
             self.stop_event.wait(0.2)
         self.stop_service(service)
         return False
 
     @staticmethod
-    def stop_service(service: OwnedService) -> None:
+    def stop_service(service: OwnedService, *, abort: bool = False) -> None:
         child = service.process
         if child is None:
             return
         if child.poll() is None:
             try:
                 if os.name != "nt":
-                    os.killpg(child.pid, signal.SIGTERM)
+                    os.killpg(child.pid, signal.SIGKILL if abort else signal.SIGTERM)
                 else:
-                    child.terminate()
+                    child.kill() if abort else child.terminate()
                 child.wait(timeout=5)
             except ProcessLookupError:
                 pass
@@ -219,12 +261,29 @@ class Supervisor:
         else:
             child.wait()
         service.process = None
+        service.health.state = "STOPPED"
 
     def shutdown(self) -> None:
         self.stopped = True
+        self.stop_event.set()
+        final_state = ("FAILED" if self.last_state == "FAILED" else
+                       "REARM_REQUIRED" if self.rearm_required else "STOPPED")
+        report_failed = False
+        try:
+            # Invalidate the API/browser fence before allowing any graceful
+            # HTTP drain. REARM_REQUIRED alone would still permit monitoring
+            # while the previous service probes remained fresh and READY.
+            self.status("STOPPED", "Monitoring stopped. Stopping owned services.", announce=False)
+        except (OSError, ValueError):
+            # If the fence cannot be published, do not allow the API to drain
+            # late results against a still-fresh READY file.
+            report_failed = True
+        finally:
+            # main's final report must retain the actual failure/interruption.
+            self.last_state = final_state
         try:
             for service in reversed(self.services):
-                self.stop_service(service)
+                self.stop_service(service, abort=report_failed and service.name == "api")
         finally:
             # On Windows the OS also closes this non-inherited handle if the
             # launcher is killed abruptly, terminating only its contained tree.
@@ -232,50 +291,101 @@ class Supervisor:
                 self.windows_job.close()
 
     def restart_failed(self, service: OwnedService) -> bool:
-        if service.disabled or service.restarts >= self.config.restart_limit:
+        if self.stopped or self.stop_event.is_set() or service.disabled or service.restarts >= self.config.restart_limit:
             return False
+        self.rearm_required = True
         self.stop_service(service)
         service.restarts += 1
-        self.status("RECOVERING", f"The {service.name} service stopped. Attempting bounded recovery {service.restarts}.")
+        self.status("RECOVERING", f"The {service.name} service is unavailable. Attempting bounded recovery {service.restarts}; monitoring requires a fresh sign-in and source selection.")
         if self.stop_event.wait(min(2 ** service.restarts, 8)) or self.resumed():
             return False
         return self.start(service)
 
+    def recover(self, service: OwnedService) -> int | None:
+        """Recover owned services only; never preserve a model's old API jobs."""
+        if self.stopped or self.stop_event.is_set():
+            return 0
+        if service.disabled:
+            return None
+        if self.resumed():
+            return 3
+        self.rearm_required = True
+        self.recovery_generation += 1
+        self.status("RECOVERING", f"The {service.name} service failed. Discard the interrupted monitoring session; owned recovery is starting.")
+        api = next((item for item in self.services if item.name == "api"), None)
+        if service.name == "vision" and api is not None:
+            # Stop the consumer before the provider, including requests which
+            # were waiting when health failed. Its fresh child revokes sessions.
+            self.stop_service(api, abort=True)
+        # Fault recovery must not give the API a graceful HTTP drain interval
+        # during which an interrupted model result could still be published.
+        self.stop_service(service, abort=service.name == "api")
+        recovered = False
+        while service.restarts < self.config.restart_limit and not self.stop_event.is_set():
+            if self.restart_failed(service):
+                recovered = True
+                break
+            if self.resume_detected:
+                return 3
+        if self.stop_event.is_set():
+            return 0
+        if not recovered and service.name == "api":
+            self.status("FAILED", "Application recovery failed. Restart the launcher after checking the local installation.")
+            return 1
+        if not recovered:
+            service.disabled = True
+            # Do not let an unrelated later listener receive frames, even with
+            # the old token. Disabled analysis is an immutable child setting.
+            self.env["AISLESIGNALS_VISION_DISABLED"] = "1"
+            self.env.pop("AISLESIGNALS_VISION_TOKEN_FILE", None)
+            self.env["AISLESIGNALS_VISION_TOKEN"] = secrets.token_urlsafe(48)
+        if service.name == "vision" and api is not None:
+            api.dependency_restarts += 1
+            if not self.start(api):
+                if self.resume_detected:
+                    return 3
+                if self.stop_event.is_set():
+                    return 0
+                self.status("FAILED", "The model was interrupted and the application could not safely restart. Reopen the launcher.")
+                return 1
+        if recovered:
+            self.status("REARM_REQUIRED", f"The {service.name} service recovered. Sign in again, select and verify the CCTV source, then explicitly enable analysis and test/arm its sound.")
+        else:
+            self.status("DEGRADED", "Local vision recovery failed. Sign in again for casework; product interaction analysis is unavailable.")
+        return None
+
     def monitor(self) -> int:
-        while not self.stop_event.wait(1):
+        while not self.stop_event.wait(HEALTH_INTERVAL_SECONDS):
             if self.resumed():
                 self.status("REARM_REQUIRED", "Sleep, clock change or a long scheduling pause detected. Monitoring must be restarted and its source explicitly reselected.")
                 return 3
             for service in self.services:
-                if service.disabled or service.process is None or service.process.poll() is None:
+                if self.stop_event.is_set():
+                    return 0
+                if service.disabled:
                     continue
-                recovered = False
-                while service.restarts < self.config.restart_limit and not self.stop_event.is_set():
-                    if self.restart_failed(service):
-                        recovered = True
-                        break
-                    if self.rearm_required:
+                alive = service.process is not None and service.process.poll() is None
+                if alive:
+                    self.check_health(service)
+                    if self.resumed():
+                        self.status("REARM_REQUIRED", "The laptop paused during a service check. Reopen the launcher and select the source again.")
                         return 3
-                if recovered:
-                    self.status("SERVICES_READY", f"The {service.name} service recovered. Check the browser and explicitly confirm source readiness; camera monitoring is not verified by the launcher.")
-                elif service.name == "api":
-                    self.status("FAILED", "Application recovery failed. Restart the launcher after checking the local installation.")
-                    return 1
+                    if self.stop_event.is_set():
+                        return 0
+                    if service.health.state != "UNHEALTHY":
+                        continue
                 else:
-                    service.disabled = True
-                    # The already running API has an immutable environment.
-                    # Restart our API with an explicit provider interlock so a
-                    # later unrelated service on the model port cannot receive frames.
-                    self.env["AISLESIGNALS_VISION_DISABLED"] = "1"
-                    self.env.pop("AISLESIGNALS_VISION_TOKEN_FILE", None)
-                    self.env["AISLESIGNALS_VISION_TOKEN"] = secrets.token_urlsafe(48)
-                    api = next((item for item in self.services if item.name == "api"), None)
-                    if api is not None:
-                        self.stop_service(api)
-                        if not self.start(api):
-                            self.status("FAILED", "The model failed and casework could not restart with analysis disabled.")
-                            return 1
-                    self.status("DEGRADED", "Local vision recovery failed. Casework remains available; product interaction analysis is unavailable.")
+                    service.health.state = "EXITED"
+                outcome = self.recover(service)
+                if outcome is not None:
+                    return outcome
+            suspect = any(item.health.state == "SUSPECT" for item in self.services if not item.disabled)
+            state = "DEGRADED" if suspect or any(s.disabled for s in self.services) else "REARM_REQUIRED" if self.rearm_required else "SERVICES_READY"
+            detail = ("A local service missed a health check. Monitoring health is uncertain; persistent failures trigger bounded recovery."
+                      if suspect else "Casework is available; local vision remains disabled. Sign in and restart the launcher after correcting model setup to re-enable it."
+                      if any(s.disabled for s in self.services) else "Services checked. Sign in and explicitly verify/rearm monitoring after any recovery."
+                      if self.rearm_required else "Local service endpoints are responsive. Camera monitoring and model inference are not verified by this check.")
+            self.status(state, detail, announce=state != self.last_state)
         return 0
 
 
@@ -407,7 +517,7 @@ def main() -> int:
         if supervisor is not None:
             supervisor.shutdown()
             try:
-                supervisor.status("REARM_REQUIRED" if supervisor.rearm_required else "FAILED" if supervisor.last_state == "FAILED" else "STOPPED", "Launcher stopped its owned services. Reopen it and explicitly select the CCTV source to resume.")
+                supervisor.status("FAILED" if supervisor.last_state == "FAILED" else "REARM_REQUIRED" if supervisor.rearm_required else "STOPPED", "Launcher stopped its owned services. Reopen it and explicitly select the CCTV source to resume.")
             except OSError:
                 pass
 
