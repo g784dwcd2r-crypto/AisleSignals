@@ -15,13 +15,14 @@ Prototype 0.1 — 13 September 2026. Product owner: Jawahir Q.
 | Accessibility | Checked on three core browser views | Automated checks pass for login, overview and review; captions enlarged and contrast improved; not a complete accessibility certification |
 | Pricing | Preserved | EUR 60 monthly per branch; owner-managed record only, no charging |
 | Mari Mina Pharmacy profile | Implemented | Separate demo organisation/branch and manager sign-in; initially empty records; additive startup preserves existing workspaces |
+| Local video-file test | Implemented | MP4/WebM playback, bounded local frame-change scan, timestamp review and JSON summary; no upload, trained AI, live alarm or case creation. [Guide](docs/prototype/video-test.md) |
 | Actual camera/detector | Not connected | Existing device/interface inventory and authorised software integration still required |
 | Browser/app/separate-monitor CCTV paths | Specified for next release | [Automatic monitoring addendum](docs/prototype/cctv-monitoring.md) includes permitted screen capture, recorder access, freshness and resource limits; no live adapter implemented yet |
 | Cloud AI / real evidence lifecycle | Not implemented | Provider evaluation, budgets, encrypted capture/storage, deletion/holds and rights workflows remain production work |
 | Signed installers / pharmacy laptop acceptance | Not completed | Windows and Mac bundles are developer prototypes; exact pharmacy hardware/OS versions remain unqualified |
 | Production hosting and alarm control | Not deployed/connected | No cloud accounts, physical outputs or customer data activated |
 
-Local verification: **63 Python tests + 23 frontend unit tests + 10 browser tests passed**, plus 49 companion subtests and a packaged-executable smoke check. See [verification evidence](docs/prototype/verification.md).
+Latest local verification: **65 Python tests + 37 frontend unit tests + 15 browser tests passed**, plus 49 companion subtests and a packaged-executable smoke check. See [verification evidence](docs/prototype/verification.md).
 
 All six remote jobs also passed for source commit `89d1dfb7c013d40db4162ecac132e0f4c183e20a`: Python on Linux, Windows and Mac; interface build/browser journeys; Windows and Mac executable bundles. The local Mac archive was extracted and its executable smoke-tested again. The subsequent documentation update records these results and adds the interface screenshot; it does not change executable source.
 

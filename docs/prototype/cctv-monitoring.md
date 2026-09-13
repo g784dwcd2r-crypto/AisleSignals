@@ -4,6 +4,8 @@ Product owner: Jawahir Q. · Direction clarified 13 September 2026.
 
 **Status: next-release implementation specification. These video adapters and detectors are not implemented by prototype 0.1.** The working prototype currently supplies the pharmacy workflow, scoped records and simulated observations. Its camera-readiness command requests metadata only and does not acquire video. Connecting an input, decoding frames and detecting a useful event are three distinct milestones.
 
+Subsequent implemented slice: the [local video-file test](video-test.md) loads MP4/WebM recordings and scans for visual activity entirely in the browser. It is deliberately separate from live-source ingestion and trained AI; its results do not create incidents or live alerts.
+
 ## Product behaviour
 
 After an authorised setup, the software on the pharmacy's existing Windows or Mac laptop should acquire supported CCTV video, analyse qualified camera views automatically, create reviewable observations, attach the permitted event context and notify staff. Staff should not need to create each observation, press a simulator button or watch all cameras continuously. Staff determine what actually happened; an automated observation does not establish theft.

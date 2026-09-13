@@ -119,5 +119,6 @@ export type Page =
   | "incidents"
   | "assistance"
   | "cameras"
+  | "video-test"
   | "activity"
   | "settings";

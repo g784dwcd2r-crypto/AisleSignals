@@ -48,4 +48,6 @@ GET /api/health -> `{status:'ok',mode:'synthetic-prototype',version:'0.1.0'}` no
 
 ## First prototype boundaries
 
+The **Video test** page is a separate browser-local feature: user-selected MP4/WebM playback, deterministic frame-change analysis and optional local JSON summary. It adds no API routes or persisted records and never sends file content, filename or results to the server. The CSP allows local blob media. See [video-test.md](video-test.md) for limits, lifecycle and accuracy boundaries.
+
 Implements useful end-to-end synthetic review and incident management. No real video surveillance, automatic person recognition, physical output adapter, cloud AI or automatic billing. Laptop companion work in this release is an explicit read-only readiness/probe utility, not an always-on detector or a signed installed service. Both OS build/check workflows provided; actual Windows and pharmacy Mac acceptance remains pending. Declared production gaps must be listed in docs/prototype/README.md and STATUS.md, without falsely marking the full handover requirements complete.

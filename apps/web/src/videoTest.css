@@ -1,0 +1,227 @@
+.video-test-page {
+  display: grid;
+  gap: 22px;
+}
+.video-test-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.video-test-grid > .panel {
+  min-width: 0;
+  overflow: hidden;
+}
+.video-test-page .panel-header {
+  padding: 22px;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.video-test-page .panel-header p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.video-file-picker {
+  margin: 20px 22px;
+  padding: 20px;
+  border: 1px dashed #9bb5a8;
+  border-radius: 9px;
+  background: #f7faf5;
+}
+.video-file-picker.dragging {
+  background: #e7f1e8;
+  border-color: var(--teal-dark);
+}
+.video-file-picker input {
+  margin-top: 10px;
+  max-width: 100%;
+}
+.video-file-picker p {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.video-file-summary {
+  padding: 0 22px 17px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.video-file-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.video-file-summary strong {
+  overflow-wrap: anywhere;
+}
+.video-file-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.video-preview-wrap {
+  position: relative;
+  background: #102b2a;
+  margin: 0 22px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.video-preview-wrap video {
+  display: block;
+  width: 100%;
+  max-height: 430px;
+  min-height: 170px;
+  object-fit: contain;
+}
+.video-playback-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  border-radius: 4px;
+  background: #f4d578;
+  color: #183a30;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  padding: 5px 8px;
+  pointer-events: none;
+}
+.video-test-actions {
+  padding: 18px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.video-test-actions > span {
+  font-size: 12px;
+}
+.video-test-progress {
+  padding: 18px 22px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 9px;
+  background: #f8faf7;
+}
+.video-test-progress > span,
+.video-test-progress p {
+  font-size: 12px;
+  color: var(--muted);
+}
+.video-test-progress progress {
+  width: 100%;
+  accent-color: var(--teal);
+}
+.video-empty {
+  padding: 35px 25px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+}
+.video-empty h3 {
+  color: var(--navy);
+}
+.video-empty p {
+  max-width: 390px;
+  font-size: 13px;
+}
+.video-test-error {
+  margin: 0 22px 18px;
+  padding: 13px 15px;
+  border-radius: 6px;
+  background: #fff0ed;
+  color: #893e2d;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.video-results-count {
+  margin: 18px 22px 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.video-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 390px;
+  overflow-y: auto;
+}
+.video-timeline-list li + li {
+  border-top: 1px solid var(--border);
+}
+.video-timeline-list button {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 18px 22px;
+  border: none;
+  background: transparent;
+}
+.video-timeline-list button:hover {
+  background: #edf5ec;
+}
+.video-timeline-list button > div {
+  display: grid;
+  gap: 7px;
+}
+.video-timeline-list button span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.video-report-action {
+  padding: 18px 22px;
+}
+.video-method-note {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  background: #f2f6ef;
+  padding: 21px;
+  border-top: 1px solid var(--border);
+}
+.video-method-note p {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 9px;
+}
+.video-result-note {
+  padding: 10px 22px;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 1100px) {
+  .video-test-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .video-file-picker {
+    margin: 16px;
+    padding: 14px;
+  }
+  .video-preview-wrap {
+    margin: 0 16px;
+  }
+  .video-test-page .panel-header {
+    padding: 18px 16px;
+  }
+  .video-test-actions,
+  .video-file-summary,
+  .video-test-progress {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .video-playback-tag {
+    font-size: 12px;
+  }
+}

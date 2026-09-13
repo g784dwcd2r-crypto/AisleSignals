@@ -34,6 +34,7 @@ After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the sour
 
 ## What you can do
 
+- Load an MP4/WebM in **Video test**, play it locally, scan for visual changes and jump to activity timestamps. The recording stays in the browser; this is a playback test, not AI theft detection or a live alert. See the [video test guide](docs/prototype/video-test.md).
 - Review, acknowledge and dismiss a synthetic observation, or open exactly one case with a recorded reason.
 - Create a manual case independently of the camera and shift status.
 - Record classification, outcome, manager-controlled values and named follow-up tasks.
@@ -74,7 +75,7 @@ Run `npm ci --prefix apps/web` first if the setup script has not installed inter
 
 ## Scope and next release
 
-The clarified core product is **automatic CCTV monitoring** across a browser viewer, a desktop CCTV app or an existing recorder serving a separate monitor. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines all three setup paths, direct-stream preference, authorised window-capture fallback, live-versus-playback guards and economical local AI. These inputs/detectors are next-release work; the current review queue remains synthetic.
+The clarified core product is **automatic CCTV monitoring** across a browser viewer, a desktop CCTV app or an existing recorder serving a separate monitor. The [CCTV monitoring specification](docs/prototype/cctv-monitoring.md) defines all three setup paths, direct-stream preference, authorised window-capture fallback, live-versus-playback guards and economical local AI. Live adapters and trained detectors are next-release work. The local video-file activity test is implemented separately; the pharmacy review queue remains synthetic.
 
 The prototype uses local SQLite and public demo accounts to make the workflow testable now. Production remains the documented React/FastAPI/PostgreSQL design with managed MFA, qualified camera integration, encrypted evidence lifecycle, signed Windows/Mac companion packages and actual site acceptance. The prototype's `/api` is a documented implementation slice, not completion of the full planned `/v1` contract.
 

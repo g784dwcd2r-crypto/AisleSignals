@@ -67,3 +67,9 @@ The subsequent documentation-only commit adds this observed evidence and a scree
 ## Mari Mina Pharmacy profile update
 
 The named profile addition passed the 65-test Python suite (26 API, 39 companion, plus 49 subtests), the production interface build and the 10 existing browser journeys. Two added API checks verify its empty initial records, cross-pharmacy access rejection, and concurrent/repeated upgrades of the older database while preserving casework, shift state and credential hashes. An independent read-only agent review found no blocking issues. The earlier six-job run above records the initial prototype source; the profile commit triggers a fresh workflow.
+
+## Local video-file test update
+
+Root reproduced **65 Python tests, 37 frontend unit tests and 15 browser journeys**, all passing (117 tests plus 49 Python subtests). This includes 14 visual-activity helper checks and five real-video browser journeys. The new browser checks cover decoded activity timestamps, preview seeking, local JSON download, no video uploads or incident writes, invalid-file recovery, held-seek cancellation, discarded late results, actual pause/source removal and blob revocation on navigation/sign-out, narrow layout and automated accessibility. The production TypeScript/build and frontend formatting checks also passed. No dependency or paid model was added. The original synthetic WebM is 6 seconds, 320 × 180, no audio; it is not pharmacy footage or an AI benchmark.
+
+The Mac executable was rebuilt for this UI update. Existing historical GitHub run references above describe their own source commits; this feature's source push triggers a new platform workflow.

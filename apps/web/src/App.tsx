@@ -12,6 +12,7 @@ import {
   CircleHelp,
   ClipboardList,
   FileText,
+  Film,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -54,6 +55,7 @@ import { date, getAlertCount, label, money } from "./format";
 
 import { buildCasePatch, caseFields } from "./caseForm";
 import type { CaseForm } from "./caseForm";
+import VideoTest from "./VideoTest";
 
 type ActionOptions = {
   method?: string;
@@ -72,6 +74,7 @@ const navItems: { id: Page; name: string; icon: typeof Activity }[] = [
   { id: "incidents", name: "Casebook", icon: ClipboardList },
   { id: "assistance", name: "Team assistance", icon: Bell },
   { id: "cameras", name: "Camera readiness", icon: Video },
+  { id: "video-test", name: "Video test", icon: Film },
   { id: "activity", name: "Activity log", icon: Activity },
   { id: "settings", name: "Branch settings", icon: Settings2 },
 ];
@@ -693,7 +696,9 @@ export default function App() {
               <span />
               {offline
                 ? "Connection lost · coverage unknown"
-                : "Synthetic data · no live monitoring"}
+                : page === "video-test"
+                  ? "Playback test · no live monitoring"
+                  : "Synthetic data · no live monitoring"}
             </span>
             <button
               className="icon-button"
@@ -780,6 +785,8 @@ export default function App() {
                       "Ask a colleague for support and track their response.",
                     cameras:
                       "Understand the connection before relying on the coverage.",
+                    "video-test":
+                      "Try a recording locally and review a timeline of visual activity.",
                     activity:
                       "A traceable record of actions within this pharmacy branch.",
                     settings:
@@ -789,7 +796,7 @@ export default function App() {
               </p>
             </div>
             <div className="page-actions">
-              {page !== "assistance" && (
+              {page !== "assistance" && page !== "video-test" && (
                 <button
                   className="button secondary"
                   disabled={disabled}
@@ -878,13 +885,20 @@ export default function App() {
                   simulator={() => setModal("simulator")}
                 />
               )}
+              {page === "video-test" && (
+                <VideoTest
+                  key={`${user.id}:${data.site.id}`}
+                  branchName={data.site.name}
+                />
+              )}
               {page === "activity" && <ActivityPage data={data} />}
               {page === "settings" && <Settings data={data} />}
               <div className="workspace-footnote">
                 <ShieldCheck size={14} />
                 <span>
-                  Pharmacy-only prototype · Synthetic records · All displayed
-                  times Europe/Dublin
+                  {page === "video-test"
+                    ? "Local recording test · Timestamps are offsets within the video · No live monitoring"
+                    : "Pharmacy-only prototype · Synthetic records · All displayed times Europe/Dublin"}
                 </span>
                 <span className="footnote-version">AisleSignals 0.1</span>
               </div>
