@@ -1,53 +1,75 @@
 # AisleSignals
 
-Pharmacy incident review, evidence and staff-assistance software for Ireland.
+A working first prototype for pharmacy incident review, evidence context and staff assistance. Built for Jawahir Q. by Codex and specialist agents.
 
-Product owner: **Jawahir Q.** Implementation: **Codex and bounded specialist agents**. Confirmed price: **EUR 60 per month for one pharmacy branch**. Additional branches require separately agreed subscriptions.
+**€60 per pharmacy branch per month. Existing Windows or Mac laptop. No hardware purchases.**
 
-**Deployment constraint: no new hardware.** Use the pharmacy's existing laptop and existing supported cameras/recorder interfaces. The first pilot includes one Windows laptop and one Mac. Monitoring requires the laptop to remain awake; private sounds use its existing speakers.
+This version runs locally and uses clearly labelled synthetic observations. It supports a complete review-to-closed-case journey, persisted records, two isolated demonstration organisations and manager/reviewer permissions. Real camera detection, cloud AI and external alarms are future integrations; the interface does not represent them as active.
 
-## Current status
+## Start the prototype
 
-This repository starts with a validated implementation design and engineering handover. The application, live detector, production deployment and physical installations are not implemented by this initial commit. Acceptance cases are explicitly marked `NOT_RUN`.
-
-The build follows six acceptance-based work packages. There is no assumed hired engineering team, fixed twelve-week coding promise or unattended agent support service.
-
-## Read the plan
-
-- [Implementation and build plan](docs/handover/implementation-plan.md)
-- [Formatted PDF](docs/handover/aislesignals-implementation-plan-jawahir-q.pdf)
-- [Handover index](docs/handover/README.md)
-- [Confirmed business baseline](docs/handover/business-baseline.json)
-- [Existing laptop deployment](docs/handover/existing-laptop-design.md)
-- [EUR 60 branch economics](docs/handover/sixty-euro-economics.md)
-- [Functional requirements](docs/handover/requirements.md)
-- [OpenAPI contract](docs/handover/openapi.json)
-- [Data dictionary](docs/handover/data-dictionary.md)
-- [Delivery backlog](docs/handover/delivery-backlog.json)
-- [Planned acceptance tests](docs/handover/acceptance-test-plan.json)
-- [Validation actually performed](docs/handover/validation-report.json)
-
-## First implementation milestone
-
-Create a reproducible local workspace and synthetic event simulator, then build named accounts, tenant/site permissions and one persistent alert-to-reviewed-incident journey. The demonstration must include benign dismissal before case creation, evidence playback, conflicting reviews and a denied cross-tenant request. Live camera integration is accepted separately using actual supported interfaces and qualified views.
-
-Planned stack: React/TypeScript, FastAPI, PostgreSQL, durable background workers, private evidence storage and a companion installed on the existing pharmacy laptop. The detector is a replaceable integration; a generic object model is not a validated theft detector.
-
-## Validate the handover
-
-Use Python 3.12 or a compatible tested version in a disposable environment:
+From a checkout with Python 3.12 and Node.js 24 LTS:
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r docs/handover/tools/validation-requirements.txt
-python docs/handover/tools/validate_design.py
+python3 scripts/setup_prototype.py
+.venv/bin/python scripts/run_prototype.py
 ```
 
-This checks design artifacts and arithmetic. It does not test a running application, camera or sounder.
+Windows:
 
-## Release boundaries
+```powershell
+py -3.12 scripts\setup_prototype.py
+.venv\Scripts\python.exe scripts\run_prototype.py
+```
 
-Live operation requires site-specific processing records, exact camera and supplier access, trained reviewers and actual acceptance evidence. Existing laptop OS versions and capacity, permitted software onboarding, detector fees, tax treatment and human operational coverage remain discovery inputs. Subscription records begin as owner-managed billing; this repository does not charge customers.
+Open **http://127.0.0.1:8765**. Sign in as **manager@harbour.demo** with **AisleDemo!2026**. These are deliberately public credentials for synthetic data only. Try **reviewer@harbour.demo** for restricted permissions, or **manager@liffey.demo** for the other organisation.
 
-There is no automated facial recognition, shared offender watchlist, person-level criminality scoring, autonomous clinical action or door-lock control. Optional sounder commands require a separate commissioned human-authorised path. Product AI is bounded report drafting, with a proposed EUR 5 monthly allowance per subscribed branch and a manual fallback.
+After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the source installation. Separate self-contained development bundles are built by the [GitHub workflow](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/workflows/prototype.yml) when all required checks pass; they contain the runtime and do not need Node/Python on the recipient laptop. Bundles are unsigned prototypes and are labelled by the actual platform/architecture. They are not commissioned pharmacy installers.
+
+## What you can do
+
+- Review, acknowledge and dismiss a synthetic observation, or open exactly one case with a recorded reason.
+- Create a manual case independently of the camera and shift status.
+- Record classification, outcome, manager-controlled values and named follow-up tasks.
+- Close a resolved case, reopen with a manager's reason, and retain its activity history.
+- Generate and approve a zero-cost factual **local template**, then download a synthetic JSON case record with a SHA256 integrity digest.
+- Request assistance and distinguish acknowledgement from arrival.
+- Exercise missing media, historical observations, frozen/offline sources and recovery using the manager simulator.
+- Inspect branch pricing, the proposed €5 AI budget, camera-readiness limitations and scoped audit activity.
+
+Writes are transactional and versioned. Server-side checks enforce site/organisation access, roles, session expiry, CSRF, origin/host restrictions, input validation and duplicate-request protection. The browser shows errors, preserves unsaved input during a connection failure and requires explicit conflict reconciliation.
+
+## Build and verify
+
+```sh
+.venv/bin/python -m pytest tests/api tests/companion -q
+npm ci
+npm run build
+npm run test:web
+npx playwright install chromium
+AISLESIGNALS_TEST_PYTHON=.venv/bin/python npm run test:e2e
+```
+
+Run `npm ci --prefix apps/web` first if the setup script has not installed interface dependencies. On PowerShell, set `$env:AISLESIGNALS_TEST_PYTHON='.venv/Scripts/python.exe'` before the browser test command. Tests use separate temporary data; they do not reset the demonstration workspace.
+
+[Verification results](docs/prototype/verification.md) distinguish checks actually run from production requirements still planned. [Implementation status](STATUS.md) records the release boundary.
+
+## Repository map
+
+| Path | Purpose |
+|---|---|
+| `apps/web` | React/TypeScript pharmacy interface and UI helper tests |
+| `services/api` | FastAPI, local SQLite persistence, scoped sessions and workflow rules |
+| `services/companion` | Explicit existing-laptop/read-only camera readiness utility |
+| `tests/api`, `tests/companion`, `tests/e2e` | API, network-boundary and real-browser checks |
+| `scripts`, `packaging` | Local launch, repeatable setup, executable packaging and bundle smoke checks |
+| `docs/prototype` | Implemented contract, setup, threat model, scenario coverage and verification |
+| `docs/handover` | Full production design: 67 requirements, planned API/data model and build roadmap |
+
+## Scope and next release
+
+The prototype uses local SQLite and public demo accounts to make the workflow testable now. Production remains the documented React/FastAPI/PostgreSQL design with managed MFA, qualified camera integration, encrypted evidence lifecycle, signed Windows/Mac companion packages and actual site acceptance. The prototype's `/api` is a documented implementation slice, not completion of the full planned `/v1` contract.
+
+Monitoring on the existing laptop will require it to remain powered on and awake. Camera/recorder interfaces must be qualified; universal compatibility is not promised. There is no automatic facial recognition, shared watchlist, person-level criminality prediction, clinical decision or door-lock control. This build makes no paid model calls or customer charges.
+
+Read the [prototype guide](docs/prototype/README.md), [laptop readiness guide](docs/prototype/companion.md), [functional/technical plan](docs/handover/implementation-plan.md), [formatted plan PDF](docs/handover/aislesignals-implementation-plan-jawahir-q.pdf) and [commercial baseline](docs/handover/business-baseline.json).

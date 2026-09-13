@@ -12,3 +12,14 @@ customer-data/
 local-data/
 coverage/
 .pytest_cache/
+.venv*/
+.local/
+.test-data/
+playwright-report/
+test-results/
+apps/web/dist/
+build/
+dist/
+*.egg-info/
+.ruff_cache/
+*.tsbuildinfo
