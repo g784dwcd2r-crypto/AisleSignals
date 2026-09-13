@@ -8,7 +8,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 
@@ -77,10 +77,13 @@ def reference_path(root, reference):
     require(isinstance(reference, dict) and set(reference) == {"path", "sha256"}, "Evidence references require only path and sha256.")
     name = reference["path"]
     require(isinstance(name, str) and name and ":" not in name and "\\" not in name and all(ord(c) >= 32 for c in name), "Use a local relative evidence path.")
-    part = Path(name)
+    # References have portable forward-slash syntax. On Windows, Path('/x')
+    # has a root but no drive and is_absolute() is false, despite escaping a
+    # joined intake directory. Interpret the reference independently of OS.
+    part = PurePosixPath(name)
     require(not part.is_absolute() and ".." not in part.parts, "Evidence paths must remain inside the intake directory.")
     require(isinstance(reference["sha256"], str) and SHA256.fullmatch(reference["sha256"]), "Evidence references require a SHA-256 digest.")
-    path = root / part
+    path = root.joinpath(*part.parts)
     require(safe_path(path), "Evidence cannot traverse symbolic links.")
     return path
 
@@ -340,8 +343,11 @@ def write_new(path, content):
     require(safe_path(path) and not path.exists(), "Choose a new output filename without symbolic links; existing files are preserved.")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as output:
-        output.write(content)
+    # Binary UTF-8 output prevents Windows text-mode newline translation from
+    # making the saved report differ from its advertised evidence digest.
+    with os.fdopen(fd, "wb") as output:
+        output.write(content.encode("utf-8"))
+    return digest_bytes(path.read_bytes())
 
 
 def main(argv=None):
@@ -370,8 +376,8 @@ def main(argv=None):
             envelope = {"schema_version": 1, "kind": args.kind, "context": selected[0]["context"], "binding": "OPERATOR_SUPPLIED_CONTEXT", "recorded_at": stamp, "payload": payload}
             content = json.dumps(envelope, indent=2) + "\n"
             require(args.output.suffix == ".json", "Intake output must use a .json filename.")
-            write_new(args.output, content)
-            print(json.dumps({"kind": args.kind, "slot_id": args.slot, "sha256": digest_bytes(content.encode()), "binding": "OPERATOR_SUPPLIED_CONTEXT"}))
+            stored_digest = write_new(args.output, content)
+            print(json.dumps({"kind": args.kind, "slot_id": args.slot, "sha256": stored_digest, "binding": "OPERATOR_SUPPLIED_CONTEXT"}))
             return 0
         report = build_report(manifest, args.manifest.parent)
         if args.json:

@@ -3,7 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -173,10 +173,39 @@ def test_duplicate_assignments_are_rejected(tmp_path):
         coordinator.build_report(data, tmp_path, now=NOW)
 
 
-@pytest.mark.parametrize("path", ["../outside.json", "https://example.test/private", "/absolute.json", "folder\\private.json"])
+@pytest.mark.parametrize("path", ["../outside.json", "https://example.test/private", "/absolute.json", "folder\\private.json", "//server/share/file.json", "C:/outside.json", "C:outside.json", "nested/../../outside.json"])
 def test_remote_and_escape_references_are_rejected(tmp_path, path):
     with pytest.raises(coordinator.CoordinationError):
         coordinator.reference_path(tmp_path, {"path": path, "sha256": "0" * 64})
+
+
+def test_windows_rooted_reference_without_drive_cannot_escape_intake(monkeypatch):
+    # Reproduce Windows path semantics on the development host too. A rooted
+    # path is not is_absolute() until it also has a drive, but joining escapes.
+    root = PureWindowsPath("C:/private/intake")
+    assert not PureWindowsPath("/outside.json").is_absolute()
+    assert root / PureWindowsPath("/outside.json") == PureWindowsPath("C:/outside.json")
+    monkeypatch.setattr(coordinator, "Path", PureWindowsPath)
+    monkeypatch.setattr(coordinator, "safe_path", lambda _path: True)
+    with pytest.raises(coordinator.CoordinationError):
+        coordinator.reference_path(root, {"path": "/outside.json", "sha256": "0" * 64})
+    assert coordinator.reference_path(root, {"path": "records/branch.json", "sha256": "0" * 64}) == PureWindowsPath("C:/private/intake/records/branch.json")
+
+
+def test_report_bytes_and_returned_digest_survive_windows_newline_rules(tmp_path, monkeypatch):
+    real_fdopen = coordinator.os.fdopen
+
+    def windows_fdopen(fd, mode, *args, **kwargs):
+        if "b" not in mode:
+            kwargs["newline"] = "\r\n"
+        return real_fdopen(fd, mode, *args, **kwargs)
+
+    monkeypatch.setattr(coordinator.os, "fdopen", windows_fdopen)
+    path = tmp_path / "portable.json"
+    content = '{\n  "label": "Pharmacy – test"\n}\n'
+    returned_digest = coordinator.write_new(path, content)
+    assert path.read_bytes() == content.encode("utf-8")
+    assert returned_digest == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_symlink_reference_and_existing_output_are_preserved(tmp_path):

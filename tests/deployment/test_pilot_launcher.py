@@ -40,19 +40,46 @@ def free_port():
 def fake_server(tmp_path, *, ready=True, mode="pilot"):
     script = tmp_path / ("fake_ready.py" if ready else "fake_unready.py")
     script.write_text(textwrap.dedent(f"""
+        import json, sys
+        from pathlib import Path
+        status = Path(__file__).with_suffix('.status.json')
+        status.write_text(json.dumps({{'stage':'imports'}}))
         from http.server import BaseHTTPRequestHandler, HTTPServer
-        import sys
+        from socketserver import TCPServer
+        import socket
+        def unexpected_lookup(*_):
+            raise AssertionError('Synthetic loopback fixture must not use hostname resolution')
+        socket.getfqdn = unexpected_lookup
+        class LocalHTTPServer(HTTPServer):
+            def server_bind(self):
+                # HTTPServer normally reverse-resolves its bound address here.
+                # The actual uvicorn child needs no resolver for loopback, and
+                # a hosted runner's DNS must not delay this synthetic fixture.
+                TCPServer.server_bind(self)
+                self.server_name = '127.0.0.1'
+                self.server_port = self.server_address[1]
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 body = b'{{"status":"ok","mode":"{mode}"}}'
                 self.send_response({200 if ready else 503})
+                self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
             def log_message(self, *_): pass
-        HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
+        status.write_text(json.dumps({{'stage':'binding'}}))
+        server = LocalHTTPServer(('127.0.0.1', int(sys.argv[1])), Handler)
+        status.write_text(json.dumps({{'stage':'listening'}}))
+        server.serve_forever()
     """))
     port = free_port()
-    return launcher.OwnedService("api", [sys.executable, str(script), str(port)], port, "/api/health", 2)
+    # This is a subprocess integration test, not a two-second startup promise.
+    # Deadline/cancellation tests below set their own deliberately short bounds.
+    return launcher.OwnedService("api", [sys.executable, str(script), str(port)], port, "/api/health", 10)
+
+
+def fake_startup_diagnostic(service):
+    path = Path(service.command[1]).with_suffix('.status.json')
+    return path.read_text() if path.exists() else 'Synthetic child did not reach its first Python statement'
 
 
 @pytest.mark.parametrize("values", [
@@ -187,7 +214,7 @@ def test_real_fake_child_ready_and_cleanup(config, tmp_path):
     service = fake_server(tmp_path)
     supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
     try:
-        assert supervisor.start(service)
+        assert supervisor.start(service), fake_startup_diagnostic(service)
         child = service.process
         assert child.poll() is None
     finally:
@@ -254,13 +281,13 @@ def test_failed_owned_child_recovers_once(config, tmp_path, monkeypatch):
     service = fake_server(tmp_path)
     supervisor = launcher.Supervisor(config, os.environ.copy(), reporter=lambda _: None)
     try:
-        assert supervisor.start(service)
+        assert supervisor.start(service), fake_startup_diagnostic(service)
         previous = service.process
         previous.terminate()
         previous.wait(timeout=5)
         original_wait = supervisor.stop_event.wait
         monkeypatch.setattr(supervisor.stop_event, "wait", lambda seconds: original_wait(min(seconds, 0.05)))
-        assert supervisor.restart_failed(service)
+        assert supervisor.restart_failed(service), fake_startup_diagnostic(service)
         assert service.process.pid != previous.pid
         assert service.restarts == 1
     finally:

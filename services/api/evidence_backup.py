@@ -240,7 +240,10 @@ def restore_backup(archive, target_dir, passphrase):
         conn = connect(db)
         try:
             expected = verify_database(conn, root, EvidenceCipher(db))
-            actual = {str(path.relative_to(root)) for path in root.glob("*/*")}
+            # ZIP member names always use '/', including archives restored on
+            # Windows. Keep exact extra-entry rejection after normalising only
+            # the separator representation of filesystem-derived paths.
+            actual = {path.relative_to(root).as_posix() for path in root.glob("*/*")}
             if actual != {name.removeprefix("evidence/") for name, _ in expected}:
                 raise EvidenceError("Recovery archive includes unreferenced sampled evidence.")
             from .interactions import expired

@@ -6,7 +6,7 @@ import json
 import sqlite3
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
 import pytest
@@ -162,6 +162,32 @@ def test_backup_refuses_active_pilot_then_restores_matching_media_and_revokes_se
         restored.state.interactions.close()
     with pytest.raises(EvidenceError, match="new, absent"):
         restore_backup(archive, target, BACKUP_PASSWORD)
+
+
+def test_restore_matches_windows_relative_paths_to_portable_archive_names(pilot_evidence, tmp_path, monkeypatch):
+    """Exercise the Windows separator boundary on every host, not just CI."""
+    app, _ = pilot_evidence
+    complete(client_for(app))
+    app.state.interactions.close()
+    archive = tmp_path / "portable.asbackup"
+    create_backup(app.state.store.path, archive, BACKUP_PASSWORD)
+    original_glob = Path.glob
+
+    class WindowsFramePath:
+        def __init__(self, path):
+            self.path = path
+
+        def relative_to(self, root):
+            return PureWindowsPath(*self.path.relative_to(root).parts)
+
+    def windows_evidence_glob(path, pattern, *args, **kwargs):
+        paths = original_glob(path, pattern, *args, **kwargs)
+        if pattern == "*/*" and path.name.endswith(".interaction-evidence"):
+            return (WindowsFramePath(item) for item in paths)
+        return paths
+
+    monkeypatch.setattr(Path, "glob", windows_evidence_glob)
+    assert restore_backup(archive, tmp_path / "portable-restored", BACKUP_PASSWORD)["restored"] is True
 
 
 @pytest.mark.parametrize("damage", ["password", "ciphertext", "truncated"])
