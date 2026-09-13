@@ -10,7 +10,8 @@ Implemented in the prototype after the automatic CCTV monitoring specification. 
 4. Select **Analyse video**. The local scan samples frames at half-second intervals and groups sustained visual changes into timestamped segments.
 5. Select a timeline timestamp to seek the preview. Inspect what actually happened. Ordinary movement, camera movement and lighting changes can all produce a result.
 6. Optionally select **Download test summary** for a JSON record of the analysis method, sampling coverage and activity intervals. This is a test summary, not an evidence export or theft report.
-7. Remove the file or leave the page to clear the in-memory video and results. Signing out or session expiry also removes the component and releases its media resources. Downloaded summaries remain on the device.
+7. Optionally use **Start alarm playback** to replay the analysed file with attention tones, automatic visual-change categories and a saved branch test log. See [attention alarm test](attention-alarm-test.md). Analysis alone never rings or saves events.
+8. Remove the file or leave the page to clear the in-memory video and scan results. Signing out or session expiry also releases media and stops sound. Saved playback-event metadata and downloaded summaries remain on the device.
 
 An original synthetic six-second WebM is provided at `tests/fixtures/synthetic-video.webm`; its provenance and regeneration instructions are in `tests/fixtures/README.md`. It contains geometric shapes only, with no people or pharmacy recordings.
 
@@ -22,13 +23,13 @@ There are at most 1200 sampled frames and 100 displayed segments. The UI shows t
 
 ## Local data and lifecycle
 
-The browser creates an object URL for the selected file and decodes it locally. There is no video upload endpoint, third-party model call, filename logging, browser-storage persistence or automatic case creation. The existing authenticated bootstrap polling can continue independently; its requests do not include the file, pixels, filename or test results. Files do not become accessible to another pharmacy through the API because they never enter server storage.
+The browser creates an object URL for the selected file and decodes it locally. There is no video upload endpoint, third-party model call, filename logging or automatic case creation. The optional alarm playback posts bounded event metadata to the local API; the video and filename are never sent. The existing authenticated bootstrap polling remains separate. Files do not become accessible to another pharmacy through the API because they never enter server storage.
 
 Object URLs are temporary references that the browser must release; [MDN documents creating and revoking them](https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL_static). The component pauses video and removes media sources before revocation, aborts the decoder on removal/navigation, and rejects stale async work using a generation guard. Preview decoding is separate from the scan decoder, so scrubbing the preview does not change the scan sequence.
 
 Leaving the tab in the background cancels a running scan. Cancellation does not publish a partial result as complete; a fresh run starts from the beginning. File metadata has a 12-second wait limit, each scan load/seek has an 8-second limit, and the complete scan has a two-minute processing deadline. Unsupported or corrupt media produces a recoverable error. These guards bound ordinary test work; browser/OS codec support and actual laptop resource use still vary.
 
-The CSP permits only same-origin and local blob media; it does not permit arbitrary remote video sources. The API contract and simulated source status are unchanged. No live staff sound or physical alarm is triggered by a recording, and no simulation is promoted to a live detector.
+The CSP permits same-origin and local blob media, plus a narrowly allowed YouTube privacy-enhanced reference iframe. The optional recording alarm uses only the existing laptop output and is explicitly a playback test. It does not change simulated source status or create a live incident. The YouTube reference player cannot feed the local scanner; use an authorised local MP4/WebM for analysis.
 
 ## Verification scope
 

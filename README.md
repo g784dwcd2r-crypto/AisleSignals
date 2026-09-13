@@ -35,6 +35,7 @@ After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the sour
 ## What you can do
 
 - Load an MP4/WebM in **Video test**, play it locally, scan for visual changes and jump to activity timestamps. The recording stays in the browser; this is a playback test, not AI theft detection or a live alert. See the [video test guide](docs/prototype/video-test.md).
+- Start an explicit **alarm playback test** for a repeating laptop attention tone, automatic image-change categories and a saved branch test log. Mute, stop, seek and failure controls are included. A real FBI pharmacy video is linked as a YouTube reference; the reference iframe cannot be analysed. See the [alarm and reference guide](docs/prototype/attention-alarm-test.md).
 - Review, acknowledge and dismiss a synthetic observation, or open exactly one case with a recorded reason.
 - Create a manual case independently of the camera and shift status.
 - Record classification, outcome, manager-controlled values and named follow-up tasks.

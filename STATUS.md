@@ -16,13 +16,15 @@ Prototype 0.1 — 13 September 2026. Product owner: Jawahir Q.
 | Pricing | Preserved | EUR 60 monthly per branch; owner-managed record only, no charging |
 | Mari Mina Pharmacy profile | Implemented | Separate demo organisation/branch and manager sign-in; initially empty records; additive startup preserves existing workspaces |
 | Local video-file test | Implemented | MP4/WebM playback, bounded local frame-change scan, timestamp review and JSON summary; no upload, trained AI, live alarm or case creation. [Guide](docs/prototype/video-test.md) |
+| Recorded playback attention alarm | Implemented locally | Explicitly armed playback, bounded laptop tone, visual-change categories and persistent branch test log. [Guide](docs/prototype/attention-alarm-test.md). No trained interaction detector or verified physical audibility |
+| Real pharmacy YouTube reference | Added as reference | FBI pharmacy video can be opened on YouTube or click-loaded in a reference iframe; it is not analysed. Publisher's direct file download returned 403 here; authorised local footage still needed for a real-video detection test |
 | Actual camera/detector | Not connected | Existing device/interface inventory and authorised software integration still required |
 | Browser/app/separate-monitor CCTV paths | Specified for next release | [Automatic monitoring addendum](docs/prototype/cctv-monitoring.md) includes permitted screen capture, recorder access, freshness and resource limits; no live adapter implemented yet |
 | Cloud AI / real evidence lifecycle | Not implemented | Provider evaluation, budgets, encrypted capture/storage, deletion/holds and rights workflows remain production work |
 | Signed installers / pharmacy laptop acceptance | Not completed | Windows and Mac bundles are developer prototypes; exact pharmacy hardware/OS versions remain unqualified |
 | Production hosting and alarm control | Not deployed/connected | No cloud accounts, physical outputs or customer data activated |
 
-Latest local verification: **65 Python tests + 37 frontend unit tests + 15 browser tests passed**, plus 49 companion subtests and a packaged-executable smoke check. See [verification evidence](docs/prototype/verification.md).
+Latest local verification: **76 Python tests + 54 frontend unit tests + 24 browser tests passed** (154 tests), plus 49 companion subtests. The attention-alarm changes also pass TypeScript/build and frontend formatting. The real YouTube reference played in the Codex browser; it was not scanned. See [verification evidence](docs/prototype/verification.md).
 
 All six remote jobs also passed for source commit `89d1dfb7c013d40db4162ecac132e0f4c183e20a`: Python on Linux, Windows and Mac; interface build/browser journeys; Windows and Mac executable bundles. The local Mac archive was extracted and its executable smoke-tested again. The subsequent documentation update records these results and adds the interface screenshot; it does not change executable source.
 

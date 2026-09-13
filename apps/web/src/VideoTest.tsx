@@ -17,6 +17,9 @@ import {
   validateVideoMetadata,
 } from "./videoActivity";
 import type { ActivitySample, ActivitySegment } from "./videoActivity";
+import PlaybackAlarmPanel from "./PlaybackAlarmPanel";
+import PharmacyVideoReference from "./PharmacyVideoReference";
+import { classifyActivity } from "./playbackAlerts";
 import "./videoTest.css";
 
 type Selection = { url: string; name: string; bytes: number };
@@ -337,7 +340,10 @@ export default function VideoTest({ branchName }: { branchName: string }) {
       sample_interval_seconds: VIDEO_LIMITS.sampleInterval,
       sampled_through_seconds: sampledThrough,
       samples: sampleCount,
-      activity_segments: segments,
+      activity_segments: segments.map((segment) => ({
+        ...segment,
+        classification: classifyActivity(segment),
+      })),
       result_limit: VIDEO_LIMITS.maxResults,
       limitations:
         "Whole-frame visual changes, including lighting or camera movement. Short or subtle events may be missed. No activity does not establish safety or absence of an incident. Not an evidence export or live alert.",
@@ -506,7 +512,7 @@ export default function VideoTest({ branchName }: { branchName: string }) {
               <h3>Your recording stays in this tab</h3>
               <p>
                 Preview the video, scan for visual activity and inspect the
-                timestamps. Nothing is uploaded to a server.
+                timestamps. The video is not uploaded to a server.
               </p>
             </div>
           )}
@@ -565,7 +571,7 @@ export default function VideoTest({ branchName }: { branchName: string }) {
                               {timestamp(segment.end)}
                             </strong>
                             <span>
-                              Visual activity · frame change{" "}
+                              {classifyActivity(segment).label} · frame change{" "}
                               {Math.round(segment.peakChangedRatio * 100)}%
                             </span>
                           </div>
@@ -623,15 +629,21 @@ export default function VideoTest({ branchName }: { branchName: string }) {
                 percentages are not confidence in theft.
               </p>
               <p>
-                No camera connection, person identification, paid AI call,
-                incident creation or alarm is triggered. The file and results
-                are cleared when you remove the video, leave this page or sign
-                out. Downloaded summaries remain on your device.
+                Analysis alone makes no sound and creates no incident. Start
+                alarm playback below to test local attention tones and save
+                timestamped test events. Files and scan results clear when you
+                remove the video, leave this page or sign out. Saved event
+                metadata and downloaded summaries remain on this laptop.
               </p>
             </div>
           </div>
         </section>
       </div>
+      <PlaybackAlarmPanel
+        videoRef={previewRef}
+        segments={state === "complete" ? segments : null}
+      />
+      <PharmacyVideoReference />
     </div>
   );
 }

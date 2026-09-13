@@ -1,7 +1,15 @@
 """Strict inputs for the narrow prototype contract."""
 
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StrictBool, StrictInt
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    AwareDatetime,
+    StrictBool,
+    StrictInt,
+    model_validator,
+)
 
 
 class Input(BaseModel):
@@ -90,3 +98,33 @@ class AssistanceCreate(Input):
 
 class AssistanceTransition(Input):
     status: Literal["ACKNOWLEDGED", "RESOLVED"]
+
+
+class PlaybackEvent(Input):
+    """Frame-change test metadata only; no footage, identities or incident facts."""
+
+    run_id: str = Field(
+        strict=True, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$"
+    )
+    event_index: StrictInt = Field(ge=0, le=99)
+    category: Literal[
+        "SUSTAINED_VISUAL_ACTIVITY",
+        "EXTENDED_VISUAL_ACTIVITY",
+        "LARGE_SCENE_CHANGE",
+    ]
+    video_start_seconds: float = Field(
+        strict=True, allow_inf_nan=False, ge=0, le=600
+    )
+    video_end_seconds: float = Field(
+        strict=True, allow_inf_nan=False, ge=0, le=600
+    )
+    peak_changed_ratio: float = Field(
+        strict=True, allow_inf_nan=False, ge=0, le=1
+    )
+    alarm_status: Literal["SOUND_REQUESTED", "MUTED", "BLOCKED"]
+
+    @model_validator(mode="after")
+    def ordered_interval(self):
+        if self.video_end_seconds < self.video_start_seconds:
+            raise ValueError("Video end must be at or after video start.")
+        return self

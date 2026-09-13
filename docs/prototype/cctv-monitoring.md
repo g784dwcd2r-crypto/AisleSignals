@@ -6,6 +6,8 @@ Product owner: Jawahir Q. · Direction clarified 13 September 2026.
 
 Subsequent implemented slice: the [local video-file test](video-test.md) loads MP4/WebM recordings and scans for visual activity entirely in the browser. It is deliberately separate from live-source ingestion and trained AI; its results do not create incidents or live alerts.
 
+An explicit [alarm playback test](attention-alarm-test.md) now replays a completed scan with bounded laptop attention tones, automatic image-change categories and persistent branch test events. This does not implement suspicious-interaction recognition or a live CCTV alarm. A linked real pharmacy YouTube reference is viewable separately and is not analysed.
+
 ## Product behaviour
 
 After an authorised setup, the software on the pharmacy's existing Windows or Mac laptop should acquire supported CCTV video, analyse qualified camera views automatically, create reviewable observations, attach the permitted event context and notify staff. Staff should not need to create each observation, press a simulator button or watch all cameras continuously. Staff determine what actually happened; an automated observation does not establish theft.

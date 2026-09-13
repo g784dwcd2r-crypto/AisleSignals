@@ -1,6 +1,6 @@
 """AisleSignals 0.1: localhost-only, persistent synthetic workflow prototype.
 
-No camera input, cloud inference, biometric recognition, alarm actuation or billing.
+No live camera input, cloud inference, biometric recognition, external alarm actuation or billing.
 Run with: uvicorn services.api.app:app --host 127.0.0.1 --port 8765
 """
 
@@ -36,6 +36,7 @@ from .models import (
     Export,
     AssistanceCreate,
     AssistanceTransition,
+    PlaybackEvent,
 )
 from .store import Store, now, ident, encode, digest, password_hash
 
@@ -494,7 +495,7 @@ def create_app(db_path=None, web_dist=None):
             "camera=(), microphone=(), geolocation=()"
         )
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-src https://www.youtube-nocookie.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         )
         return response
 
@@ -622,6 +623,67 @@ def create_app(db_path=None, web_dist=None):
             "Synthetic review shift updated. This is not live monitoring coverage.",
         )
         return ctx.put("site", site)
+
+    @application.get("/api/playback-events")
+    def playback_events(ctx: Context = Depends(context)):
+        return ctx.store.listing(ctx.conn, ctx.user, "playback_event")[:100]
+
+    @application.post("/api/playback-events")
+    def record_playback_event(
+        body: PlaybackEvent, request: Request, ctx: Context = Depends(context)
+    ):
+        payload = body.model_dump()
+        scope = {
+            "organisation_id": ctx.user["organisation_id"],
+            "site_id": ctx.user["site_id"],
+        }
+
+        def run():
+            # Stable identity also deduplicates a lost response retried with a
+            # different HTTP key. BEGIN IMMEDIATE serialises concurrent writers.
+            event_id = "playback-" + digest(
+                encode(
+                    {
+                        **scope,
+                        "actor_id": ctx.user["id"],
+                        "run_id": body.run_id,
+                        "event_index": body.event_index,
+                    }
+                )
+            )
+            previous = ctx.store.get(
+                ctx.conn, ctx.user, "playback_event", event_id
+            )
+            if previous is not None:
+                if any(previous.get(key) != value for key, value in payload.items()):
+                    problem(
+                        409,
+                        "PLAYBACK_EVENT_CONFLICT",
+                        "This recording test event was already logged with different input. The original record has been preserved.",
+                    )
+                return previous
+            stamp = now()
+            item = dict(
+                **payload,
+                id=event_id,
+                source="RECORDED_PLAYBACK_TEST",
+                provenance="RULE_BASED_VISUAL_CHANGE_V1",
+                created_at=stamp,
+                recorded_at=stamp,
+                recorded_by=ctx.user["name"],
+            )
+            ctx.put("playback_event", item)
+            ctx.audit(
+                "PLAYBACK_TEST_EVENT_LOGGED",
+                "playback_event",
+                event_id,
+                "Recorded-video visual-change test metadata saved. No live incident, identity finding or confirmed speaker delivery is established.",
+            )
+            return item
+
+        # Include resolved authority in the retry hash so a membership change
+        # cannot reveal an earlier branch's cached response for the same actor.
+        return idempotent(ctx, request, {**payload, **scope}, run)
 
     @application.post("/api/simulator")
     def simulator(body: Simulator, request: Request, ctx: Context = Depends(context)):

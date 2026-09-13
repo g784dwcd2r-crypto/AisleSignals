@@ -348,7 +348,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <code>AisleDemo!2026</code>
               <p>
                 Local synthetic use only. This demo has no live cameras, paid
-                AI, automatic alarms or billing.
+                AI, external alarms or billing.
               </p>
             </div>
           </div>

@@ -2,6 +2,85 @@
   display: grid;
   gap: 22px;
 }
+.playback-alarm-body {
+  padding: 0 22px 22px;
+  display: grid;
+  gap: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.playback-alarm-controls {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.playback-alarm-controls label {
+  display: grid;
+  gap: 8px;
+}
+.playback-alarm-controls .playback-mute {
+  display: flex;
+  align-items: center;
+}
+.playback-alarm-controls input[type="range"] {
+  width: 220px;
+  max-width: 100%;
+  accent-color: var(--teal-dark);
+}
+.playback-alarm-body .video-test-actions {
+  padding: 0;
+  flex-wrap: wrap;
+}
+.playback-attention {
+  padding: 18px;
+  border: 2px solid #c2d3c9;
+  border-radius: 8px;
+  background: #f5f8f4;
+}
+.playback-attention.active {
+  border-color: #a53625;
+  background: #fff1e9;
+  color: #782718;
+}
+.playback-attention strong {
+  font-size: 18px;
+}
+.playback-event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.playback-event-list li {
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.playback-event-list small {
+  color: var(--muted);
+}
+.pharmacy-reference iframe {
+  display: block;
+  width: 100%;
+  height: 380px;
+  border: 0;
+  border-radius: 8px;
+  background: #102b2a;
+}
+@media (max-width: 600px) {
+  .pharmacy-reference iframe {
+    height: 230px;
+  }
+  .playback-alarm-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
 .video-test-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
