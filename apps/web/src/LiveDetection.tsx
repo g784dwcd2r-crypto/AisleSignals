@@ -13,6 +13,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { api } from "./api";
+import InteractionAnalysis from "./interactionAnalysis";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import { createPoseDetector } from "./poseDetector";
 import { LiveBehaviourEngine, POSE_CONNECTIONS } from "./liveBehaviour";
@@ -94,6 +95,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const [deviceId, setDeviceId] = useState("");
   const [volume, setVolume] = useState(0.65);
   const [muted, setMuted] = useState(false);
+  const [movementAlarmEnabled, setMovementAlarmEnabled] = useState(true);
   const [soundStatus, setSoundStatus] = useState(
     "Test this laptop’s speakers before monitoring.",
   );
@@ -108,6 +110,8 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [acknowledging, setAcknowledging] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const interactionCancel = useRef<(() => void) | null>(null);
+  const interactionSilence = useRef<(() => void) | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sourceRef = useRef<Source | null>(null);
@@ -125,12 +129,12 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
   const soundTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const alarmEvent = useRef<string | null>(null);
   const lastAlarmStarted = useRef(-Infinity);
-  const soundOptions = useRef({ muted, volume });
+  const soundOptions = useRef({ muted, volume, movementAlarmEnabled });
   const saveInFlight = useRef(new Set<string>());
   const unsavedCount = useRef(0);
   const runId = useRef("");
   const busy = phase === "loading" || phase === "running";
-  soundOptions.current = { muted, volume };
+  soundOptions.current = { muted, volume, movementAlarmEnabled };
 
   function sound() {
     return (soundRef.current ??= new BrowserAttentionSound());
@@ -147,6 +151,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     if (mounted.current) setTracks([]);
   }
   function stop(reason = "Detection stopped.", releaseCapture = true) {
+    interactionCancel.current?.();
     sourceGeneration.current++;
     runningRef.current = false;
     loadingRef.current = false;
@@ -267,7 +272,9 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
     }
     const eventId = crypto.randomUUID();
     const wantsSound =
-      !soundOptions.current.muted && soundOptions.current.volume > 0;
+      soundOptions.current.movementAlarmEnabled &&
+      !soundOptions.current.muted &&
+      soundOptions.current.volume > 0;
     let soundRequested = false;
     if (!alarmEvent.current) {
       alarmEvent.current = eventId;
@@ -284,7 +291,8 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             episode !== runGeneration.current ||
             alarmEvent.current !== eventId ||
             document.hidden ||
-            soundOptions.current.muted
+            soundOptions.current.muted ||
+            !soundOptions.current.movementAlarmEnabled
           )
             return;
           soundRequested = true;
@@ -311,7 +319,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         setSoundStatus(
           wantsSound
             ? "Alarm cooldown active. This new event is highlighted and logged."
-            : "Sound muted. Visual alert and automatic logging remain active.",
+            : "Movement sound is off or muted. Visual alert and automatic logging remain active.",
         );
     }
     const input: LiveEventInput = {
@@ -948,9 +956,10 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           </p>
           <p>
             Local recordings: MP4 or WebM, up to 250 MiB, 10 minutes and 4K.
-            Video stays in this browser; only event metadata is saved. Sharing
-            permission is required each time. Keep patient screens out of the
-            selected view.
+            Pose tracking saves event metadata. Optional product interaction
+            analysis sends sampled frames to the local service for review.
+            Sharing permission is required each time. Keep patient screens out
+            of the selected view.
           </p>
         </details>
       </section>
@@ -1112,7 +1121,7 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
       </div>
       <div className="ld-settings-grid">
         <section className="ld-settings" aria-labelledby="ld-rule-heading">
-          <h2 id="ld-rule-heading">2. Detection rules</h2>
+          <h2 id="ld-rule-heading">2. Movement rules · pose patterns</h2>
           <label>
             Sensitivity
             <select
@@ -1187,6 +1196,22 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
         </section>
         <section className="ld-settings" aria-labelledby="ld-sound-heading">
           <h2 id="ld-sound-heading">3. Attention alarm</h2>
+          <label className="ld-inline-check">
+            <input
+              type="checkbox"
+              checked={movementAlarmEnabled}
+              onChange={(event) => {
+                const next = event.target.checked;
+                soundOptions.current.movementAlarmEnabled = next;
+                setMovementAlarmEnabled(next);
+                if (!next)
+                  silence(
+                    "Movement-rule sound is off. Product interaction sound has its own control below.",
+                  );
+              }}
+            />
+            Sound on movement-rule alerts
+          </label>
           <div className="ld-sound-buttons">
             <button
               type="button"
@@ -1213,7 +1238,10 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
             </button>
             <button
               type="button"
-              onClick={() => silence("Sound stopped. Visual alerts remain.")}
+              onClick={() => {
+                silence("Sound stopped. Visual alerts remain.");
+                interactionSilence.current?.();
+              }}
             >
               <Square size={17} /> Stop sound
             </button>
@@ -1257,6 +1285,20 @@ export default function LiveDetection({ branchName }: { branchName: string }) {
           ))}
         </section>
       )}
+      <InteractionAnalysis
+        videoRef={videoRef}
+        cancelRef={interactionCancel}
+        silenceRef={interactionSilence}
+        readSession={() => ({
+          runId: runId.current,
+          generation: runGeneration.current,
+          running: runningRef.current,
+          source: sourceRef.current,
+        })}
+        muted={muted}
+        volume={volume}
+        branchName={branchName}
+      />
       <section className="ld-event-panel" aria-labelledby="ld-events-heading">
         <div className="ld-event-heading">
           <div>

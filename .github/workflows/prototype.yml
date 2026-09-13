@@ -30,7 +30,7 @@ jobs:
           cache: pip
           cache-dependency-path: services/api/requirements.txt
       - run: python -m pip install -r services/api/requirements.txt
-      - run: python -m pytest tests/api tests/companion -q
+      - run: python -m pytest tests/api tests/companion tests/evaluation -q
 
   browser:
     name: Build and browser journeys

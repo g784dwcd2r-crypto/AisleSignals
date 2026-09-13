@@ -2,6 +2,8 @@
 
 Built for Jawahir Q. · 13 September 2026 · Experimental local detection prototype
 
+**Additional layer:** [Product interaction analysis](product-interactions.md) now samples chronological video frames for a real local vision-language model, with action categories, private JPEG evidence, feedback and an opt-in attention sound. The body-pose rules below remain a separate detector. Neither layer has passed pharmacy accuracy acceptance.
+
 ## Use the dedicated tab
 
 1. Start AisleSignals, sign in and open **LIVE DETECTION** in the sidebar.
@@ -32,7 +34,7 @@ Starting detection attempts to enable Web Audio from the user's click. A new eli
 
 Alarm delivery and saving are independent. Metadata includes branch authority resolved by the server, run/event IDs, source type and label, track number, video offset, detection time, rule/model version and whether sound was requested for that event. The server assigns the event description, saves it in local SQLite, and records acknowledgement/audit. It does not create a theft case automatically.
 
-No video or snapshot is uploaded or saved by this slice. The existing CCTV system or the chosen local file remains the recording source. Each event states **No video clip saved**. Pre/post-event evidence capture is future work. Unsaved events remain visible for retry while the tab is open; reaching 100 unsaved events stops detection. Closing the tab loses unsaved event metadata. Duplicate retries preserve the original record, and conflicting reuse is rejected.
+Body-pose rule events save metadata only. The existing CCTV system or the chosen local file remains the recording source. Each pose event states **No video clip saved**. The separately enabled product-interaction layer sends sampled JPEGs to the local service and saves them for review with 24-hour expiry; it does not save a continuous clip. Unsaved pose events remain visible for retry while the tab is open; reaching 100 unsaved events stops detection. Closing the tab loses unsaved event metadata. Duplicate retries preserve the original record, and conflicting reuse is rejected.
 
 ## Runtime and recovery
 

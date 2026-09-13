@@ -1,0 +1,51 @@
+{
+  "provenance": {
+    "origin": "SYNTHETIC_METRICS_ONLY_NO_MODEL_EXECUTED",
+    "model": "none-synthetic-predictions",
+    "prompt_version": "none"
+  },
+  "results": [
+    {
+      "window_id": "synthetic-window-0",
+      "action": "TAKE_PRODUCT",
+      "alarm_eligible": false,
+      "inference_ms": 0,
+      "status": "OK"
+    },
+    {
+      "window_id": "synthetic-window-1",
+      "action": "TAKE_PRODUCT",
+      "alarm_eligible": false,
+      "inference_ms": 0,
+      "status": "OK"
+    },
+    {
+      "window_id": "synthetic-window-2",
+      "action": "PLACE_IN_BASKET",
+      "alarm_eligible": false,
+      "inference_ms": 0,
+      "status": "OK"
+    },
+    {
+      "window_id": "synthetic-window-3",
+      "action": "UNCLEAR",
+      "alarm_eligible": false,
+      "inference_ms": 0,
+      "status": "OK"
+    },
+    {
+      "window_id": "synthetic-window-4",
+      "action": "POSSIBLE_CONCEALMENT",
+      "alarm_eligible": true,
+      "inference_ms": 0,
+      "status": "OK"
+    },
+    {
+      "window_id": "synthetic-window-5",
+      "action": "UNCLEAR",
+      "alarm_eligible": false,
+      "inference_ms": 0,
+      "status": "OK"
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "schema_version": "1.0",
+  "dataset_id": "synthetic-metric-arithmetic-no-footage",
+  "split_policy": "DISJOINT_CAMERA_DAY_PERSON",
+  "authorization": {
+    "confirmed": true,
+    "reference": "synthetic-example-no-people-or-footage"
+  },
+  "sessions": [
+    {
+      "id": "synthetic-session",
+      "split": "test",
+      "camera_id": "synthetic-camera",
+      "day_id": "synthetic-day",
+      "recording_sha256": "39456321a27bfc6308578597309be1557bc67da806dd4ddae8e28456ec32b496",
+      "source_kind": "STAGED",
+      "duration_seconds": 36,
+      "normal_duration_measured": false
+    }
+  ],
+  "windows": [
+    {
+      "id": "synthetic-window-0",
+      "session_id": "synthetic-session",
+      "start_seconds": 0,
+      "end_seconds": 6,
+      "label": "TAKE_PRODUCT",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-0-0.jpg",
+          "offset_seconds": 0
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-0-1.jpg",
+          "offset_seconds": 3
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-0-2.jpg",
+          "offset_seconds": 6
+        }
+      ]
+    },
+    {
+      "id": "synthetic-window-1",
+      "session_id": "synthetic-session",
+      "start_seconds": 6,
+      "end_seconds": 12,
+      "label": "RETURN_PRODUCT",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-1-0.jpg",
+          "offset_seconds": 6
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-1-1.jpg",
+          "offset_seconds": 9
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-1-2.jpg",
+          "offset_seconds": 12
+        }
+      ]
+    },
+    {
+      "id": "synthetic-window-2",
+      "session_id": "synthetic-session",
+      "start_seconds": 12,
+      "end_seconds": 18,
+      "label": "PLACE_IN_BASKET",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-2-0.jpg",
+          "offset_seconds": 12
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-2-1.jpg",
+          "offset_seconds": 15
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-2-2.jpg",
+          "offset_seconds": 18
+        }
+      ]
+    },
+    {
+      "id": "synthetic-window-3",
+      "session_id": "synthetic-session",
+      "start_seconds": 18,
+      "end_seconds": 24,
+      "label": "POSSIBLE_CONCEALMENT",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-3-0.jpg",
+          "offset_seconds": 18
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-3-1.jpg",
+          "offset_seconds": 21
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-3-2.jpg",
+          "offset_seconds": 24
+        }
+      ]
+    },
+    {
+      "id": "synthetic-window-4",
+      "session_id": "synthetic-session",
+      "start_seconds": 24,
+      "end_seconds": 30,
+      "label": "NORMAL_SHOPPING",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-4-0.jpg",
+          "offset_seconds": 24
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-4-1.jpg",
+          "offset_seconds": 27
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-4-2.jpg",
+          "offset_seconds": 30
+        }
+      ]
+    },
+    {
+      "id": "synthetic-window-5",
+      "session_id": "synthetic-session",
+      "start_seconds": 30,
+      "end_seconds": 36,
+      "label": "UNCLEAR",
+      "person_ids": [
+        "synthetic-person"
+      ],
+      "frames": [
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-5-0.jpg",
+          "offset_seconds": 30
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-5-1.jpg",
+          "offset_seconds": 33
+        },
+        {
+          "path": "NO-FOOTAGE-EXISTS/window-5-2.jpg",
+          "offset_seconds": 36
+        }
+      ]
+    }
+  ]
+}

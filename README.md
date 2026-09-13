@@ -6,6 +6,8 @@ A working first prototype for pharmacy incident review, evidence context and sta
 
 This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly selected CCTV window, browser camera or recording → local body-pose inference → experimental temporal rules → laptop attention alarm and saved event metadata. The pharmacy case workflow retains clearly labelled synthetic observations, isolated demonstration organisations and manager/reviewer permissions. This is an experimental prototype, not a validated pharmacy theft detector. [Live Detection guide](docs/prototype/live-detection.md).
 
+**Product interaction analysis is now implemented:** an optional local Qwen3-VL model examines chronological sampled frames for product pickup, return, basket placement, possible concealment or insufficient evidence. Results include private frame evidence, staff feedback, deletion and a separately enabled experimental attention alarm. The model is pretrained and has not been validated on the client pharmacies. [Setup and operator guide](docs/prototype/product-interactions.md) · [Evaluation workflow](docs/prototype/interaction-evaluation.md). The owner relaxed the development budget for this work; no paid service or hardware was purchased.
+
 ![AisleSignals prototype overview with synthetic pharmacy records](docs/prototype/screenshots/overview.png)
 
 **Earlier verified desktop build:** [all six GitHub jobs passed](https://github.com/g784dwcd2r-crypto/AisleSignals/actions/runs/34762107616), including Windows x64 and Mac arm64 executable startup and login. Those historical artifacts predate Live Detection; use the current source build or a newer successfully verified workflow run for this feature.
@@ -35,6 +37,7 @@ After initial setup, `Start-Mac.command` and `Start-Windows.cmd` launch the sour
 ## What you can do
 
 - Open **LIVE DETECTION**, share an authorised CCTV window or choose a camera/recording, and start real local pose inference. View person boxes/keypoints and automatic review alarms for repeated reach-to-waist patterns or configured restricted-zone presence. Save and acknowledge branch event metadata; no theft finding or video-clip capture is claimed. See the [Live Detection guide](docs/prototype/live-detection.md).
+- Enable **Product interaction analysis** to analyse recent sampled frames with the configured local vision model. Review its action classification and images, correct or delete results, and optionally enable automatic analysis and the experimental product attention alarm. See [model setup and boundaries](docs/prototype/product-interactions.md).
 - Load an MP4/WebM in **Video test**, play it locally, scan for visual changes and jump to activity timestamps. The recording stays in the browser; this is a playback test, not AI theft detection or a live alert. See the [video test guide](docs/prototype/video-test.md).
 - Start an explicit **alarm playback test** for a repeating laptop attention tone, automatic image-change categories and a saved branch test log. Mute, stop, seek and failure controls are included. A real FBI pharmacy video is linked as a YouTube reference; the reference iframe cannot be analysed. See the [alarm and reference guide](docs/prototype/attention-alarm-test.md).
 - Review, acknowledge and dismiss a synthetic observation, or open exactly one case with a recorded reason.

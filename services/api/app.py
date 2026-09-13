@@ -1,8 +1,9 @@
 """AisleSignals: localhost-only workflow and browser pose-observation prototype.
 
-The browser acquires selected video and reports local pose-rule metadata; this
-backend does not acquire video or verify detector output. No cloud inference,
-biometric recognition, external alarm actuation or billing.
+The browser acquires selected video and reports local pose-rule metadata. Explicit
+experimental interaction jobs send sampled JPEGs to a loopback vision model and
+retain private review evidence briefly. No cloud inference, biometric recognition,
+external alarm actuation or billing.
 Run with: uvicorn services.api.app:app --host 127.0.0.1 --port 8765
 """
 
@@ -43,6 +44,8 @@ from .models import (
     LiveEventInput,
 )
 from .store import Store, now, ident, encode, digest, password_hash
+from .interactions import install_interactions, interaction_lifespan
+from .interaction_vision import MAX_BODY_BYTES
 
 COOKIE = "aislesignals_demo_session"
 ROOT = Path(__file__).resolve().parents[2]
@@ -328,6 +331,7 @@ def create_app(db_path=None, web_dist=None):
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=interaction_lifespan,
     )
     application.state.store = Store(
         db_path
@@ -343,6 +347,7 @@ def create_app(db_path=None, web_dist=None):
     application.state.dummy_hash = password_hash(
         "invalid-demo-user", application.state.dummy_salt
     )
+    install_interactions(application, context, problem)
 
     @application.exception_handler(Problem)
     async def handle_problem(request, exc):
@@ -475,8 +480,13 @@ def create_app(db_path=None, web_dist=None):
                 # Check each ASGI chunk before copying it. Content-Length is not
                 # trusted: chunked clients and dishonest lengths have the same cap.
                 buffered = bytearray()
+                body_limit = (
+                    MAX_BODY_BYTES
+                    if request.method == "POST" and request.url.path == "/api/interactions/jobs"
+                    else 65_536
+                )
                 async for chunk in request.stream():
-                    if len(buffered) + len(chunk) > 65_536:
+                    if len(buffered) + len(chunk) > body_limit:
                         response = rejected(
                             413,
                             "BODY_TOO_LARGE",
