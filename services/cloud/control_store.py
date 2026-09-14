@@ -40,7 +40,7 @@ def forbidden():
 
 
 def cookie_name(settings: CloudSettings) -> str:
-    return COOKIE_NAME if settings.environment == "staging" else "aislesignals_dev_session"
+    return COOKIE_NAME if settings.environment in {"production", "staging"} else "aislesignals_dev_session"
 
 
 def token_hash(token: str) -> str:
@@ -150,7 +150,7 @@ def require_origin(request: Request, settings: CloudSettings):
     """Exact same Origin/Host; proxy forwarding is not used as authority here."""
     origin = request.headers.get("origin", "")
     host = request.headers.get("host", "")
-    scheme = "https" if settings.environment == "staging" else request.url.scheme
+    scheme = "https" if settings.environment in {"production", "staging"} else request.url.scheme
     if not origin or origin != f"{scheme}://{host}" or request.headers.get("sec-fetch-site") == "cross-site":
         raise ControlError(403, "ORIGIN_REQUIRED", "Use the management console from its own secure address.")
 

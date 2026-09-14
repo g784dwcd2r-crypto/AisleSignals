@@ -5,6 +5,8 @@ Cloud release operators should use the read-only
 public health/authentication contract and exact built management-console files.
 That check does not inspect Render billing, backups, secrets or the backend
 commit, and it performs no deployment.
+The separate [production operations runbook](../docs/release/production-operations.md)
+covers the manual paid Render release path, pre-deploy migration and rollback.
 
 This launcher coordinates the API and optional local model on an existing laptop. It does not activate a camera, register an unattended service, enrol a branch, create an account, download models, or qualify theft detection. Staff must remain present with the browser open and the laptop awake. Each of the six branches needs its own physical acceptance record; successful checks here do not activate the other branches.
 

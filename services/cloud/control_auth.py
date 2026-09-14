@@ -141,7 +141,8 @@ def _consume(conn, challenge):
 
 
 def _session_response(settings, response: Response, token: str, body):
-    response.set_cookie(cookie_name(settings), token, max_age=SESSION_SECONDS, httponly=True, secure=settings.environment == "staging", samesite="strict", path="/")
+    response.set_cookie(cookie_name(settings), token, max_age=SESSION_SECONDS, httponly=True,
+                        secure=settings.environment in {"production", "staging"}, samesite="strict", path="/")
     response.headers["Cache-Control"] = "no-store"
     return body
 
@@ -290,7 +291,8 @@ def create_auth_router(settings: CloudSettings, store: ControlStore | None = Non
             principal = validate_principal(conn, principal)
             conn.execute("UPDATE aislesignals_control.sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=%s", (principal.session_id,))
             audit(conn, principal, "SIGNED_OUT", principal.user_id)
-        response.delete_cookie(cookie_name(settings), path="/", httponly=True, secure=settings.environment == "staging", samesite="strict")
+        response.delete_cookie(cookie_name(settings), path="/", httponly=True,
+                               secure=settings.environment in {"production", "staging"}, samesite="strict")
         return {"ok": True}
 
     @router.get("/pharmacies")
