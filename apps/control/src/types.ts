@@ -59,6 +59,8 @@ export type Alert = {
   occurred_at: string;
   received_at: string;
   historical: boolean;
+  timestamp_basis?: "SOURCE_REPORTED" | "LAPTOP_REPORTED";
+  source_expires_at?: string | null;
   status: "OPEN" | "ACKNOWLEDGED" | "REVIEWED";
   version: number;
   review: null | { outcome: Outcome; note: string; by: string; at: string };
@@ -77,6 +79,7 @@ export type Incident = {
   reviewed_at: string;
   created_at: string;
   version: number;
+  source_unavailable?: boolean;
 };
 export type Dashboard = {
   generated_at: string;

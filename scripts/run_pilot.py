@@ -390,6 +390,9 @@ class Supervisor:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--sender-spawn-smoke"]:
+        from scripts.sender_spawn_smoke import main as sender_smoke_main
+        return sender_smoke_main()
     if len(sys.argv) > 1 and sys.argv[1] == "rollout":
         sys.path.insert(0, str(source_root()))
         from scripts.coordinate_rollout import main as rollout_main
@@ -523,4 +526,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # PyInstaller/Windows spawn children must enter their multiprocessing
+    # bootstrap before launcher argument parsing or starting another API.
+    import multiprocessing
+    multiprocessing.freeze_support()
     raise SystemExit(main())

@@ -171,6 +171,52 @@ def context(request: Request):
         )
 
 
+def runtime_health_site(request: Request):
+    """Authenticate one committed WAL snapshot without competing for the writer.
+
+    Evidence admission can legitimately hold the writer longer than a browser
+    heartbeat. This GET must neither renew idle sessions nor acquire a write
+    reservation just to authenticate. All authority and provenance checks share
+    the same read snapshot; later heartbeats see committed revocations afresh.
+    No mutable Context escapes this dependency.
+    """
+    token = request.cookies.get(COOKIE, "")
+    if not token or len(token) > 256:
+        problem(401, "AUTH_REQUIRED", "Sign in to continue.")
+    store = request.app.state.store
+    conn = sqlite3.connect(
+        Path(os.path.abspath(store.path)).as_uri() + "?mode=ro",
+        uri=True, timeout=0.25,
+    )
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        try:
+            store.validate_provenance(conn, store.mode)
+        except RuntimeError:
+            problem(503, "STORAGE_UNAVAILABLE", "Local storage could not be verified. Monitoring must remain stopped.")
+        session = conn.execute(
+            "SELECT * FROM sessions WHERE token_hash=?", (digest(token),)
+        ).fetchone()
+        stamp = time.time()
+        if (
+            session is None
+            or stamp - session["created_at"] >= 8 * 3600
+            or stamp - session["last_seen"] >= 15 * 60
+        ):
+            # An expired heartbeat never needs a DELETE to reject authority.
+            problem(
+                401, "SESSION_EXPIRED",
+                "Your session expired. Sign in again; unsaved input has not been submitted.",
+            )
+        user = store.resolve_session_user(conn, session)
+        if user is None:
+            problem(401, "AUTH_REQUIRED", "Sign in to continue.")
+        return user["site_id"]
+    finally:
+        conn.close()
+
+
 def match_version(resource, expected):
     if resource["version"] != expected:
         problem(
@@ -381,12 +427,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
     vision_interlocked = os.environ.get("AISLESIGNALS_VISION_DISABLED") == "1"
     report_path = Path(application.state.store.path).parent / "runtime-status.json"
 
-    def runtime_snapshot():
-        value = dict(api_id=api_id, runtime_id=None, recovery_generation=0,
-                     supervised=supervised, state="API_ONLY", monitoring_allowed=not supervised,
-                     product_available=None, report_age_ms=None, context=None)
-        if supervised:
-            value["state"] = "UNAVAILABLE"
+    def read_runtime_report():
+        """Read an atomically replaced launcher report across Windows sharing races."""
+        last_error = None
+        for attempt in range(3):
             try:
                 if report_path.is_symlink():
                     raise ValueError("Report must be a regular private file")
@@ -394,7 +438,21 @@ def create_app(db_path=None, web_dist=None, mode=None):
                 with os.fdopen(fd, "rb") as stream:
                     if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                         raise ValueError("Invalid report file")
-                    raw = stream.read(32769)
+                    return stream.read(32769)
+            except OSError as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.005)
+        raise last_error
+
+    def runtime_snapshot():
+        value = dict(api_id=api_id, runtime_id=None, recovery_generation=0,
+                     supervised=supervised, state="API_ONLY", monitoring_allowed=not supervised,
+                     product_available=None, report_age_ms=None, context=None)
+        if supervised:
+            value["state"] = "UNAVAILABLE"
+            try:
+                raw = read_runtime_report()
                 if len(raw) > 32768:
                     raise ValueError("Report too large")
                 report = json.loads(raw)
@@ -437,6 +495,8 @@ def create_app(db_path=None, web_dist=None, mode=None):
             value["context"] = digest(f"{api_id}:{value['runtime_id']}:{value['recovery_generation']}")
         return value
 
+    from .cloud_connection import install_cloud_connection
+    install_cloud_connection(application, context, problem)
     install_interactions(application, context, problem, new_incident, idempotent)
     def job_runtime_current(item):
         bound = item.get("runtime_context")
@@ -637,8 +697,8 @@ def create_app(db_path=None, web_dist=None, mode=None):
         return dict(status="ok", mode="pilot" if mode == "pilot" else "synthetic-prototype", version="0.1.0")
 
     @application.get("/api/runtime/health")
-    def browser_health(ctx=Depends(context)):
-        return {**runtime_snapshot(), "site_id": ctx.user["site_id"]}
+    def browser_health(site_id=Depends(runtime_health_site)):
+        return {**runtime_snapshot(), "site_id": site_id}
 
     @application.get("/api/runtime")
     def runtime():
@@ -770,6 +830,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
         ctx.audit("BRANCH_LEFT", "site", ctx.user["site_id"], "Session rotated before changing active branch.")
         user = {**ctx.user, "site_id": selected["id"], "role": selected["role"]}
         ctx.store.audit(ctx.conn, user, "BRANCH_SELECTED", "site", user["site_id"], "Authorised branch selected; previous capture session revoked.")
+        # The browser starts the new branch heartbeat as soon as this response
+        # arrives. Commit the rotated session before exposing its cookie; yield
+        # dependency cleanup may otherwise finish after a fast client request.
+        ctx.conn.commit()
         response = JSONResponse(session_payload(ctx.store, ctx.conn, user, csrf))
         response.set_cookie(COOKIE, token, max_age=max(1, int(current["created_at"] + 8 * 3600 - time.time())), httponly=True, samesite="strict", secure=False, path="/")
         return response

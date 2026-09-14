@@ -1,13 +1,17 @@
 """Synthetic private runtime reports; never read a real launcher's report."""
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 import pytest
+import services.api.app as app_module
 from fastapi.testclient import TestClient
 from services.api.app import create_app
-from services.api.pilot_identity import initialise
+from services.api.pilot_identity import initialise, add_site, grant_user
 from test_pilot_identity import EMAIL, PASSWORD, client_for, BASE
 from test_interactions import MockProvider, submit, wait_job, sample
 
@@ -54,6 +58,148 @@ def test_authenticated_projection_has_no_private_fields_and_does_not_refresh_idl
     assert "PRIVATE" not in response.text and "/secret/path" not in response.text
     with app.state.store.transaction() as conn:
         assert conn.execute("SELECT last_seen FROM sessions").fetchone()[0] == before
+
+
+def test_runtime_report_read_retries_a_transient_windows_sharing_error(installation, monkeypatch):
+    _, client, path = installation
+    real_open = app_module.os.open
+    attempts = 0
+
+    def transient_open(target, flags, *args, **kwargs):
+        nonlocal attempts
+        if Path(target) == path and attempts == 0:
+            attempts += 1
+            raise PermissionError("synthetic atomic replacement sharing race")
+        return real_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(app_module.os, "open", transient_open)
+    response = client.get("/api/runtime/health")
+    assert response.status_code == 200, response.text
+    assert response.json()["monitoring_allowed"] is True
+    assert attempts == 1
+
+
+def test_health_completes_while_real_interaction_admission_holds_writer_lock(installation, monkeypatch):
+    app, client, _ = installation
+    client.headers["X-AisleSignals-Runtime"] = client.get("/api/runtime/health").json()["context"]
+    entered, release = Event(), Event()
+    original_put = app.state.store.put
+
+    def hold_admission(conn, user, kind, item):
+        if kind == "interaction" and item["status"] == "pending":
+            assert conn.in_transaction
+            entered.set()
+            assert release.wait(5), "Synthetic admission was not released"
+        return original_put(conn, user, kind, item)
+
+    monkeypatch.setattr(app.state.store, "put", hold_admission)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admission = pool.submit(submit, client)
+        try:
+            assert entered.wait(2), "The real admission did not reach its write transaction"
+            # The writer stays held until this read has finished. A BEGIN
+            # IMMEDIATE health dependency cannot pass, regardless of disk speed.
+            heartbeat = pool.submit(client.get, "/api/runtime/health")
+            response = heartbeat.result(timeout=0.8)
+            assert response.status_code == 200, response.text
+            assert response.json()["monitoring_allowed"] is True
+            assert not release.is_set() and not admission.done()
+        finally:
+            release.set()
+        response = admission.result(timeout=2)
+        assert response.status_code == 202, response.text
+        assert wait_job(client, response.json()["id"])["status"] == "completed"
+
+
+@pytest.mark.parametrize("change,code", [
+    ("DELETE FROM sessions", "SESSION_EXPIRED"),
+    ("UPDATE sessions SET last_seen=last_seen-901", "SESSION_EXPIRED"),
+    ("UPDATE sessions SET created_at=created_at-28801", "SESSION_EXPIRED"),
+    ("UPDATE account_security SET enabled=0", "AUTH_REQUIRED"),
+    ("DELETE FROM memberships", "AUTH_REQUIRED"),
+    ("DELETE FROM session_scopes", "AUTH_REQUIRED"),
+    ("UPDATE session_scopes SET organisation_id='unrelated-synthetic-group'", "AUTH_REQUIRED"),
+    ("UPDATE users SET organisation_id='unrelated-synthetic-group'", "AUTH_REQUIRED"),
+    ("DELETE FROM entities WHERE kind='site'", "AUTH_REQUIRED"),
+])
+def test_health_uses_committed_authority_and_never_writes_to_reject_it(installation, change, code):
+    app, client, _ = installation
+    writer = sqlite3.connect(app.state.store.path)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(change)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            # Uncommitted authority changes cannot leak into the read snapshot.
+            response = pool.submit(client.get, "/api/runtime/health").result(timeout=0.8)
+            assert response.status_code == 200
+            writer.commit()
+            before = writer.execute("SELECT * FROM sessions").fetchall()
+            writer.execute("BEGIN IMMEDIATE")
+            # Once committed, the same cookie fails even while a separate writer
+            # is reserved. Expiry rejection must not wait to delete that session.
+            response = pool.submit(client.get, "/api/runtime/health").result(timeout=0.8)
+            assert response.status_code == 401, response.text
+            assert response.json()["error"]["code"] == code
+            assert writer.execute("SELECT * FROM sessions").fetchall() == before
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_health_rereads_branch_rotation_and_rejects_previous_cookie(installation):
+    app, _, _ = installation
+    with app.state.store.transaction() as conn:
+        organisation_id = conn.execute("SELECT organisation_id FROM users").fetchone()[0]
+    other = add_site(app.state.store, organisation_id, "Synthetic second runtime branch")
+    grant_user(app.state.store, EMAIL, other["id"], "MANAGER")
+    client = client_for(app)
+    original_site = client.get("/api/runtime/health").json()["site_id"]
+    previous = TestClient(app, base_url=BASE, cookies=dict(client.cookies))
+    switched = client.post("/api/session/site", json={"site_id": other["id"]})
+    assert switched.status_code == 200, switched.text
+    assert client.get("/api/runtime/health").json()["site_id"] == other["id"] != original_site
+    assert previous.get("/api/runtime/health").status_code == 401
+
+
+@pytest.mark.parametrize("damage,repair", [
+    ("PRAGMA user_version=999", "PRAGMA user_version=3"),
+    ("UPDATE runtime_settings SET value='synthetic' WHERE key='mode'",
+     "UPDATE runtime_settings SET value='pilot' WHERE key='mode'"),
+    ("UPDATE runtime_settings SET value='invalid-private-identity' WHERE key='installation_id'", None),
+])
+def test_health_still_validates_schema_mode_and_installation_provenance(installation, damage, repair):
+    app, client, _ = installation
+    with sqlite3.connect(app.state.store.path) as conn:
+        identity = conn.execute("SELECT value FROM runtime_settings WHERE key='installation_id'").fetchone()[0]
+        conn.execute(damage)
+    try:
+        response = client.get("/api/runtime/health")
+        assert response.status_code == 503, response.text
+        assert response.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+        assert "invalid-private-identity" not in response.text
+        assert "context" not in response.json()
+    finally:
+        with sqlite3.connect(app.state.store.path) as conn:
+            if repair:
+                conn.execute(repair)
+            else:
+                conn.execute("UPDATE runtime_settings SET value=? WHERE key='installation_id'", (identity,))
+
+
+def test_health_connection_itself_cannot_mutate_session_state(installation, monkeypatch):
+    app, client, _ = installation
+    with app.state.store.transaction() as conn:
+        before = [tuple(row) for row in conn.execute("SELECT * FROM sessions")]
+
+    def unexpected_write(conn, session):
+        conn.execute("DELETE FROM sessions")
+        raise AssertionError("A read-only health connection allowed a write")
+
+    monkeypatch.setattr(app.state.store, "resolve_session_user", unexpected_write)
+    response = client.get("/api/runtime/health")
+    assert response.status_code == 503, response.text
+    with app.state.store.transaction() as conn:
+        assert [tuple(row) for row in conn.execute("SELECT * FROM sessions")] == before
 
 
 @pytest.mark.parametrize("damage", ["missing", "stale", "future", "suspect", "bad_json", "symlink", "large", "old_probe", "bad_identity"])

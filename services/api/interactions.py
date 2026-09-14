@@ -6,6 +6,7 @@ execution. This is an experimental review workflow, not validated theft detectio
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -116,6 +117,7 @@ def saved_view(item):
         "incident_id": item.get("incident_id"),
         "evidence_kind": "sampled_jpeg_derivatives",
         "historical": item["source_kind"] == "RECORDED_VIDEO",
+        **({'cloud_sync': item['cloud_sync']} if 'cloud_sync' in item else {}),
     }
 
 
@@ -129,8 +131,10 @@ def job_view(item):
 
 
 class InteractionService:
-    def __init__(self, store):
+    def __init__(self, store, cloud_provider=None):
         self.store = store
+        from .cloud_hooks import CloudHooks
+        self.cloud_hooks = CloudHooks(store, cloud_provider) if cloud_provider is not None else None
         self.provider = VisionProvider()
         self.runtime_current = lambda item: True  # Installed by the owning API process.
         db = Path(store.path).resolve()
@@ -154,6 +158,8 @@ class InteractionService:
                 raise
         self.closed = threading.Event()
         self.janitor = None
+        self._retention_pending = False
+        self._cloud_delivery_pending = False
         try:
             self.cleanup(recover=True)
         except BaseException:
@@ -194,6 +200,8 @@ class InteractionService:
                 }
                 if expired(item):
                     # Access is independently denied by timestamp even if disk deletion fails.
+                    if self.cloud_hooks:
+                        self.cloud_hooks.withdraw(conn, user, 'interaction', item['id'], reason='LOCAL_EXPIRED')
                     try:
                         self.remove_files(item["id"])
                     except (OSError, VisionError, ValueError):
@@ -243,17 +251,51 @@ class InteractionService:
             return
 
         def maintain():
-            while not self.closed.wait(60):
-                try:
-                    self.cleanup()
-                except Exception:
-                    # Never include evidence, model output or source labels in logs.
-                    pass
+            try:
+                while not self.closed.wait(60):
+                    try:
+                        self.cleanup()
+                    except Exception:
+                        # Never include evidence, model output or source labels in logs.
+                        pass
+            finally:
+                with ACTIVE_LOCK:
+                    self._retention_pending = False
+                self._release_database_lock_if_idle()
 
         self.janitor = threading.Thread(
             target=maintain, daemon=True, name="interaction-retention"
         )
-        self.janitor.start()
+        with ACTIVE_LOCK:
+            self._retention_pending = True
+        try:
+            self.janitor.start()
+        except BaseException:
+            with ACTIVE_LOCK:
+                self._retention_pending = False
+            self.janitor = None
+            raise
+
+    def hold_cloud_delivery(self):
+        """Keep the API/backup ownership lock until the sender is confirmed stopped."""
+        with ACTIVE_LOCK:
+            if self.closed.is_set():
+                raise RuntimeError("INTERACTION_SERVICE_CLOSED")
+            self._cloud_delivery_pending = True
+
+    def cloud_delivery_stopped(self):
+        with ACTIVE_LOCK:
+            self._cloud_delivery_pending = False
+        self._release_database_lock_if_idle()
+
+    def _release_database_lock_if_idle(self):
+        # Every owner uses this gate, including a late model completion. A sender
+        # failure retains the main lock, so backup/restart cannot race live work.
+        with ACTIVE_LOCK:
+            if (self.database_lock and self.closed.is_set()
+                    and not self._cloud_delivery_pending and not self._retention_pending
+                    and not any(service is self for service, _ in ACTIVE_JOBS.values())):
+                self.database_lock.close()
 
     def close(self):
         self.closed.set()
@@ -263,13 +305,9 @@ class InteractionService:
                     cancellation.set()
         if self.janitor:
             self.janitor.join(timeout=1)
-        # Workers can finish a model request after shutdown. Their cancelled
-        # result is never published; release only after their DB/file work ends.
-        if self.database_lock:
-            with ACTIVE_LOCK:
-                active = any(service is self for service, _ in ACTIVE_JOBS.values())
-            if not active:
-                self.database_lock.close()
+        # Workers may finish after the bounded joins. They release only after
+        # their DB/file work and every other owned component have ended.
+        self._release_database_lock_if_idle()
 
     @staticmethod
     def authorized(conn, item):
@@ -318,6 +356,8 @@ class InteractionService:
             )
             if item.get("review") is not None or not low_value:
                 continue
+            if self.cloud_hooks:
+                self.cloud_hooks.withdraw(conn, scope, 'interaction', item['id'], reason='LOCAL_EXPORT_REMOVED')
             conn.execute("DELETE FROM entities WHERE kind='interaction' AND id=?", (item["id"],))
             removed.append(item["id"])
             self.store.audit(conn, scope, "INTERACTION_ROLLED_OFF", "interaction", item["id"],
@@ -377,6 +417,8 @@ class InteractionService:
                         item_id,
                         "Experimental local model classification saved for staff review; no theft finding or output actuation.",
                     )
+                if current['status'] == 'completed' and self.cloud_hooks:
+                    self.cloud_hooks.publish(conn, scope, 'interaction', current)
                 self.store.put(conn, scope, "interaction", current)
         except Exception as error:
             # Store only our safe provider errors, never exception repr or image text.
@@ -407,22 +449,37 @@ class InteractionService:
         finally:
             with ACTIVE_LOCK:
                 ACTIVE_JOBS.pop(item_id, None)
-            if self.closed.is_set() and self.database_lock:
-                self.database_lock.close()
+            self._release_database_lock_if_idle()
             INFERENCE_SLOT.release()
 
 
 @asynccontextmanager
 async def interaction_lifespan(app):
-    app.state.interactions.start()
+    service = app.state.interactions
+    delivery = None
     try:
+        service.start()
+        if app.state.store.mode == "pilot" and service.cloud_hooks is not None:
+            service.hold_cloud_delivery()
+            from .cloud_delivery import CloudDelivery
+            delivery = CloudDelivery(app.state.store, app.state.cloud_connection,
+                                     source_state=service.cloud_hooks.source_state)
+            app.state.cloud_delivery = delivery
+            if not delivery.start():
+                raise RuntimeError("CLOUD_DELIVERY_START_FAILED")
         yield
     finally:
-        app.state.interactions.close()
+        # Cancel local inference first so shutdown cannot publish new work.
+        try:
+            await asyncio.to_thread(service.close)
+        finally:
+            if delivery is not None and not await asyncio.to_thread(delivery.stop, timeout=6):
+                raise RuntimeError("CLOUD_DELIVERY_STOP_FAILED")
+            service.cloud_delivery_stopped()
 
 
 def install_interactions(app, context, problem, new_incident, idempotent):
-    service = app.state.interactions = InteractionService(app.state.store)
+    service = app.state.interactions = InteractionService(app.state.store, getattr(app.state, 'cloud_connection', None))
 
     def available(ctx, item_id):
         item = ctx.get("interaction", str(item_id))
@@ -567,6 +624,10 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                 "organisation_id": ctx.user["organisation_id"],
                 "site_id": ctx.user["site_id"],
             }
+            if service.cloud_hooks:
+                admission = service.cloud_hooks.admit(ctx.conn, ctx.user)
+                if admission is not None:
+                    item['_cloud_admission'] = admission
             ctx.put("interaction", item)
             ctx.audit(
                 "INTERACTION_SUBMITTED",
@@ -816,6 +877,8 @@ def install_interactions(app, context, problem, new_incident, idempotent):
             if active:
                 active[1].set()
         service.remove_files(str(item_id))
+        if service.cloud_hooks:
+            service.cloud_hooks.withdraw(ctx.conn, ctx.user, 'interaction', str(item_id), reason='LOCAL_DELETED')
         ctx.conn.execute(
             "DELETE FROM entities WHERE id=? AND kind='interaction' AND organisation_id=? AND site_id=?",
             (str(item_id), ctx.user["organisation_id"], ctx.user["site_id"]),

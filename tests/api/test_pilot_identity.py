@@ -5,6 +5,7 @@ import sqlite3
 from uuid import uuid4
 
 import pytest
+import services.api.app as app_module
 from fastapi.testclient import TestClient
 
 from services.api.app import COOKIE, create_app
@@ -165,6 +166,23 @@ def test_branch_switch_rotates_cookie_revokes_old_job_authority_and_checks_role(
     denied = client.patch(f"/api/incidents/{item['id']}", json={"expected_version": 1, "notes": "Other branch update"})
     assert denied.status_code == 404
     assert manual(client).status_code == 200
+
+
+def test_branch_switch_commits_new_session_before_building_response(pilot, monkeypatch):
+    app, _ = pilot
+    site = second_branch(pilot, role="REVIEWER")
+    client = client_for(app)
+    session_payload = app_module.session_payload
+
+    def observe_committed_session(store, conn, user, csrf):
+        with sqlite3.connect(app.state.store.path) as observer:
+            scopes = observer.execute("SELECT site_id FROM session_scopes").fetchall()
+        assert scopes == [(site["id"],)]
+        return session_payload(store, conn, user, csrf)
+
+    monkeypatch.setattr(app_module, "session_payload", observe_committed_session)
+    response = client.post("/api/session/site", json={"site_id": site["id"]})
+    assert response.status_code == 200, response.text
 
 
 def test_branch_switch_cannot_expand_membership_or_extend_absolute_session(pilot):

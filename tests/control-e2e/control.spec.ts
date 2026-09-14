@@ -36,7 +36,7 @@ const test = base.extend<{ installation: Installation }>({
           if (line) resolve(JSON.parse(line.slice(14)));
         });
         child.stderr.on("data", (chunk) => {
-          errors += String(chunk);
+          errors = (errors + String(chunk)).slice(-4000);
         });
         child.once("error", reject);
         child.once("exit", (code) =>
@@ -55,18 +55,25 @@ const test = base.extend<{ installation: Installation }>({
           );
         }),
       ]).finally(() => clearTimeout(timer));
-      await expect
-        .poll(
-          async () => {
-            try {
-              return (await fetch(installation.url + "/health/ready")).status;
-            } catch {
-              return 0;
-            }
-          },
-          { timeout: 10000 },
-        )
-        .toBe(200);
+      try {
+        await expect
+          .poll(
+            async () => {
+              try {
+                return (await fetch(installation.url + "/health/ready")).status;
+              } catch {
+                return 0;
+              }
+            },
+            { timeout: 10000 },
+          )
+          .toBe(200);
+      } catch (reason) {
+        throw new Error(
+          `Synthetic control fixture did not become ready (exit ${child.exitCode ?? "running"}): ${errors}`,
+          { cause: reason },
+        );
+      }
       await use(installation);
     } finally {
       if (child.exitCode === null) child.kill("SIGTERM");
@@ -477,6 +484,140 @@ test("owner connects a laptop, reviews actual received metadata into a case and 
     path: ".local/control-operations-desktop.png",
     fullPage: true,
   });
+});
+
+test("withdrawn laptop source clears cached details and preserves the reviewed case", async ({
+  page,
+  installation,
+}) => {
+  await bootstrap(page, installation);
+  const branch = await addPharmacy(page, "Synthetic Harbour");
+  const laptop = await enrolLaptop(page, installation, branch);
+  const sourceId = crypto.randomUUID();
+  const response = await page.request.post(
+    installation.url + "/device-api/sync/v1/observations",
+    {
+      headers: { Authorization: "Bearer " + laptop.device_token },
+      data: {
+        source_event_id: sourceId,
+        event_code: "POSSIBLE_CONCEALMENT",
+        source_label: "Synthetic lifecycle camera",
+        occurred_at: new Date().toISOString(),
+        historical: true,
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+      },
+    },
+  );
+  expect(response.status()).toBe(201);
+  const alert = await response.json();
+  await navigate(page, "Alerts");
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "Synthetic lifecycle camera" });
+  await expect(row).toContainText("Laptop clock");
+  await row
+    .getByRole("button", { name: "Open record details", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText(
+    "Reported observation time — laptop clock",
+  );
+  await dialog
+    .getByLabel(/^Review notes/)
+    .fill("Synthetic independent staff notes retained for follow-up.");
+  await dialog
+    .getByLabel("Create an incident for staff follow-up", { exact: true })
+    .check();
+  await dialog
+    .getByLabel("Incident title", { exact: true })
+    .fill("Synthetic retained case");
+  await dialog
+    .getByRole("button", { name: "Save review", exact: true })
+    .click();
+  await expect(dialog).toContainText("Staff review recorded");
+  const withdrawn = await page.request.post(
+    installation.url + "/device-api/sync/v1/withdrawals",
+    {
+      headers: { Authorization: "Bearer " + laptop.device_token },
+      data: { source_event_id: sourceId, reason: "LOCAL_DELETED" },
+    },
+  );
+  expect(withdrawn.status()).toBe(200);
+  const refresh = page.waitForResponse(
+    (r) => r.url().endsWith("/alerts/" + alert.id) && r.status() === 404,
+  );
+  // Actual visibility refresh; no mocked app data or server response.
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("visibilitychange")),
+  );
+  await refresh;
+  await expect(dialog).toContainText("This record is no longer available");
+  await expect(dialog).not.toContainText("Synthetic lifecycle camera");
+  await expect(
+    dialog.getByRole("button", { name: "Save review", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await navigate(page, "Incidents");
+  await page
+    .getByRole("row")
+    .filter({ hasText: "Synthetic retained case" })
+    .getByRole("button", { name: "Open record details", exact: true })
+    .click();
+  await expect(dialog).toContainText(
+    "source observation has expired or been withdrawn",
+  );
+  await expect(dialog.getByLabel(/^Case notes/)).toHaveValue(
+    "Synthetic independent staff notes retained for follow-up.",
+  );
+});
+
+test("cached laptop source expires offline and removes the unsaved review form", async ({
+  page,
+  context,
+  installation,
+}) => {
+  await bootstrap(page, installation);
+  const branch = await addPharmacy(page, "Synthetic Harbour");
+  const laptop = await enrolLaptop(page, installation, branch);
+  // Use the real server's accepted deadline while advancing only the browser clock.
+  const now = Date.now();
+  const response = await page.request.post(
+    installation.url + "/device-api/sync/v1/observations",
+    {
+      headers: { Authorization: "Bearer " + laptop.device_token },
+      data: {
+        source_event_id: crypto.randomUUID(),
+        event_code: "POSSIBLE_CONCEALMENT",
+        source_label: "Synthetic expiring camera",
+        occurred_at: new Date(now).toISOString(),
+        historical: true,
+        expires_at: new Date(now + 120000).toISOString(),
+      },
+    },
+  );
+  expect(response.status()).toBe(201);
+  await page.clock.install({ time: new Date(now) });
+  await navigate(page, "Alerts");
+  await page
+    .getByRole("row")
+    .filter({ hasText: "Synthetic expiring camera" })
+    .getByRole("button", { name: "Open record details", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel(/^Review notes/).fill("Synthetic temporary draft");
+  await context.setOffline(true);
+  await page.clock.fastForward(120001);
+  await expect(dialog).toContainText("Source observation expired");
+  await expect(dialog).not.toContainText("Synthetic expiring camera");
+  await expect(dialog.getByLabel(/^Review notes/)).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save review", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("row").filter({ hasText: "Synthetic expiring camera" }),
+  ).toHaveCount(0);
+  await context.setOffline(false);
 });
 
 test("stale staff review conflicts and scope changes discard unsaved notes", async ({

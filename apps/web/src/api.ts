@@ -108,7 +108,10 @@ export async function api<T>(
     headers["X-AisleSignals-Site"] = siteContext;
   if (write && path !== "/login")
     headers["Idempotency-Key"] = idempotencyKey(path, method, payload);
-  const sensitive = path === "/setup" || path.startsWith("/admin/");
+  const sensitive =
+    path === "/setup" ||
+    path.startsWith("/admin/") ||
+    path.startsWith("/cloud-connection");
   const releaseSensitiveKey = () => {
     const key = headers["Idempotency-Key"];
     if (sensitive && key) forgetAction(path, method, payload, key);
@@ -156,7 +159,7 @@ export async function api<T>(
     }
     releaseSensitiveKey();
     const reauthenticationRejected =
-      path.startsWith("/admin/") &&
+      (path.startsWith("/admin/") || path.startsWith("/cloud-connection")) &&
       ["REAUTH_REQUIRED", "REAUTH_RATE_LIMITED"].includes(error?.code);
     if (
       requestCsrf &&

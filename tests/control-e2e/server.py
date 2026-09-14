@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import sys
 import time
 
@@ -40,6 +41,7 @@ def main(argv=None):
         raise ValueError("Only isolated browser fixture ports 60644 and 60645 are permitted")
     received = None
     server = None
+    listener = None
 
     def stop(signum, _frame):
         nonlocal received
@@ -69,8 +71,15 @@ def main(argv=None):
             if received is None:
                 reset_database(settings)
             if received is None:
+                # Own the loopback listener before announcing readiness. This
+                # avoids a short fixed-port handover race between sequential
+                # browser fixtures on slower CI hosts.
+                listener = socket.socket()
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                listener.bind(("127.0.0.1", port))
+                listener.listen(128)
                 server = uvicorn.Server(uvicorn.Config(
-                    create_app(settings), host="127.0.0.1", port=port,
+                    create_app(settings),
                     access_log=False, proxy_headers=False, log_level="warning",
                     timeout_graceful_shutdown=5,
                 ))
@@ -79,8 +88,10 @@ def main(argv=None):
                     # deliberately omit this synthetic bootstrap credential.
                     print("CONTROL_READY " + json.dumps({"url": f"http://127.0.0.1:{port}", "bootstrapToken": settings.bootstrap_token}), flush=True)
                 if received is None:
-                    server.run()
+                    server.run(sockets=[listener])
     finally:
+        if listener is not None:
+            listener.close()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     return 128 + received if received is not None else 0

@@ -1,4 +1,7 @@
-"""Bounded PostgreSQL checks, with no customer tables or SQLite dependency."""
+"""Bounded PostgreSQL checks and cumulative immutable migration discovery.
+
+Migration 004 adds device-bound source lifecycle metadata; no SQLite dependency.
+"""
 
 import asyncio
 from dataclasses import dataclass

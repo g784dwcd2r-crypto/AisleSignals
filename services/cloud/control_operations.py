@@ -130,13 +130,20 @@ def device_view(row):
 
 def alert_view(row):
     return {
-        **{key: row[key] for key in ("id", "pharmacy_id", "pharmacy_name", "device_id", "device_name", "source_event_id", "event_code", "title", "source_label", "occurred_at", "received_at", "historical", "status", "version", "incident_id")},
+        **{key: row[key] for key in ("id", "pharmacy_id", "pharmacy_name", "device_id", "device_name", "source_event_id", "event_code", "title", "source_label", "occurred_at", "received_at", "historical", "status", "version", "incident_id", "timestamp_basis", "source_expires_at")},
         "review": None if row["review_outcome"] is None else {"outcome": row["review_outcome"], "note": row["review_note"], "by": row["reviewed_by"], "at": row["reviewed_at"]},
     }
 
 
 def incident_view(row):
-    return {key: row[key] for key in ("id", "pharmacy_id", "pharmacy_name", "alert_id", "title", "classification", "status", "notes", "reviewed_by", "reviewed_at", "created_at", "version")}
+    return {key: row[key] for key in ("id", "pharmacy_id", "pharmacy_name", "alert_id", "title", "classification", "status", "notes", "reviewed_by", "reviewed_at", "created_at", "version", "source_unavailable")}
+
+
+def source_available_sql(alias="r"):
+    # Fixed internal aliases only. Use wall clock rather than transaction start
+    # time so a request delayed by a lock cannot revive an expired source.
+    prefix = alias + "." if alias else ""
+    return f"({prefix}source_withdrawn_at IS NULL AND NOT {prefix}source_purged AND ({prefix}source_expires_at IS NULL OR {prefix}source_expires_at>clock_timestamp()))"
 
 
 def select_rows(conn, principal, kind, selected=None, record_id=None, status=None, limit=200):
@@ -146,9 +153,11 @@ def select_rows(conn, principal, kind, selected=None, record_id=None, status=Non
     elif kind == "alerts":
         columns, joins, order, view = "r.*, p.name AS pharmacy_name, d.name AS device_name, i.id AS incident_id", f"JOIN {SCHEMA}.devices d ON d.id=r.device_id AND d.organisation_id=r.organisation_id LEFT JOIN {SCHEMA}.incidents i ON i.alert_id=r.id AND i.organisation_id=r.organisation_id", "r.received_at", alert_view
     else:
-        columns, joins, order, view = "r.*, p.name AS pharmacy_name", "", "r.created_at", incident_view
+        columns, joins, order, view = f"r.*, p.name AS pharmacy_name, NOT {source_available_sql('a')} AS source_unavailable", f"JOIN {SCHEMA}.alerts a ON a.id=r.alert_id AND a.organisation_id=r.organisation_id AND a.pharmacy_id=r.pharmacy_id", "r.created_at", incident_view
     params = [principal.organisation_id, permitted]
     where = "r.organisation_id=%s AND r.pharmacy_id=ANY(%s::uuid[])"
+    if kind == "alerts":
+        where += " AND " + source_available_sql()
     if record_id is not None:
         where += " AND r.id=%s"
         params.append(record_id)
@@ -165,6 +174,9 @@ def locked_record(conn, principal, kind, record_id):
     permitted = pharmacy_ids(conn, principal)
     row = conn.execute(f"SELECT * FROM {SCHEMA}.{kind} WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[]) AND id=%s FOR UPDATE", (principal.organisation_id, permitted, record_id)).fetchone()
     if row is None:
+        fail(404, "NOT_FOUND", "This record is not available.")
+    if kind == "alerts" and (row["source_withdrawn_at"] is not None or row["source_purged"] or
+                             (row["source_expires_at"] is not None and row["source_expires_at"] <= now())):
         fail(404, "NOT_FOUND", "This record is not available.")
     return row
 
@@ -202,7 +214,7 @@ def create_operations_router():
             counts = conn.execute(f"""SELECT
                 (SELECT count(*) FROM {SCHEMA}.devices WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[]) AND revoked_at IS NULL) AS total_laptops,
                 (SELECT count(*) FROM {SCHEMA}.devices WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[]) AND revoked_at IS NULL AND last_seen_at>CURRENT_TIMESTAMP-INTERVAL '120 seconds') AS connected_laptops,
-                (SELECT count(*) FROM {SCHEMA}.alerts WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[]) AND status<>'REVIEWED') AS open_alerts,
+                (SELECT count(*) FROM {SCHEMA}.alerts WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[]) AND status<>'REVIEWED' AND {source_available_sql('')}) AS open_alerts,
                 (SELECT count(*) FROM {SCHEMA}.incidents WHERE organisation_id=%s AND pharmacy_id=ANY(%s::uuid[])) AS reviewed_incidents""", tuple([current.organisation_id, permitted] * 4)).fetchone()
             return {"generated_at": now(), "summary": {"pharmacies": len(permitted), **counts},
                     **{kind: select_rows(conn, current, kind, pharmacy_id, limit=8) for kind in ("devices", "alerts", "incidents")}}
@@ -361,6 +373,12 @@ def create_device_router():
         if captured > now() + timedelta(minutes=5) or captured < now() - timedelta(days=30):
             fail(422, "INVALID_EVENT_TIME", "Use a recent observation with a valid capture time.")
         with device_transaction(request) as (conn, device):
+            # A v1 withdrawal/expiry cannot be bypassed through legacy intake.
+            # Never return staff data or refresh an unavailable source here.
+            receipt = conn.execute(f"SELECT 1 FROM {SCHEMA}.device_sync_receipts WHERE device_id=%s AND source_event_id=%s", (device["id"], body.source_event_id)).fetchone()
+            unavailable = conn.execute(f"SELECT 1 FROM {SCHEMA}.alerts r WHERE device_id=%s AND source_event_id=%s AND NOT {source_available_sql()}", (device["id"], body.source_event_id)).fetchone()
+            if receipt is not None or unavailable is not None:
+                fail(409, "SOURCE_UNAVAILABLE", "Use the source lifecycle endpoint; this observation cannot be reintroduced here.")
             digest = payload_hash(body)
             previous = conn.execute(f"SELECT id,payload_hash FROM {SCHEMA}.alerts WHERE device_id=%s AND source_event_id=%s", (device["id"], body.source_event_id)).fetchone()
             if previous is not None:

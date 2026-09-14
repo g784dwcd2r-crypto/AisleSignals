@@ -1,6 +1,8 @@
 """AisleSignals same-origin management console, isolated from local CCTV APIs."""
 
 from pathlib import Path
+import asyncio
+from contextlib import asynccontextmanager
 import io
 import zipfile
 
@@ -76,16 +78,33 @@ class SafeResponses:
                 await JSONResponse({'error': {'code': 'INTERNAL_ERROR', 'message': 'The management service is unavailable.'}}, status_code=500)(scope, receive, safe_send)
 
 
-def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | None = None, web_dist: Path | None = None) -> FastAPI:
+def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | None = None, web_dist: Path | None = None, *, maintenance_factory=None) -> FastAPI:
     from .control_auth import create_auth_router
     from .control_operations import create_device_router, create_operations_router
+    from .device_sync import create_device_sync_router
     from .control_store import ControlError, ControlStore
+    from .source_maintenance import SourceMaintenance
 
     settings = settings or CloudSettings.from_env()
     readiness = probe or ReadinessProbe(settings)
-    app = FastAPI(title='AisleSignals management', docs_url=None, redoc_url=None,
-                  openapi_url=None, debug=False, redirect_slashes=False)
     store = ControlStore(settings)
+
+    @asynccontextmanager
+    async def lifespan(application):
+        # Server-owned injection supports deterministic tests; no request or
+        # browser setting can disable retention. Construction starts no work.
+        worker = (maintenance_factory or SourceMaintenance)(store)
+        application.state.source_maintenance = worker
+        try:
+            if worker.start() is not True:
+                raise RuntimeError('SOURCE_MAINTENANCE_START_FAILED')
+            yield
+        finally:
+            if await asyncio.to_thread(worker.stop, timeout=6) is not True:
+                raise RuntimeError('SOURCE_MAINTENANCE_STOP_FAILED')
+
+    app = FastAPI(title='AisleSignals management', docs_url=None, redoc_url=None,
+                  openapi_url=None, debug=False, redirect_slashes=False, lifespan=lifespan)
     app.state.control_store = store
 
     @app.exception_handler(ControlError)
@@ -100,6 +119,7 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
     app.include_router(create_auth_router(settings, store))
     app.include_router(create_operations_router())
     app.include_router(create_device_router())
+    app.include_router(create_device_sync_router())
 
     @app.get('/health/live')
     async def live():

@@ -60,9 +60,21 @@ def reset_database(settings):
     migrate(settings)
 
 
+class NonRecurringMaintenance:
+    """Explicit fixture boundary; scheduler behavior has its own real-PG tests."""
+    def __init__(self, store):
+        self.store = store
+
+    def start(self):
+        return True
+
+    def stop(self, *, timeout):
+        return True
+
+
 def new_client(settings):
     from services.cloud.app import create_app
-    return TestClient(create_app(settings), base_url="https://testserver", headers={"Origin": "https://testserver"})
+    return TestClient(create_app(settings, maintenance_factory=NonRecurringMaintenance), base_url="https://testserver", headers={"Origin": "https://testserver"})
 
 
 def bootstrap(client, settings, *, name="Synthetic Owner", email="owner@example.test"):

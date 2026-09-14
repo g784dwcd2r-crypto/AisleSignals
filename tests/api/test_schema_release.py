@@ -1,18 +1,27 @@
 import sqlite3
+import pytest
 from services.api.store import Store
+from test_cloud_store_migration import make_v2
 
 
 def test_identity_schema_prevents_legacy_binary_reopening(tmp_path):
     path = tmp_path / 'pilot.db'
     Store(path, mode='pilot')
     with sqlite3.connect(path) as conn:
-        assert conn.execute('PRAGMA user_version').fetchone()[0] == 2
+        assert conn.execute('PRAGMA user_version').fetchone()[0] == 3
         assert conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0
+        # The released v2 reader's gate accepts exactly 0/1/2; its rejection
+        # occurs before executescript. Keep this compatibility boundary explicit.
+        with pytest.raises(RuntimeError, match='Unsupported'):
+            version = conn.execute('PRAGMA user_version').fetchone()[0]
+            if version not in (0, 1, 2):
+                raise RuntimeError('Unsupported prototype database schema.')
 
 
 def test_additive_legacy_demo_migration_keeps_records(tmp_path):
     path = tmp_path / 'demo.db'
     store = Store(path)
+    make_v2(path)
     with store.transaction() as conn:
         before = conn.execute('SELECT id,body FROM entities ORDER BY id').fetchall()
         conn.execute('PRAGMA user_version=1')
@@ -22,7 +31,7 @@ def test_additive_legacy_demo_migration_keeps_records(tmp_path):
         conn.execute('DROP TABLE runtime_settings')
     migrated = Store(path)
     with migrated.transaction() as conn:
-        assert conn.execute('PRAGMA user_version').fetchone()[0] == 2
+        assert conn.execute('PRAGMA user_version').fetchone()[0] == 3
         assert [tuple(r) for r in conn.execute('SELECT id,body FROM entities ORDER BY id')] == [tuple(r) for r in before]
 
 

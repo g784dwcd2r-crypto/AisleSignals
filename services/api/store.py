@@ -11,8 +11,32 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+from functools import lru_cache
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from . import cloud_outbox
+
+LOCAL_SCHEMA_VERSION = 3
+_REFERENCE_OUTBOX_INSTALL = cloud_outbox.install_schema
+
+
+def _cloud_schema_objects(conn):
+    return {row[0]: (row[1], " ".join(row[2].split())) for row in conn.execute(
+        "SELECT name,type,sql FROM sqlite_master WHERE name GLOB 'cloud_sync_*' AND sql IS NOT NULL"
+    )}
+
+
+@lru_cache(maxsize=1)
+def _expected_cloud_schema():
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("BEGIN")
+        _REFERENCE_OUTBOX_INSTALL(conn)
+        return _cloud_schema_objects(conn)
+    finally:
+        conn.close()
+
 
 PASSWORD = "AisleDemo!2026"
 
@@ -43,19 +67,43 @@ class Store:
     @staticmethod
     def validate_provenance(conn, mode):
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, LOCAL_SCHEMA_VERSION):
             raise RuntimeError(
                 "Unsupported prototype database schema. Preserve this database and upgrade the application."
             )
         tables = {row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
+        if version in (0, 1) and tables - {"sqlite_sequence"}:
+            # The released v0/v1 builds used these exact two column signatures.
+            # Names alone also match unrelated databases. Check before any
+            # permission hardening, journal change or additive schema write.
+            legacy_columns = {
+                "users": ("id", "email", "name", "role", "organisation_id", "site_id", "salt", "password_hash"),
+                "entities": ("id", "kind", "organisation_id", "site_id", "body", "created_at"),
+            }
+            for table, columns in legacy_columns.items():
+                expected = [(name, "TEXT", int(index != 0), None, int(index == 0), 0)
+                            for index, name in enumerate(columns)]
+                actual = [(row[1], row[2].upper(), *row[3:]) for row in
+                          conn.execute(f"PRAGMA table_xinfo({table})")]
+                if table not in tables or actual != expected:
+                    raise RuntimeError("Unrecognised local database. Select an AisleSignals database or a new path.")
+            unique_email = any(
+                row[1] == 1 and row[2] == 0 and
+                [column[0] for column in conn.execute(
+                    "SELECT name FROM pragma_index_info(?)", (row[0],))] == ["email"]
+                for row in conn.execute("SELECT name,\"unique\",partial FROM pragma_index_list('users')")
+            )
+            if not unique_email:
+                raise RuntimeError("Unrecognised local database. Select an AisleSignals database or a new path.")
         recorded_mode = None
         if "runtime_settings" in tables:
             row = conn.execute(
                 "SELECT value FROM runtime_settings WHERE key='mode'"
             ).fetchone()
             recorded_mode = row[0] if row else None
+        explicit_mode = recorded_mode
         legacy_data = any(
             table in tables and conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
             for table in ("users", "entities")
@@ -67,6 +115,29 @@ class Store:
                 "Database mode mismatch. Preserve this database and select a separate "
                 "database for pilot or synthetic mode; automatic conversion is refused."
             )
+        if version >= 2 and explicit_mode is None:
+            raise RuntimeError("Database provenance is missing. Preserve this database; automatic repair is refused.")
+        identity = None
+        if "runtime_settings" in tables:
+            identity = conn.execute("SELECT value FROM runtime_settings WHERE key='installation_id'").fetchone()
+        if identity is not None:
+            try:
+                if str(UUID(identity[0])) != identity[0] or UUID(identity[0]).int == 0:
+                    raise ValueError
+            except (ValueError, TypeError, AttributeError):
+                raise RuntimeError("Invalid local installation identity. Preserve this database; automatic replacement is refused.") from None
+        objects = _cloud_schema_objects(conn)
+        if objects or version == LOCAL_SCHEMA_VERSION:
+            if objects != _expected_cloud_schema():
+                raise RuntimeError("Incompatible local cloud schema. Preserve this database; automatic repair is refused.")
+            rows = conn.execute("SELECT version FROM cloud_sync_schema").fetchall()
+            if len(rows) != 1 or rows[0][0] != cloud_outbox.SCHEMA_VERSION:
+                raise RuntimeError("Unsupported local cloud schema version.")
+            bindings = conn.execute("SELECT DISTINCT installation_id FROM cloud_sync_bindings").fetchall()
+            if (version == LOCAL_SCHEMA_VERSION and identity is None) or any(not identity or row[0] != identity[0] for row in bindings):
+                raise RuntimeError("Local cloud bindings do not match the installation identity.")
+            if mode == "synthetic" and bindings:
+                raise RuntimeError("Synthetic workspaces cannot contain cloud bindings.")
 
     @classmethod
     def prepare_pilot_database(cls, path):
@@ -114,11 +185,13 @@ class Store:
             self.prepare_pilot_database(self.path)
         else:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        with self.transaction() as conn:
+        # Do not change WAL mode until schema migration has committed. A failed
+        # additive migration must roll back all DDL, identity and version changes.
+        with self.transaction(initialising=True) as conn:
             # Check provenance before any schema changes. An unmarked existing
             # database belongs to the legacy synthetic build, never to a pilot.
             self.validate_provenance(conn, mode)
-            conn.executescript("""
+            base_schema = """
                 CREATE TABLE IF NOT EXISTS users (
                     id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
                     role TEXT NOT NULL, organisation_id TEXT NOT NULL, site_id TEXT NOT NULL,
@@ -158,13 +231,14 @@ class Store:
                     token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
                     organisation_id TEXT NOT NULL, site_id TEXT NOT NULL);
 
-            """)
-            conn.execute("BEGIN IMMEDIATE")
-            # Older synthetic-only binaries reject v2 before they can seed a
-            # demo account into a protected workspace. This is additive; an
-            # intentional rollback must use a pre-upgrade backup.
-            conn.execute("PRAGMA user_version=2")
+            """
+            for statement in base_schema.split(";"):
+                if statement.strip():
+                    conn.execute(statement)
+            cloud_outbox.install_schema(conn)
+            conn.execute(f"PRAGMA user_version={LOCAL_SCHEMA_VERSION}")
             conn.execute("INSERT OR IGNORE INTO runtime_settings VALUES('mode',?)", (mode,))
+            conn.execute("INSERT OR IGNORE INTO runtime_settings VALUES('installation_id',?)", (str(uuid4()),))
             if mode == "synthetic":
                 if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
                     self.seed(conn)
@@ -216,7 +290,7 @@ class Store:
         return sorted(result, key=lambda item: (item["name"].casefold(), item["id"]))
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, initialising=False):
         # FastAPI may run a synchronous yield dependency's enter, handler and
         # exit on different worker threads. This connection is still owned by
         # one sequential request/transaction, never shared with background jobs.
@@ -225,11 +299,17 @@ class Store:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=10000")
-        conn.execute("PRAGMA journal_mode=WAL")
         try:
+            # Read-only provenance checks happen before journal/header writes.
+            self.validate_provenance(conn, self.mode)
+            if not initialising:
+                conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
+            self.validate_provenance(conn, self.mode)
             yield conn
             conn.commit()
+            if initialising:
+                conn.execute("PRAGMA journal_mode=WAL")
         except BaseException:
             conn.rollback()
             raise
