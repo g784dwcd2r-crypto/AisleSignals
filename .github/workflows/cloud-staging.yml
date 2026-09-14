@@ -18,20 +18,6 @@ on:
       - 'deployment/render-staging.yaml'
       - '.github/workflows/cloud-staging.yml'
   pull_request:
-    paths:
-      - 'apps/control/**'
-      - 'scripts/build_control.py'
-      - 'scripts/cloud_companion.py'
-      - 'scripts/cloud_private_windows.py'
-      - 'control-playwright.config.ts'
-      - 'tests/control-e2e/**'
-      - '.node-version'
-      - 'services/api/**'
-      - 'tests/api/test_cloud_*.py'
-      - 'services/cloud/**'
-      - 'tests/cloud/**'
-      - 'deployment/render-staging.yaml'
-      - '.github/workflows/cloud-staging.yml'
   workflow_dispatch:
 
 permissions:

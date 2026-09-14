@@ -151,6 +151,15 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
             headers={} if result.ready else {'Retry-After': '2'},
         )
 
+    @app.get('/health/release')
+    async def release():
+        if settings.release_sha is None:
+            return JSONResponse(
+                {'error': {'code': 'RELEASE_IDENTITY_UNAVAILABLE', 'message': 'Release identity is unavailable.'}},
+                status_code=503,
+            )
+        return {'environment': settings.environment, 'release_sha': settings.release_sha}
+
     directory = web_dist if web_dist is not None else WEB_DIST
 
     @app.get('/')

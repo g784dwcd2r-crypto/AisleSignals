@@ -3,8 +3,9 @@
 Cloud release operators should use the read-only
 [cloud deployment audit](../docs/release/cloud-deployment-audit.md) to verify the
 public health/authentication contract and exact built management-console files.
-That check does not inspect Render billing, backups, secrets or the backend
-commit, and it performs no deployment.
+With `--expected-sha`, it also verifies Render's validated runtime commit
+identity. It does not inspect Render billing, backups or secrets, and performs no
+deployment.
 The separate [production operations runbook](../docs/release/production-operations.md)
 covers the manual paid Render release path, pre-deploy migration and rollback.
 

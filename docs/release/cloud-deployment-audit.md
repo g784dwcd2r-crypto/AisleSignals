@@ -30,8 +30,9 @@ The public staging origin
 | frontend release | Exact SHA-256 match for `index.html`, JavaScript and CSS built from the audited main checkout |
 
 This proves public availability, the narrow readiness contract, frontend source
-parity and anonymous denial at the observation time. It does not prove the
-deployed backend commit. The service does not expose a safe release identifier.
+parity and anonymous denial at the observation time. That historical deployment
+did not expose the release identity route added by this change, so its backend
+commit remains unverified until a new candidate is deployed and audited.
 
 ## Repository fixes in this change
 
@@ -39,8 +40,10 @@ deployed backend commit. The service does not expose a safe release identifier.
 only a clean HTTPS origin, applies bounded requests without redirects, verifies
 the public fail-closed API contracts and security headers, and compares every
 file in a locally built management console byte-for-byte with the deployed files.
-With `--expected-sha`, it also requires a clean tracked checkout at that exact
-commit. Its optional JSON record contains no cookies, credentials or response
+The `/health/release` contract contains only the validated environment and
+40-character commit SHA. With `--expected-sha`, the verifier requires a clean
+tracked checkout at that exact commit and an exact match from the deployed
+backend. Its optional JSON record contains no cookies, credentials or response
 content.
 
 The manual **Production release gate** workflow checks out only the exact current
@@ -86,9 +89,8 @@ Before a production deployment, an authorised operator must provide or record:
 4. GitHub main-branch protection and a protected production environment with
    required reviewers. The audit found main unprotected, no repository ruleset,
    and no GitHub Actions environment.
-5. A backend release identifier returned from a safe public health/version route,
-   so the deployed server code can be matched to the gated SHA without relying
-   on the frontend bundle.
+5. A successful post-deploy audit proving that `/health/release`, the frontend
+   files and the clean local checkout all match the exact gated SHA.
 
 Until these are observed, staging is healthy but production deployment and
 recovery remain unverified.

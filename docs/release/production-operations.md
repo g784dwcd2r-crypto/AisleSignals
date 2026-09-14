@@ -41,12 +41,16 @@ Set secret values only in Render's protected environment controls:
 | `CLOUD_AUTH_KEY` | canonical base64url 32-byte key, backed up with the database recovery materials |
 | `CLOUD_BOOTSTRAP_TOKEN` | independent 43–128 character URL-safe token; remove after first owner setup |
 | `CLOUD_EVIDENCE_MODE` | keep `METADATA_ONLY` until the separate R2 gates pass |
+| `RENDER_GIT_COMMIT` | provider-supplied exact deploy SHA; production refuses missing or malformed values |
 
-Render supplies `RENDER_EXTERNAL_HOSTNAME`; extra custom domains must be explicit
-in `CLOUD_ALLOWED_HOSTS`. Production refuses to load without its database and
-authentication key. Secure cookies, same-origin mutation checks and HSTS apply
-to both production and staging. Secret values must not appear in Git, command
-arguments, screenshots, tickets or release evidence.
+Render supplies `RENDER_EXTERNAL_HOSTNAME` and `RENDER_GIT_COMMIT`; do not set or
+override them. Extra custom domains must be explicit in `CLOUD_ALLOWED_HOSTS`.
+Production refuses to load without its database, authentication key and valid
+lowercase 40-hex release SHA. `CLOUD_RELEASE_SHA` exists only for explicit
+non-Render test processes and is rejected when `RENDER=true`. Secure cookies,
+same-origin mutation checks and HSTS apply to both production and staging. Secret
+values must not appear in Git, command arguments, screenshots, tickets or release
+evidence.
 
 If encrypted evidence is approved later, add the complete R2 policy, keyring,
 current key version, EU bucket and scoped S3 credentials atomically in one
@@ -71,8 +75,9 @@ fails closed.
    runs migrations. A skipped or failed pre-deploy step therefore cannot be
    hidden by application startup.
 7. Record the Render deploy ID, service/database IDs, hostname, SHA and UTC time.
-   Run `deployment/verify_cloud_release.py` against the production HTTPS origin
-   and archive its JSON record outside the running service.
+   Run `deployment/verify_cloud_release.py --expected-sha <gated-sha>` against
+   the production HTTPS origin. It requires `/health/release` to report that
+   exact backend SHA and archives the result outside the running service.
 8. Sign in using a named owner and MFA for a read-only dashboard check. Run a
    labelled end-to-end observation only from an authorised commissioned test
    device under the applicable retention procedure.

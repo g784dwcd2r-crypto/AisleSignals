@@ -33,6 +33,7 @@ class CloudSettings:
     port: int
     auth_key: str | None = field(default=None, repr=False)
     bootstrap_token: str | None = field(default=None, repr=False)
+    release_sha: str | None = None
     evidence_mode: str = "METADATA_ONLY"
     evidence_policy: str | None = None
     evidence_keks: tuple[tuple[str, bytes], ...] = field(default=(), repr=False)
@@ -111,8 +112,17 @@ class CloudSettings:
                 raise ConfigurationError("CLOUD_AUTH_KEY must be a canonical base64url-encoded 32-byte secret.") from None
         if bootstrap_token and (not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", bootstrap_token) or not auth_key):
             raise ConfigurationError("CLOUD_BOOTSTRAP_TOKEN requires a random URL-safe secret and CLOUD_AUTH_KEY.")
-        if environment == "production" and (not database_url or not auth_key):
-            raise ConfigurationError("Production requires DATABASE_URL and CLOUD_AUTH_KEY.")
+        render_release_sha = values.get("RENDER_GIT_COMMIT") or None
+        explicit_release_sha = values.get("CLOUD_RELEASE_SHA") or None
+        if render_release_sha and not re.fullmatch(r"[0-9a-f]{40}", render_release_sha):
+            raise ConfigurationError("RENDER_GIT_COMMIT must be a lowercase 40-hex commit SHA.")
+        if explicit_release_sha and not re.fullmatch(r"[0-9a-f]{40}", explicit_release_sha):
+            raise ConfigurationError("CLOUD_RELEASE_SHA must be a lowercase 40-hex commit SHA.")
+        if on_render and explicit_release_sha:
+            raise ConfigurationError("Render release identity must use RENDER_GIT_COMMIT.")
+        release_sha = render_release_sha if on_render else explicit_release_sha
+        if environment == "production" and (not database_url or not auth_key or not release_sha):
+            raise ConfigurationError("Production requires DATABASE_URL, CLOUD_AUTH_KEY and a release commit SHA.")
         evidence_mode = values.get("CLOUD_EVIDENCE_MODE", "METADATA_ONLY")
         if evidence_mode not in {"METADATA_ONLY", "ENCRYPTED"}:
             raise ConfigurationError("CLOUD_EVIDENCE_MODE must be METADATA_ONLY or ENCRYPTED.")
@@ -185,6 +195,7 @@ class CloudSettings:
             port=port,
             auth_key=auth_key,
             bootstrap_token=bootstrap_token,
+            release_sha=release_sha,
             evidence_mode=evidence_mode,
             evidence_policy=evidence_policy,
             evidence_keks=evidence_keks,

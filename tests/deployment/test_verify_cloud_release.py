@@ -17,6 +17,7 @@ HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
 }
+RELEASE_SHA = "a" * 40
 
 
 class Response:
@@ -49,6 +50,7 @@ class Opener:
         contracts = {
             "/health/live": (200, {"status": "alive", "stage": "management-console"}),
             "/health/ready": (200, {"status": "ready", "code": "READY", "scope": "database-schema-only"}),
+            "/health/release": (200, {"environment": "production", "release_sha": RELEASE_SHA}),
             "/control-api/session": (401, {"error": {"code": "SESSION_REQUIRED", "message": "Sign in again to continue."}}),
             "/api/health": (404, {"detail": "Not Found"}),
             "/control-api/setup/status": (200, {"configured": True, "needs_setup": False}),
@@ -72,13 +74,17 @@ def fixture(tmp_path):
     return root, {"/": (root / "index.html").read_bytes(), "/assets/app.js": (root / "assets/app.js").read_bytes()}
 
 
-def test_audit_matches_exact_frontend_and_public_fail_closed_contract(tmp_path):
+def test_audit_matches_exact_frontend_and_public_fail_closed_contract(tmp_path, monkeypatch):
     root, files = fixture(tmp_path)
-    result = audit("https://control.example.test", root, require_configured=True, opener=Opener(files))
+    monkeypatch.setattr("deployment.verify_cloud_release._checkout_sha",
+                        lambda repo, expected: RELEASE_SHA)
+    result = audit("https://control.example.test", root, expected_sha=RELEASE_SHA,
+                   require_configured=True, opener=Opener(files))
     assert result["frontend_exact_match"] is True
     assert result["setup"] == {"configured": True, "needs_setup": False}
     assert set(result["files"]) == {"index.html", "assets/app.js"}
     assert result["public_checks"]["/control-api/session"] == 401
+    assert result["deployed_release"] == {"environment": "production", "release_sha": RELEASE_SHA}
 
 
 @pytest.mark.parametrize("base_url", [
@@ -93,6 +99,8 @@ def test_audit_rejects_unsafe_origins(tmp_path, base_url):
 
 @pytest.mark.parametrize("endpoint,change", [
     ("/health/ready", (503, b'{"status":"unavailable"}')),
+    ("/health/release", (404, b'{"detail":"Not Found"}')),
+    ("/health/release", (200, b'{"environment":"production","release_sha":"invalid"}')),
     ("/control-api/session", (200, b'{}')),
     ("/api/health", (200, b'{"status":"ok"}')),
     ("/assets/app.js", (200, b"changed")),
@@ -101,6 +109,18 @@ def test_audit_rejects_unready_auth_mount_and_asset_drift(tmp_path, endpoint, ch
     root, files = fixture(tmp_path)
     with pytest.raises(AuditFailure):
         audit("https://control.example.test", root, opener=Opener(files, {endpoint: change}))
+
+
+def test_audit_rejects_backend_sha_that_differs_from_expected_release(tmp_path, monkeypatch):
+    root, files = fixture(tmp_path)
+    monkeypatch.setattr("deployment.verify_cloud_release._checkout_sha",
+                        lambda repo, expected: RELEASE_SHA)
+    changed = {"/health/release": (200, json.dumps({
+        "environment": "production", "release_sha": "b" * 40,
+    }).encode())}
+    with pytest.raises(AuditFailure, match="Deployed backend SHA"):
+        audit("https://control.example.test", root, expected_sha=RELEASE_SHA,
+              opener=Opener(files, changed))
 
 
 def test_audit_rejects_incomplete_security_headers(tmp_path):

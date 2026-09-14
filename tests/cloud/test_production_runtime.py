@@ -12,7 +12,7 @@ from starlette.requests import Request
 import yaml
 
 from services.cloud import prepare_release, start_checked
-from services.cloud.app import SafeResponses
+from services.cloud.app import SafeResponses, create_app
 from services.cloud.config import CloudSettings, ConfigurationError
 from services.cloud.control_auth import _session_response
 from services.cloud.control_store import COOKIE_NAME, ControlError, cookie_name, require_origin
@@ -21,6 +21,7 @@ from services.cloud.database import Readiness
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTH_KEY = "eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg="
+RELEASE_SHA = "a" * 40
 
 
 def production_settings(**overrides):
@@ -29,12 +30,13 @@ def production_settings(**overrides):
         "CLOUD_ALLOWED_HOSTS": "control.synthetic.invalid",
         "DATABASE_URL": "postgresql://user:synthetic-password@db.synthetic.invalid/aislesignals",
         "CLOUD_AUTH_KEY": AUTH_KEY,
+        "CLOUD_RELEASE_SHA": RELEASE_SHA,
         **overrides,
     })
 
 
 def test_production_configuration_requires_host_database_password_auth_key_and_tls():
-    settings = production_settings(RENDER="true")
+    settings = production_settings(RENDER="true", CLOUD_RELEASE_SHA="", RENDER_GIT_COMMIT=RELEASE_SHA)
     assert settings.environment == "production" and settings.bind_host == "0.0.0.0"
     assert settings.database_sslmode == "require" and cookie_name(settings) == COOKIE_NAME
     base = {
@@ -43,7 +45,8 @@ def test_production_configuration_requires_host_database_password_auth_key_and_t
         "DATABASE_URL": "postgresql://user:synthetic-password@db.synthetic.invalid/aislesignals",
         "CLOUD_AUTH_KEY": AUTH_KEY,
     }
-    for missing in ("CLOUD_ALLOWED_HOSTS", "DATABASE_URL", "CLOUD_AUTH_KEY"):
+    base["CLOUD_RELEASE_SHA"] = RELEASE_SHA
+    for missing in ("CLOUD_ALLOWED_HOSTS", "DATABASE_URL", "CLOUD_AUTH_KEY", "CLOUD_RELEASE_SHA"):
         with pytest.raises(ConfigurationError):
             CloudSettings.from_env({key: value for key, value in base.items() if key != missing})
     for changes in (
@@ -51,9 +54,22 @@ def test_production_configuration_requires_host_database_password_auth_key_and_t
         {"DATABASE_URL": "postgresql://user@db.synthetic.invalid/aislesignals"},
         {"DATABASE_URL": "postgresql://user:password@db.synthetic.invalid/aislesignals?sslmode=disable"},
         {"RENDER": "true", "CLOUD_ENV": "development"},
+        {"CLOUD_RELEASE_SHA": "A" * 40},
+        {"RENDER": "true", "RENDER_GIT_COMMIT": RELEASE_SHA},
     ):
         with pytest.raises(ConfigurationError):
             production_settings(**changes)
+
+
+def test_render_production_requires_provider_release_sha_and_rejects_override():
+    with pytest.raises(ConfigurationError, match="release commit SHA"):
+        production_settings(RENDER="true", CLOUD_RELEASE_SHA="")
+    with pytest.raises(ConfigurationError, match="RENDER_GIT_COMMIT"):
+        production_settings(RENDER="true", RENDER_GIT_COMMIT="not-a-sha")
+    with pytest.raises(ConfigurationError, match="must use RENDER_GIT_COMMIT"):
+        production_settings(RENDER="true", RENDER_GIT_COMMIT=RELEASE_SHA)
+    settings = production_settings(RENDER="true", CLOUD_RELEASE_SHA="", RENDER_GIT_COMMIT=RELEASE_SHA)
+    assert settings.release_sha == RELEASE_SHA
 
 
 def test_production_http_boundary_requires_https_hsts_and_secure_host_cookie():
@@ -75,6 +91,14 @@ def test_production_http_boundary_requires_https_hsts_and_secure_host_cookie():
     _session_response(settings, cookie_response, "x" * 43, {})
     cookie = cookie_response.headers["set-cookie"]
     assert cookie.startswith(f"{COOKIE_NAME}=") and "Secure" in cookie and "HttpOnly" in cookie
+
+
+def test_public_release_identity_contains_only_validated_environment_and_sha():
+    response = TestClient(create_app(production_settings()),
+                          base_url="https://control.synthetic.invalid").get("/health/release")
+    assert response.status_code == 200
+    assert response.json() == {"environment": "production", "release_sha": RELEASE_SHA}
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_production_server_checks_schema_without_migrating(monkeypatch, capsys):
@@ -162,6 +186,7 @@ def test_render_production_blueprint_is_manual_paid_and_separate():
     assert variables["CLOUD_ENV"]["value"] == "production"
     assert variables["CLOUD_DATABASE_SSLMODE"]["value"] == "require"
     assert variables["CLOUD_EVIDENCE_MODE"]["value"] == "METADATA_ONLY"
+    assert "CLOUD_RELEASE_SHA" not in variables and "RENDER_GIT_COMMIT" not in variables
     assert variables["CLOUD_AUTH_KEY"] == {"key": "CLOUD_AUTH_KEY", "sync": False}
     assert variables["CLOUD_BOOTSTRAP_TOKEN"] == {"key": "CLOUD_BOOTSTRAP_TOKEN", "sync": False}
 

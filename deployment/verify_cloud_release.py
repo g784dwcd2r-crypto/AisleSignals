@@ -125,6 +125,17 @@ def audit(base_url: str, web_dist: Path, *, expected_sha: str | None = None,
             raise AuditFailure(f"Deployment contract mismatch for {endpoint}.")
         checks[endpoint] = status
 
+    status, headers, body = _request(client, origin, "/health/release")
+    _security(headers, "/health/release")
+    deployed = _json(body, "/health/release")
+    if (status != 200 or type(deployed) is not dict or set(deployed) != {"environment", "release_sha"}
+            or deployed.get("environment") not in {"production", "staging"}
+            or not re.fullmatch(r"[0-9a-f]{40}", deployed.get("release_sha", ""))):
+        raise AuditFailure("Deployment release identity has an invalid shape.")
+    if expected_sha and deployed["release_sha"] != expected_sha:
+        raise AuditFailure("Deployed backend SHA does not match the expected release SHA.")
+    checks["/health/release"] = status
+
     status, headers, body = _request(client, origin, "/control-api/setup/status")
     _security(headers, "/control-api/setup/status")
     setup = _json(body, "/control-api/setup/status")
@@ -152,16 +163,16 @@ def audit(base_url: str, web_dist: Path, *, expected_sha: str | None = None,
         raise AuditFailure("Built management console has no index.html.")
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "base_url": origin,
         "release_sha": release_sha,
+        "deployed_release": deployed,
         "frontend_exact_match": True,
         "files": files,
         "public_checks": checks,
         "setup": setup,
         "limits": [
-            "Public checks do not verify the deployed backend SHA.",
             "Public checks do not verify the Render plan, secrets, backups, restore access or database isolation.",
         ],
     }
