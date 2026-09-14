@@ -73,7 +73,7 @@ def test_actual_missing_schema_then_idempotent_migration_and_readiness(empty_dat
         rows = connection.execute("SELECT version, checksum FROM aislesignals_control.schema_version").fetchall()
         assert rows == [(SCHEMA_VERSION, SCHEMA_CHECKSUM)]
         tables = connection.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'aislesignals_control'").fetchall()
-        assert {row[0] for row in tables} == {"schema_version", "organisations", "pharmacies", "users", "user_pharmacies", "sessions", "invitations", "auth_challenges", "auth_attempts", "audit_entries", "device_enrolments", "devices", "alerts", "incidents"}
+        assert {row[0] for row in tables} == {"schema_version", "organisations", "pharmacies", "users", "user_pharmacies", "sessions", "invitations", "auth_challenges", "auth_attempts", "audit_entries", "device_enrolments", "devices", "alerts", "incidents", "device_sync_receipts"}
         assert connection.execute("SELECT count(*) FROM aislesignals_control.users").fetchone() == (0,)
 
 

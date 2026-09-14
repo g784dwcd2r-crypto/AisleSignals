@@ -33,6 +33,8 @@ export function errorMessage(error: unknown): string {
       return "Your session has expired. Sign in again to continue.";
     if (error.status === 403)
       return "This action is not available to your account. Refresh your session or contact your workspace owner.";
+    if (error.status === 404)
+      return "This record is no longer available. It may have expired, been withdrawn or moved outside your access.";
     if (error.status === 409)
       return "This record changed or already exists. Refresh and check its current details.";
     if (error.status === 429)

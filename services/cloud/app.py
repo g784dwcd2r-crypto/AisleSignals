@@ -79,6 +79,7 @@ class SafeResponses:
 def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | None = None, web_dist: Path | None = None) -> FastAPI:
     from .control_auth import create_auth_router
     from .control_operations import create_device_router, create_operations_router
+    from .device_sync import create_device_sync_router
     from .control_store import ControlError, ControlStore
 
     settings = settings or CloudSettings.from_env()
@@ -100,6 +101,7 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
     app.include_router(create_auth_router(settings, store))
     app.include_router(create_operations_router())
     app.include_router(create_device_router())
+    app.include_router(create_device_sync_router())
 
     @app.get('/health/live')
     async def live():

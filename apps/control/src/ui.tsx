@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { client, errorMessage, isCancelled } from "./api";
+import { ApiError, client, errorMessage, isCancelled } from "./api";
 
 export function label(value: string): string {
   return value
@@ -369,8 +369,16 @@ export function useResource<T>(path: string, revision = 0) {
         }
       })
       .catch((reason: unknown) => {
-        if (!isCancelled(reason) && !controller.signal.aborted)
+        if (!isCancelled(reason) && !controller.signal.aborted) {
+          if (
+            reason instanceof ApiError &&
+            [401, 403, 404].includes(reason.status)
+          ) {
+            setData(null);
+            setUpdatedAt(null);
+          }
           setError(reason);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);

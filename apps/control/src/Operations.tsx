@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Bell,
@@ -52,6 +52,39 @@ function path(name: string, scope: string, status = "") {
   if (status && status !== "ALL") query.set("status", status);
   return `/${name}${query.size ? `?${query}` : ""}`;
 }
+function sourceAvailable(alert: Alert, now: number) {
+  if (!alert.source_expires_at) return true;
+  const deadline = Date.parse(alert.source_expires_at);
+  return Number.isFinite(deadline) && deadline > now;
+}
+function useSourceClock(alerts: readonly (Alert | null)[]) {
+  const [tick, setTick] = useState(0);
+  const deadlines = alerts
+    .map((alert) => alert?.source_expires_at || "")
+    .join("|");
+  useEffect(() => {
+    const now = Date.now();
+    const upcoming = deadlines
+      .split("|")
+      .map(Date.parse)
+      .filter((value) => Number.isFinite(value) && value > now);
+    const update = () => setTick((value) => value + 1);
+    const timer = upcoming.length
+      ? window.setTimeout(
+          update,
+          Math.min(2_147_483_647, Math.min(...upcoming) - now),
+        )
+      : null;
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, [deadlines, tick]);
+  return Date.now();
+}
 function Monitoring({ device }: { device: Device }) {
   const known = connectionStatus(device) === "ONLINE";
   return (
@@ -78,6 +111,9 @@ function AlertRow({ alert, open }: { alert: Alert; open: () => void }) {
         </span>
         <small>
           {when(alert.occurred_at)}
+          {alert.timestamp_basis === "LAPTOP_REPORTED"
+            ? " · Laptop-reported time"
+            : ""}
           {alert.historical ? " · Synced history" : ""}
         </small>
       </div>
@@ -98,13 +134,19 @@ export function Overview(
   );
   const [alertId, setAlertId] = useState<string | null>(null);
   const data = resource.data;
+  const sourceNow = useSourceClock(data?.alerts || []);
   if (!data)
     return resource.error ? (
       <ErrorNotice error={resource.error} retry={resource.refresh} />
     ) : (
       <Loading text="Getting your pharmacy overview…" />
     );
-  const attention = data.alerts.filter((alert) => alert.status !== "REVIEWED");
+  const attention = data.alerts.filter(
+    (alert) => alert.status !== "REVIEWED" && sourceAvailable(alert, sourceNow),
+  );
+  const expiredSources = data.alerts.some(
+    (alert) => !sourceAvailable(alert, sourceNow),
+  );
   return (
     <>
       {Boolean(resource.error) && (
@@ -144,8 +186,10 @@ export function Overview(
           },
           {
             name: "Open alerts",
-            value: data.summary.open_alerts,
-            detail: "Observations awaiting attention",
+            value: expiredSources ? "—" : data.summary.open_alerts,
+            detail: expiredSources
+              ? "Refresh for the current total"
+              : "Observations awaiting attention",
             icon: Bell,
             page: "alerts" as Page,
             tone: "amber",
@@ -349,7 +393,11 @@ export function Overview(
           subtitle="Record a clear, factual staff decision."
           close={() => setAlertId(null)}
         >
-          <AlertDetail id={alertId} changed={props.changed} />
+          <AlertDetail
+            id={alertId}
+            changed={props.changed}
+            revision={props.revision}
+          />
         </Drawer>
       )}
     </>
@@ -725,8 +773,19 @@ export function Laptops(props: WorkspaceProps) {
   );
 }
 
-function AlertDetail({ id, changed }: { id: string; changed: () => void }) {
-  const resource = useResource<Alert>(`/alerts/${encodeURIComponent(id)}`);
+function AlertDetail({
+  id,
+  changed,
+  revision,
+}: {
+  id: string;
+  changed: () => void;
+  revision: number;
+}) {
+  const resource = useResource<Alert>(
+    `/alerts/${encodeURIComponent(id)}`,
+    revision,
+  );
   const [outcome, setOutcome] = useState<Outcome>("UNCLEAR");
   const [note, setNote] = useState("");
   const [createIncident, setCreateIncident] = useState(false);
@@ -736,6 +795,22 @@ function AlertDetail({ id, changed }: { id: string; changed: () => void }) {
     resource.refresh();
   });
   const alert = resource.data;
+  const sourceNow = useSourceClock([alert]);
+  const sourceExpired = Boolean(alert && !sourceAvailable(alert, sourceNow));
+  useEffect(() => {
+    if (!sourceExpired) return;
+    setNote("");
+    setTitle("");
+    setCreateIncident(false);
+    setOutcome("UNCLEAR");
+  }, [sourceExpired]);
+  if (sourceExpired)
+    return (
+      <Empty title="Source observation expired">
+        This laptop observation is no longer available for review. Any incident
+        already created by staff remains in Incidents.
+      </Empty>
+    );
   if (!alert)
     return resource.error ? (
       <ErrorNotice error={resource.error} retry={resource.refresh} />
@@ -762,7 +837,15 @@ function AlertDetail({ id, changed }: { id: string; changed: () => void }) {
         <Detail label="Laptop / source">
           {alert.device_name} · {alert.source_label || "Unspecified source"}
         </Detail>
-        <Detail label="Occurred">{when(alert.occurred_at)}</Detail>
+        <Detail
+          label={
+            alert.timestamp_basis === "LAPTOP_REPORTED"
+              ? "Reported observation time — laptop clock"
+              : "Source-reported time"
+          }
+        >
+          {when(alert.occurred_at)}
+        </Detail>
         <Detail label="Received by console">{when(alert.received_at)}</Detail>
         <Detail label="Observation type">{label(alert.event_code)}</Detail>
       </dl>
@@ -770,6 +853,12 @@ function AlertDetail({ id, changed }: { id: string; changed: () => void }) {
         Times shown in Europe/Dublin. This console holds metadata only. Review
         authorised evidence and circumstances before recording an outcome.
       </p>
+      {alert.timestamp_basis === "LAPTOP_REPORTED" && (
+        <p className="notice subtle">
+          The laptop reported this observation when its local API accepted it.
+          This timestamp does not establish the time the video was captured.
+        </p>
+      )}
       {alert.review ? (
         <section className="review-complete">
           <span className="inline-icon">
@@ -887,10 +976,13 @@ export function Alerts(props: WorkspaceProps) {
     path("alerts", props.scope, filter),
     props.revision,
   );
-  const items = (resource.data?.items || []).filter((item) =>
-    `${item.title} ${item.pharmacy_name} ${item.source_label} ${item.device_name}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
+  const sourceNow = useSourceClock(resource.data?.items || []);
+  const items = (resource.data?.items || []).filter(
+    (item) =>
+      sourceAvailable(item, sourceNow) &&
+      `${item.title} ${item.pharmacy_name} ${item.source_label} ${item.device_name}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   );
   return (
     <>
@@ -942,7 +1034,17 @@ export function Alerts(props: WorkspaceProps) {
                 ),
               },
               { title: "Pharmacy", cell: (item) => item.pharmacy_name },
-              { title: "Occurred", cell: (item) => when(item.occurred_at) },
+              {
+                title: "Reported time",
+                cell: (item) => (
+                  <span>
+                    {when(item.occurred_at)}
+                    {item.timestamp_basis === "LAPTOP_REPORTED" && (
+                      <small>Laptop clock</small>
+                    )}
+                  </span>
+                ),
+              },
               {
                 title: "Status",
                 cell: (item) => <Badge value={item.status} />,
@@ -980,7 +1082,11 @@ export function Alerts(props: WorkspaceProps) {
       </section>
       {selected && (
         <Drawer title="Review observation" close={() => setSelected(null)}>
-          <AlertDetail id={selected} changed={props.changed} />
+          <AlertDetail
+            id={selected}
+            changed={props.changed}
+            revision={props.revision}
+          />
         </Drawer>
       )}
     </>
@@ -1059,13 +1165,16 @@ function IncidentDetail({
   id,
   changed,
   close,
+  revision,
 }: {
   id: string;
   changed: () => void;
   close: () => void;
+  revision: number;
 }) {
   const resource = useResource<Incident>(
     `/incidents/${encodeURIComponent(id)}`,
+    revision,
   );
   if (!resource.data)
     return resource.error ? (
@@ -1076,6 +1185,12 @@ function IncidentDetail({
   return (
     <>
       <h3>{resource.data.title}</h3>
+      {resource.data.source_unavailable && (
+        <div className="notice warning-notice">
+          The source observation has expired or been withdrawn. Staff review,
+          case notes and follow-up remain available.
+        </div>
+      )}
       <IncidentForm
         key={resource.data.version}
         item={resource.data}
@@ -1180,6 +1295,7 @@ export function Incidents(props: WorkspaceProps) {
             id={selected}
             changed={props.changed}
             close={() => setSelected(null)}
+            revision={props.revision}
           />
         </Drawer>
       )}
