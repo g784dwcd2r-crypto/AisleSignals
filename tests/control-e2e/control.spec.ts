@@ -148,7 +148,9 @@ async function bootstrap(page: Page, installation: Installation) {
   await expect(
     page.getByRole("img", { name: "Authenticator setup QR code" }),
   ).toBeVisible();
-  await expect(page.getByText("Scan with your authenticator app")).toBeVisible();
+  await expect(
+    page.getByText("Scan with your authenticator app"),
+  ).toBeVisible();
   expect(
     (
       await page.request.get(installation.url + "/control-api/session")
@@ -684,6 +686,186 @@ test("stale staff review conflicts and scope changes discard unsaved notes", asy
   await expect(page.locator("body")).not.toContainText(
     "Synthetic abandoned draft",
   );
+});
+
+test("optional evidence is accessible across ready, pending, partial, expired, deleted and access-failure states without bypassing staff review", async ({
+  page,
+  installation,
+}) => {
+  await bootstrap(page, installation);
+  const branch = await addPharmacy(page, "Synthetic Evidence Pharmacy");
+  const laptop = await enrolLaptop(page, installation, branch);
+  const alert = await ingest(page, installation, laptop);
+  type Mode =
+    "READY" | "PENDING" | "PARTIAL" | "EXPIRED" | "DELETED" | "DENIED";
+  let mode: Mode = "READY";
+  const future = new Date(Date.now() + 3600000).toISOString();
+  const past = new Date(Date.now() - 1000).toISOString();
+  const snapshot = (state: string, suffix: string, expires_at = future) => ({
+    id: `11111111-1111-4111-8111-${suffix.padStart(12, "0")}`,
+    kind: "OVERVIEW",
+    content_type: "image/png",
+    byte_count: 68,
+    state,
+    expires_at,
+  });
+  const contract = () => {
+    if (mode === "PENDING")
+      return {
+        evidence_state: "PENDING",
+        evidence: [snapshot("PENDING", "2")],
+      };
+    if (mode === "PARTIAL")
+      return {
+        evidence_state: "PARTIAL",
+        evidence: [
+          snapshot("READY", "3"),
+          {
+            id: "22222222-2222-4222-8222-000000000004",
+            kind: "CLIP",
+            content_type: "video/mp4",
+            byte_count: 4096,
+            state: "PENDING",
+            expires_at: future,
+          },
+        ],
+      };
+    if (mode === "EXPIRED")
+      return {
+        evidence_state: "EXPIRED",
+        evidence: [snapshot("EXPIRED", "5", past)],
+      };
+    if (mode === "DELETED")
+      return {
+        evidence_state: "PARTIAL",
+        evidence: [snapshot("DELETED", "6")],
+      };
+    return {
+      evidence_state: "READY",
+      evidence: [snapshot("READY", mode === "DENIED" ? "7" : "1")],
+    };
+  };
+  await page.route(
+    `${installation.url}/control-api/alerts/${alert.id}`,
+    async (route) => {
+      const original = await route.fetch();
+      const detail = await original.json();
+      await route.fulfill({
+        status: original.status(),
+        contentType: "application/json",
+        headers: { "Cache-Control": "no-store" },
+        body: JSON.stringify({ ...detail, ...contract() }),
+      });
+    },
+  );
+  const onePixelPng = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  await page.route(
+    `${installation.url}/control-api/alerts/${alert.id}/evidence/*`,
+    async (route) => {
+      if (mode === "DENIED") {
+        await route.fulfill({ status: 403, body: "" });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        headers: { "Cache-Control": "no-store" },
+        body: onePixelPng,
+      });
+    },
+  );
+  await navigate(page, "Alerts");
+  const row = page.getByRole("row").filter({ hasText: "Synthetic camera 2" });
+  const open = async () => {
+    await row
+      .getByRole("button", { name: "Open record details", exact: true })
+      .click();
+    return page.getByRole("dialog");
+  };
+  const close = async () => {
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Close details", exact: true })
+      .click();
+  };
+
+  let dialog = await open();
+  await expect(
+    dialog.getByRole("img", {
+      name: "Authorised CCTV snapshot for staff review",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(dialog).toContainText("Contains personal data");
+  await close();
+
+  mode = "PENDING";
+  dialog = await open();
+  await expect(dialog).toContainText("Evidence is still transferring");
+  await expect(dialog).toContainText("Transfer pending");
+  await close();
+
+  mode = "PARTIAL";
+  dialog = await open();
+  await expect(dialog).toContainText("Some evidence is available");
+  await expect(
+    dialog.getByRole("heading", { name: "Overview snapshot" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("heading", { name: "Short evidence clip" }),
+  ).toBeVisible();
+  await close();
+
+  mode = "EXPIRED";
+  dialog = await open();
+  await expect(dialog).toContainText(
+    "Evidence expired and is no longer available",
+  );
+  await close();
+
+  mode = "DELETED";
+  dialog = await open();
+  await expect(dialog).toContainText(
+    "Evidence was deleted. The review record is unchanged.",
+  );
+  await close();
+
+  mode = "DENIED";
+  dialog = await open();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Evidence could not be loaded",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Retry evidence", exact: true }),
+  ).toBeVisible();
+  mode = "READY";
+  await dialog
+    .getByRole("button", { name: "Retry evidence", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("img", {
+      name: "Authorised CCTV snapshot for staff review",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await dialog
+    .getByLabel("Staff outcome", { exact: true })
+    .selectOption("UNCLEAR");
+  await dialog
+    .getByLabel(/^Review notes/)
+    .fill("Synthetic review based on authorised evidence and circumstances.");
+  const review = page.waitForResponse((response) =>
+    response.url().endsWith(`/alerts/${alert.id}/review`),
+  );
+  await dialog
+    .getByRole("button", { name: "Save review", exact: true })
+    .click();
+  expect((await review).status()).toBe(200);
+  await expect(dialog).toContainText("Staff review recorded");
+  await expect(dialog).toContainText("No case created");
 });
 
 test("management authentication and drawers are accessible by keyboard and on a phone", async ({

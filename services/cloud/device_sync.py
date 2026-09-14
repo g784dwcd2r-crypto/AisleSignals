@@ -87,7 +87,8 @@ def _purge_alerts(conn, device_id, ids):
         occurred_at=NULL,source_purged=true WHERE device_id=%s AND id=ANY(%s::uuid[])""", (device_id, ids))
     conn.execute(f"""DELETE FROM {SCHEMA}.alerts a WHERE device_id=%s AND id=ANY(%s::uuid[])
         AND review_outcome IS NULL AND review_note IS NULL
-        AND NOT EXISTS(SELECT 1 FROM {SCHEMA}.incidents i WHERE i.alert_id=a.id)""", (device_id, ids))
+        AND NOT EXISTS(SELECT 1 FROM {SCHEMA}.incidents i WHERE i.alert_id=a.id)
+        AND NOT EXISTS(SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=a.id AND e.state<>'DELETED')""", (device_id, ids))
     return len(ids)
 
 
@@ -100,6 +101,8 @@ def cleanup_device_sources(conn, device, *, limit=100):
     """
     if type(limit) is not int or not 1 <= limit <= 500:
         raise ValueError("Use a bounded cleanup batch.")
+    from .evidence_sync import mark_due_evidence
+    mark_due_evidence(conn, device, limit=limit)
     rows = conn.execute(f"""SELECT id FROM {SCHEMA}.alerts WHERE device_id=%s
         AND NOT source_purged AND (source_withdrawn_at IS NOT NULL OR source_expires_at<=clock_timestamp())
         ORDER BY received_at,id LIMIT %s FOR UPDATE""", (device["id"], limit)).fetchall()
@@ -170,6 +173,7 @@ def create_device_sync_router():
 
     @router.post("/withdrawals")
     def withdrawal(body: Withdrawal, request: Request):
+        from .evidence_sync import revoke_source_evidence
         with device_transaction(request) as (conn, device):
             row = conn.execute(f"SELECT * FROM {SCHEMA}.device_sync_receipts WHERE device_id=%s AND source_event_id=%s", (device["id"], body.source_event_id)).fetchone()
             alert = conn.execute(f"SELECT id FROM {SCHEMA}.alerts WHERE device_id=%s AND source_event_id=%s FOR UPDATE", (device["id"], body.source_event_id)).fetchone()
@@ -184,6 +188,7 @@ def create_device_sync_router():
             elif row["withdrawn_at"] is None:
                 conn.execute(f"UPDATE {SCHEMA}.device_sync_receipts SET withdrawn_at=%s,withdrawal_reason=%s WHERE device_id=%s AND source_event_id=%s", (stamp, body.reason, device["id"], body.source_event_id))
             if alert is not None:
+                revoke_source_evidence(conn, device, body.source_event_id)
                 conn.execute(f"UPDATE {SCHEMA}.alerts SET source_withdrawn_at=COALESCE(source_withdrawn_at,%s) WHERE id=%s", (stamp, alert["id"]))
                 _purge_alerts(conn, device["id"], [alert["id"]])
             cleanup_device_sources(conn, device)

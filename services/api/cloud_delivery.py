@@ -14,6 +14,7 @@ import threading
 import time
 
 from .cloud_outbox import OutboxError
+from .cloud_media_outbox import MediaClaim, MediaOutbox
 from .cloud_transport import CloudTransport, CloudTransportError, canonical_id
 from .evidence_crypto import EvidenceError, PilotDatabaseLock
 
@@ -89,8 +90,16 @@ def _valid_receipt(value, request):
                 return False
             canonical_id(value["id"])
             return request["receipt_id"] is None or value["id"] == request["receipt_id"]
-        return (set(value) == {"source_event_id", "withdrawn"} and value["withdrawn"] is True
-                and value["source_event_id"] == request["source_id"])
+        if request["operation"] == "WITHDRAWAL":
+            return (set(value) == {"source_event_id", "withdrawn"} and value["withdrawn"] is True
+                    and value["source_event_id"] == request["source_id"])
+        if request["operation"] == "MEDIA_MANIFEST":
+            return ({"evidence_id", "upload_required", "state"}.issubset(value)
+                    and value["state"] in {"PENDING", "READY"} and type(value["upload_required"]) is bool)
+        if request["operation"] == "MEDIA_CONTENT":
+            return ({"evidence_id", "state"}.issubset(value) and value["evidence_id"] == request["evidence_id"]
+                    and value["state"] == "READY")
+        return False
     except (ValueError, TypeError):
         return False
 
@@ -102,7 +111,10 @@ def _request_child(pipe):
         if not pipe.poll(35):
             return
         request = _receive_json(pipe)
-        if set(request) != {"origin", "credential", "operation", "payload", "source_id", "deadline", "receipt_id", "allow_local_test"}:
+        observation_fields = {"origin", "credential", "operation", "payload", "source_id", "deadline", "receipt_id", "allow_local_test"}
+        manifest_fields = {"origin", "credential", "operation", "payload", "source_id", "allow_local_test"}
+        content_fields = {"origin", "credential", "operation", "source_id", "evidence_id", "content_type", "sha256", "byte_count", "allow_local_test"}
+        if frozenset(request) not in {frozenset(observation_fields), frozenset(manifest_fields), frozenset(content_fields)}:
             raise ValueError
         transport = CloudTransport(request["origin"], allow_local_test=request["allow_local_test"])
         if request["operation"] == "OBSERVATION":
@@ -112,6 +124,14 @@ def _request_child(pipe):
         elif request["operation"] == "WITHDRAWAL":
             result = transport.withdrawal(request["credential"], request["payload"],
                                           expected_source_event_id=request["source_id"])
+        elif request["operation"] == "MEDIA_MANIFEST":
+            result = transport.evidence_manifest(request["credential"], request["source_id"], request["payload"])
+        elif request["operation"] == "MEDIA_CONTENT":
+            content = pipe.recv_bytes(350 * 1024)
+            if len(content) != request["byte_count"]:
+                raise ValueError
+            result = transport.evidence_content(request["credential"], request["evidence_id"], content,
+                                                content_type=request["content_type"], sha256=request["sha256"])
         else:
             raise ValueError
         _send_json(pipe, {"ok": True, "result": result})
@@ -176,7 +196,7 @@ class OwnedRequest:
             self._pipe = None
         return True
 
-    def perform(self, request, *, timeout, cancel, authorize, recheck_seconds):
+    def perform(self, request, *, timeout, cancel, authorize, recheck_seconds, content=None):
         if self.alive:
             raise RuntimeError("REQUEST_OWNER_BUSY")
         deadline, next_check = time.monotonic() + timeout, 0
@@ -231,6 +251,10 @@ class OwnedRequest:
                         if cancel.is_set() or not authorize() or time.monotonic() >= deadline:
                             return {"ok": False, "code": "CONTEXT_CHANGED", "retry_after": None}
                         _send_json(parent, request)
+                        if request.get("operation") == "MEDIA_CONTENT":
+                            if type(content) is not bytes or len(content) != request.get("byte_count"):
+                                raise ValueError
+                            parent.send_bytes(content)
                         sent, next_check = True, time.monotonic() + recheck_seconds
                     else:
                         if value.get("ok") is True and set(value) == {"ok", "result"} and _valid_receipt(value["result"], request):
@@ -256,11 +280,15 @@ class OwnedRequest:
 class CloudDelivery:
     """Provider + scoped source callback are mandatory trusted dependencies."""
 
-    def __init__(self, store, provider, *, source_state, policy=DeliveryPolicy(),
+    def __init__(self, store, provider, *, source_state, media_source=None, media_reader=None, policy=DeliveryPolicy(),
                  clock=None, allow_local_test=False, request_factory=OwnedRequest):
-        if not callable(source_state) or not isinstance(policy, DeliveryPolicy) or type(allow_local_test) is not bool:
+        if (not callable(source_state) or not isinstance(policy, DeliveryPolicy) or type(allow_local_test) is not bool
+                or (media_source is None) != (media_reader is None)
+                or media_source is not None and (not callable(media_source) or not callable(media_reader))):
             raise ValueError("INVALID_DELIVERY_CONFIG")
         self.store, self.provider, self.source_state, self.policy = store, provider, source_state, policy
+        self.media_source, self.media_reader = media_source, media_reader
+        self.media = MediaOutbox()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.allow_local_test = allow_local_test
         self._request = request_factory()
@@ -318,6 +346,7 @@ class CloudDelivery:
             reason = self._source_reason(conn, context, row, now)
             if reason:
                 context.outbox.withdraw(conn, context.scope, context.binding, row["id"], reason=reason, now=now)
+        self.media.reconcile(conn, context.scope, context.binding, now=now)
         context.outbox.prune_terminal(conn, context.scope, context.binding, now=now, limit=100)
 
     def _authorize(self, context, claim):
@@ -342,6 +371,19 @@ class CloudDelivery:
                     return False
             return True
 
+    def _authorize_media(self, context, claim):
+        if self._stop.is_set() or self.media_source is None:
+            return False
+        with self.store.transaction() as conn:
+            current = self.provider.delivery_context(conn)
+            if not self._same(context, current):
+                return False
+            row = conn.execute("SELECT * FROM cloud_media_items WHERE id=? AND binding_id=?", (claim.id, current.binding.id)).fetchone()
+            expected = 'LEASED_MANIFEST' if claim.operation == 'MEDIA_MANIFEST' else 'LEASED_CONTENT'
+            return bool(row is not None and row['state'] == expected and row['lease_token'] == claim.token
+                and row['claim_generation'] == current.binding.generation and self.clock() < claim.lease_until
+                and self.media_source(conn, current, claim))
+
     def run_once(self):
         if not self._pass_lock.acquire(blocking=False):
             return DeliveryResult("BUSY")
@@ -364,7 +406,10 @@ class CloudDelivery:
                 claim = context.outbox.claim(conn, context.scope, context.binding, now=now,
                                              lease_seconds=self.policy.lease_seconds)
                 if claim is None:
-                    return DeliveryResult("IDLE")
+                    claim = self.media.claim(conn, context.scope, context.binding, now=now,
+                                             lease_seconds=self.policy.lease_seconds) if self.media_source is not None else None
+                    if claim is None:
+                        return DeliveryResult("IDLE")
                 row = self._row(conn, context, claim.id)
                 receipt_id = row["observation_receipt_id"] if claim.operation == "OBSERVATION" else None
             remaining = (claim.lease_until-self.clock()).total_seconds() - 2
@@ -372,17 +417,42 @@ class CloudDelivery:
                 # Do not start a request whose lease/source cannot cover its
                 # deadline and cleanup margin. claim expiry creates withdrawal.
                 return DeliveryResult("FENCED", claim.operation)
-            request = {"origin": context.target.origin, "credential": context.credential,
-                "operation": claim.operation, "payload": dict(claim.payload), "source_id": claim.source_event_id,
-                "deadline": claim.deadline.isoformat(), "receipt_id": receipt_id,
-                "allow_local_test": self.allow_local_test}
-            response = self._request.perform(request, timeout=min(self.policy.request_seconds, remaining),
-                cancel=self._stop, authorize=lambda: self._authorize(context, claim),
-                recheck_seconds=self.policy.recheck_seconds)
+            content = None
+            if isinstance(claim, MediaClaim):
+                if claim.operation == 'MEDIA_MANIFEST':
+                    request = {"origin": context.target.origin, "credential": context.credential,
+                        "operation": claim.operation, "payload": claim.manifest, "source_id": claim.source_event_id,
+                        "allow_local_test": self.allow_local_test}
+                else:
+                    try:
+                        content = self.media_reader(claim)
+                    except Exception:
+                        with self.store.transaction() as conn:
+                            current = self.provider.delivery_context(conn)
+                            if self._same(context, current) and self._authorize_media_in_transaction(conn, current, claim):
+                                self.media.reject(conn, current.scope, current.binding, claim,
+                                                  code='LOCAL_CORRUPTION', now=self.clock())
+                        return DeliveryResult('BLOCKED', claim.operation, 'LOCAL_CORRUPTION')
+                    request = {"origin": context.target.origin, "credential": context.credential,
+                        "operation": claim.operation, "source_id": claim.source_event_id, "evidence_id": claim.evidence_id,
+                        "content_type": claim.content_type, "sha256": claim.sha256, "byte_count": claim.byte_count,
+                        "allow_local_test": self.allow_local_test}
+                authorize = lambda: self._authorize_media(context, claim)
+            else:
+                request = {"origin": context.target.origin, "credential": context.credential,
+                    "operation": claim.operation, "payload": dict(claim.payload), "source_id": claim.source_event_id,
+                    "deadline": claim.deadline.isoformat(), "receipt_id": receipt_id,
+                    "allow_local_test": self.allow_local_test}
+                authorize = lambda: self._authorize(context, claim)
+            request_args = dict(timeout=min(self.policy.request_seconds, remaining), cancel=self._stop,
+                                authorize=authorize, recheck_seconds=self.policy.recheck_seconds)
+            if isinstance(claim, MediaClaim):
+                request_args['content'] = content
+            response = self._request.perform(request, **request_args)
             if self._request.alive:
                 self._halted = True
                 return DeliveryResult("BLOCKED", claim.operation, "REQUEST_STOP_FAILED")
-            return self._settle(context, claim, response)
+            return self._settle_media(context, claim, response) if isinstance(claim, MediaClaim) else self._settle(context, claim, response)
         except Exception as error:
             code = getattr(error, "code", None)
             if code in HALT_CODES:
@@ -400,6 +470,45 @@ class CloudDelivery:
                 self._owner.close()
                 self._owner = None
             self._pass_lock.release()
+
+    def _settle_media(self, context, claim, response):
+        with self.store.transaction() as conn:
+            current = self.provider.delivery_context(conn)
+            if not self._same(context, current) or not self._authorize_media_in_transaction(conn, current, claim):
+                return DeliveryResult('FENCED', claim.operation)
+            now = self.clock()
+            if response.get('code') == 'ACCESS_REVOKED':
+                self.provider.access_revoked(conn, current, now=now)
+                return DeliveryResult('BLOCKED', claim.operation, 'ACCESS_REVOKED')
+            if response.get('ok') is True:
+                result = response['result']
+                if claim.operation == 'MEDIA_MANIFEST':
+                    self.media.acknowledge_manifest(conn, current.scope, current.binding, claim,
+                        evidence_id=result['evidence_id'], upload_required=result['upload_required'],
+                        state=result['state'], now=now)
+                else:
+                    self.media.acknowledge_content(conn, current.scope, current.binding, claim,
+                        evidence_id=result['evidence_id'], state=result['state'], now=now)
+                return DeliveryResult('DELIVERED', claim.operation)
+            code = response.get('code')
+            if code in {'CANCELLED', 'CONTEXT_CHANGED'}:
+                return DeliveryResult('FENCED', claim.operation)
+            row = conn.execute('SELECT attempts FROM cloud_media_items WHERE id=?', (claim.id,)).fetchone()
+            if code in REMOTE_PERMANENT or row['attempts'] >= self.policy.total_attempts:
+                self.media.reject(conn, current.scope, current.binding, claim, code='REMOTE_REJECTED', now=now)
+                return DeliveryResult('BLOCKED', claim.operation, 'REMOTE_REJECTED')
+            delay = min(self.policy.max_retry_seconds, self.policy.retry_base_seconds * 2**min(row['attempts']-1, 12))
+            if type(response.get('retry_after')) is int:
+                delay = max(delay, response['retry_after'])
+            self.media.retry(conn, current.scope, current.binding, claim, now=now, delay_seconds=delay)
+            return DeliveryResult('RETRY', claim.operation, code if code in REMOTE_CODES | {'REQUEST_TIMEOUT'} else 'NETWORK_UNAVAILABLE', delay)
+
+    def _authorize_media_in_transaction(self, conn, context, claim):
+        row = conn.execute('SELECT * FROM cloud_media_items WHERE id=? AND binding_id=?', (claim.id, context.binding.id)).fetchone()
+        expected = 'LEASED_MANIFEST' if claim.operation == 'MEDIA_MANIFEST' else 'LEASED_CONTENT'
+        return bool(row is not None and row['state'] == expected and row['lease_token'] == claim.token
+                    and row['claim_generation'] == context.binding.generation and self.clock() < claim.lease_until
+                    and self.media_source(conn, context, claim))
 
     def _settle(self, context, claim, response):
         if self._stop.is_set():

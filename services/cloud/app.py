@@ -4,6 +4,7 @@ from pathlib import Path
 import asyncio
 from contextlib import asynccontextmanager
 import io
+import re
 import zipfile
 
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from .database import ReadinessProbe
 
 WEB_DIST = Path(__file__).resolve().parents[2] / 'apps' / 'control' / 'dist'
 MAX_BODY = 65536
+MAX_EVIDENCE_BODY = 8 * 1024 * 1024
 
 
 class SafeResponses:
@@ -58,7 +60,9 @@ class SafeResponses:
                 chunk = message.get('body', b'')
                 chunks.append(chunk)
                 length += len(chunk)
-                if length > MAX_BODY:
+                limit = MAX_EVIDENCE_BODY if (scope.get('method') == 'PUT' and
+                    re.fullmatch(r'/device-api/sync/v1/evidence/[0-9a-f-]{36}', scope.get('path', ''))) else MAX_BODY
+                if length > limit:
                     await JSONResponse({'error': {'code': 'REQUEST_TOO_LARGE', 'message': 'This request is too large.'}}, status_code=413)(scope, receive, safe_send)
                     return
                 if not message.get('more_body', False):
@@ -78,34 +82,44 @@ class SafeResponses:
                 await JSONResponse({'error': {'code': 'INTERNAL_ERROR', 'message': 'The management service is unavailable.'}}, status_code=500)(scope, receive, safe_send)
 
 
-def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | None = None, web_dist: Path | None = None, *, maintenance_factory=None) -> FastAPI:
+def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | None = None, web_dist: Path | None = None, *, maintenance_factory=None, evidence_store=None) -> FastAPI:
     from .control_auth import create_auth_router
     from .control_operations import create_device_router, create_operations_router
     from .device_sync import create_device_sync_router
     from .control_store import ControlError, ControlStore
     from .source_maintenance import SourceMaintenance
+    from .evidence_cleanup import EvidenceCleanup
+    from .evidence_sync import EvidenceService, create_evidence_router
 
     settings = settings or CloudSettings.from_env()
     readiness = probe or ReadinessProbe(settings)
     store = ControlStore(settings)
+    evidence = EvidenceService(settings, evidence_store)
 
     @asynccontextmanager
     async def lifespan(application):
         # Server-owned injection supports deterministic tests; no request or
         # browser setting can disable retention. Construction starts no work.
         worker = (maintenance_factory or SourceMaintenance)(store)
+        evidence_worker = EvidenceCleanup(store, evidence)
         application.state.source_maintenance = worker
+        application.state.evidence_cleanup = evidence_worker
         try:
-            if worker.start() is not True:
+            if worker.start() is not True or evidence_worker.start() is not True:
                 raise RuntimeError('SOURCE_MAINTENANCE_START_FAILED')
             yield
         finally:
-            if await asyncio.to_thread(worker.stop, timeout=6) is not True:
+            evidence_stopped, source_stopped = await asyncio.gather(
+                asyncio.to_thread(evidence_worker.stop, timeout=6),
+                asyncio.to_thread(worker.stop, timeout=6),
+            )
+            if evidence_stopped is not True or source_stopped is not True:
                 raise RuntimeError('SOURCE_MAINTENANCE_STOP_FAILED')
 
     app = FastAPI(title='AisleSignals management', docs_url=None, redoc_url=None,
                   openapi_url=None, debug=False, redirect_slashes=False, lifespan=lifespan)
     app.state.control_store = store
+    app.state.evidence_service = evidence
 
     @app.exception_handler(ControlError)
     async def control_error(request, error):
@@ -120,6 +134,7 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
     app.include_router(create_operations_router())
     app.include_router(create_device_router())
     app.include_router(create_device_sync_router())
+    app.include_router(create_evidence_router(evidence))
 
     @app.get('/health/live')
     async def live():

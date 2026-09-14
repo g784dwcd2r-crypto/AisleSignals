@@ -8,6 +8,7 @@ uploads footage or creates records without an explicit caller operation.
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from http.client import HTTPException
+import hashlib
 import json
 import re
 from urllib.error import HTTPError, URLError
@@ -120,8 +121,10 @@ class CloudTransport:
 
     def _call(self, route, *, method, payload=None, credential=None, expected=200):
         # These are internal fixed routes, never client-supplied paths or URLs.
-        if (route, method) not in {("identity", "GET"), ("enrol", "POST"), ("heartbeat", "POST"),
-                                   ("sync/v1/observations", "POST"), ("sync/v1/withdrawals", "POST")}:
+        fixed = (route, method) in {("identity", "GET"), ("enrol", "POST"), ("heartbeat", "POST"),
+                                   ("sync/v1/observations", "POST"), ("sync/v1/withdrawals", "POST")}
+        media_manifest = method == "POST" and re.fullmatch(r"sync/v1/observations/[0-9a-f-]{36}/evidence", route)
+        if not fixed and not media_manifest:
             raise ValueError("INVALID_OPERATION")
         headers = {"Accept": "application/json", "User-Agent": "AisleSignals-sync/1"}
         if credential is not None:
@@ -139,7 +142,8 @@ class CloudTransport:
         opener = build_opener(ProxyHandler({}), HTTPSHandler(), NoRedirect())
         try:
             with opener.open(request, timeout=8) as response:
-                if response.status != expected:
+                expected_codes = (expected,) if type(expected) is int else expected
+                if response.status not in expected_codes:
                     raise CloudTransportError("INVALID_RESPONSE")
                 return _decode(response.read(MAX_RESPONSE + 1))
         except HTTPError as error:
@@ -273,6 +277,71 @@ class CloudTransport:
             _source_id(result["source_event_id"])
             if result["source_event_id"] != expected_source_event_id:
                 raise CloudTransportError("RECEIPT_MISMATCH")
+        except (ValueError, TypeError):
+            raise CloudTransportError("INVALID_RESPONSE") from None
+        return result
+
+    def evidence_manifest(self, credential, source_event_id, manifest):
+        source_event_id = _source_id(source_event_id)
+        if (not isinstance(manifest, Mapping) or set(manifest) != {"schema_version", "kind", "content_type", "byte_count", "sha256"}
+                or manifest["schema_version"] != 1 or manifest["kind"] != "OVERVIEW"
+                or manifest["content_type"] != "image/jpeg" or type(manifest["byte_count"]) is not int
+                or not 1 <= manifest["byte_count"] <= 350 * 1024 or not isinstance(manifest["sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"])):
+            raise ValueError("INVALID_MEDIA_MANIFEST")
+        result = self._call(f"sync/v1/observations/{source_event_id}/evidence", method="POST",
+                            credential=credential, payload=dict(manifest), expected=(200, 201))
+        try:
+            required = {"evidence_id", "upload_required", "state"}
+            if not required.issubset(result) or any(key not in required | {"receipt"} for key in result):
+                raise ValueError
+            canonical_id(result["evidence_id"])
+            if type(result["upload_required"]) is not bool or result["state"] not in {"PENDING", "READY"}:
+                raise ValueError
+            if (result["upload_required"] and result["state"] != "PENDING") or (not result["upload_required"] and result["state"] != "READY"):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise CloudTransportError("INVALID_RESPONSE") from None
+        return result
+
+    def evidence_content(self, credential, evidence_id, content, *, content_type, sha256):
+        evidence_id = canonical_id(evidence_id)
+        if (type(content) is not bytes or not 1 <= len(content) <= 350 * 1024
+                or content_type != "image/jpeg" or not isinstance(sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", sha256)
+                or hashlib.sha256(content).hexdigest() != sha256):
+            raise ValueError("INVALID_MEDIA_CONTENT")
+        headers = {"Accept": "application/json", "User-Agent": "AisleSignals-sync/1",
+                   "Authorization": "Bearer " + token_value(credential), "Content-Type": content_type,
+                   "X-Content-SHA256": sha256}
+        request = Request(self.origin + "/device-api/sync/v1/evidence/" + evidence_id,
+                          data=content, headers=headers, method="PUT")
+        opener = build_opener(ProxyHandler({}), HTTPSHandler(), NoRedirect())
+        try:
+            with opener.open(request, timeout=8) as response:
+                if response.status not in {200, 201}:
+                    raise CloudTransportError("INVALID_RESPONSE")
+                result = _decode(response.read(MAX_RESPONSE + 1))
+        except HTTPError as error:
+            try:
+                if error.code in {401, 403}:
+                    raise CloudTransportError("ACCESS_REVOKED") from None
+                if 300 <= error.code < 400:
+                    raise CloudTransportError("REDIRECT_REFUSED") from None
+                if error.code >= 500:
+                    raise CloudTransportError("SERVICE_UNAVAILABLE") from None
+                raise CloudTransportError("RATE_LIMITED" if error.code == 429 else "REQUEST_REFUSED",
+                                          retry_after=_retry_after(error.headers) if error.code == 429 else None) from None
+            finally:
+                error.close()
+        except (URLError, TimeoutError, OSError, HTTPException):
+            raise CloudTransportError("NETWORK_UNAVAILABLE") from None
+        try:
+            if not {"evidence_id", "state"}.issubset(result) or any(key not in {"evidence_id", "state", "receipt"} for key in result):
+                raise ValueError
+            canonical_id(result["evidence_id"])
+            if result["evidence_id"] != evidence_id or result["state"] != "READY":
+                raise ValueError
         except (ValueError, TypeError):
             raise CloudTransportError("INVALID_RESPONSE") from None
         return result

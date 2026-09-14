@@ -1182,6 +1182,111 @@ td:last-child {
 dl {
   margin: 0 0 20px;
 }
+.evidence-review {
+  margin: 24px 0;
+  border: 1px solid #dce6d5;
+  border-radius: 12px;
+  background: #f8faf5;
+  overflow: hidden;
+}
+.evidence-heading {
+  display: flex;
+  gap: 12px;
+  padding: 16px 18px 12px;
+  align-items: flex-start;
+}
+.evidence-heading > span,
+.evidence-kind-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: grid;
+  place-items: center;
+  color: #315d35;
+  background: #e7f0df;
+  border-radius: 9px;
+}
+.evidence-heading h3,
+.evidence-item h4 {
+  margin: 0;
+  font-size: 14px;
+}
+.evidence-heading p,
+.evidence-item header p {
+  margin: 4px 0 0;
+  color: #60705a;
+  font-size: 11px;
+}
+.evidence-privacy {
+  margin: 0;
+  padding: 11px 18px;
+  border-top: 1px solid #e4eadf;
+  border-bottom: 1px solid #e4eadf;
+  color: #52684e;
+  background: #f0f5ea;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.evidence-item {
+  padding: 16px 18px;
+  background: #fff;
+}
+.evidence-item + .evidence-item {
+  border-top: 1px solid #e4eadf;
+}
+.evidence-item > header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.evidence-placeholder,
+.evidence-loading,
+.evidence-load-error {
+  margin: 0;
+  border: 1px dashed #ccd8c5;
+  border-radius: 9px;
+  padding: 16px;
+  color: #5e6f59;
+  background: #fafcf8;
+  font-size: 12px;
+}
+.evidence-placeholder.error,
+.evidence-load-error {
+  color: #7c332d;
+  border-color: #e2bbb6;
+  background: #fff7f5;
+}
+.evidence-media {
+  position: relative;
+  min-height: 90px;
+}
+.evidence-media img,
+.evidence-media video {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  border-radius: 9px;
+  background: #142019;
+}
+.evidence-media .media-waiting {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.evidence-load-error {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.evidence-load-error .text-button {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
 .review-form {
   border-top: 1px solid var(--border);
   padding-top: 25px;

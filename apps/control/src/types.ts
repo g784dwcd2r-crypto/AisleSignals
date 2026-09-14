@@ -46,6 +46,16 @@ export type Device = {
   revoked_at: string | null;
 };
 export type Outcome = "NORMAL_SHOPPING" | "UNCLEAR" | "SUSPECTED_INCIDENT";
+export type AlertEvidenceState =
+  "NONE" | "PENDING" | "PARTIAL" | "READY" | "EXPIRED";
+export type AlertEvidence = {
+  id: string;
+  kind: "OVERVIEW" | "INTERACTION_CROP" | "CLIP";
+  content_type: string;
+  byte_count: number;
+  state: "PENDING" | "READY" | "EXPIRED" | "DELETED" | "ERROR";
+  expires_at: string;
+};
 export type Alert = {
   id: string;
   pharmacy_id: string;
@@ -65,6 +75,8 @@ export type Alert = {
   version: number;
   review: null | { outcome: Outcome; note: string; by: string; at: string };
   incident_id: string | null;
+  evidence: AlertEvidence[];
+  evidence_state: AlertEvidenceState;
 };
 export type Incident = {
   id: string;
