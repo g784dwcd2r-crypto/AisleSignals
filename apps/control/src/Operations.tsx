@@ -377,17 +377,25 @@ function EnrolmentForm(props: WorkspaceProps & { close: () => void }) {
           <li>
             <a
               className="text-button"
-              href="/downloads/cloud_companion.py"
+              href="/downloads/cloud-companion.zip"
               download
             >
-              Download the macOS / Linux connection tool
+              Download the connection tool
             </a>{" "}
-            on the intended laptop. It requires Python 3.
+            on the intended laptop. Extract the ZIP and keep both Python files
+            together. It requires Python 3.
           </li>
           <li>
             Use the exact laptop name <strong>{name}</strong> on a{" "}
-            <strong>{platform === "MACOS" ? "macOS" : "Linux"}</strong> laptop.
-            Open a terminal in the download folder.
+            <strong>
+              {platform === "MACOS"
+                ? "macOS"
+                : platform === "WINDOWS"
+                  ? "Windows"
+                  : "Linux"}
+            </strong>{" "}
+            laptop. Open {platform === "WINDOWS" ? "PowerShell" : "a terminal"}{" "}
+            in the extracted folder.
           </li>
           <li>
             Run the enrolment command below. Enter this code privately when
@@ -399,10 +407,12 @@ function EnrolmentForm(props: WorkspaceProps & { close: () => void }) {
           </li>
         </ol>
         <div className="command-panel">
-          <small>Requires Python 3 on macOS or Linux.</small>
+          <small>
+            Requires Python 3. Keep the adapter file beside the connection tool.
+          </small>
           <pre>
-            <code>{`python3 cloud_companion.py enrol --server ${window.location.origin} --name "Exact laptop name"
-python3 cloud_companion.py run`}</code>
+            <code>{`${platform === "WINDOWS" ? "py -3" : "python3"} cloud_companion.py enrol --server ${window.location.origin} --name "Exact laptop name"
+${platform === "WINDOWS" ? "py -3" : "python3"} cloud_companion.py run`}</code>
           </pre>
           <p>
             Replace the name with the one shown above. Stop connection reports
@@ -468,14 +478,6 @@ python3 cloud_companion.py run`}</code>
           <option value="OTHER">Linux</option>
         </select>
       </Field>
-      {platform === "WINDOWS" && (
-        <div className="notice warning-notice">
-          Windows pairing through this connection helper is not available yet.
-          Its secure credential support still needs verification. The Windows
-          local application and this browser console remain separate and
-          available.
-        </div>
-      )}
       <p className="muted small">
         Only connect a laptop that your pharmacy is authorised to use.
         Connection does not certify its camera compatibility or performance.
@@ -489,7 +491,7 @@ python3 cloud_companion.py run`}</code>
           className="primary"
           type="submit"
           busy={mutation.busy}
-          disabled={!available.length || platform === "WINDOWS"}
+          disabled={!available.length}
         >
           Create connection code
         </Button>

@@ -1,10 +1,12 @@
 """AisleSignals same-origin management console, isolated from local CCTV APIs."""
 
 from pathlib import Path
+import io
+import zipfile
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -125,6 +127,21 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
     async def companion():
         return FileResponse(Path(__file__).resolve().parents[2] / 'scripts' / 'cloud_companion.py',
                             media_type='text/plain', filename='cloud_companion.py')
+
+    @app.get('/downloads/cloud-companion.zip')
+    async def companion_package():
+        # An explicit source-file allowlist; never package the scripts directory
+        # or any runtime files. The Windows adapter travels with its caller.
+        content = io.BytesIO()
+        scripts = Path(__file__).resolve().parents[2] / 'scripts'
+        with zipfile.ZipFile(content, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for name in ('cloud_companion.py', 'cloud_private_windows.py'):
+                entry = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.external_attr = 0o100644 << 16
+                archive.writestr(entry, (scripts / name).read_bytes())
+        return Response(content.getvalue(), media_type='application/zip',
+                        headers={'Content-Disposition': 'attachment; filename="AisleSignals-connection-tool.zip"'})
 
     app.mount('/assets', StaticFiles(directory=directory / 'assets', check_dir=False), name='control-assets')
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts), www_redirect=False)
