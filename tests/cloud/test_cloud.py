@@ -241,7 +241,10 @@ def test_start_command_real_http_and_graceful_owned_process_exit():
                 try:
                     response = client.get("/health/live")
                     break
-                except httpx.ConnectError:
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    # Windows can time out a connect before the child binds its
+                    # socket. Retry only connection establishment within the
+                    # existing startup deadline; response failures still fail.
                     assert process.poll() is None
                     if time.monotonic() >= deadline:
                         pytest.fail("Owned cloud test server did not start")
