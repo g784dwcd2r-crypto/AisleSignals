@@ -23,16 +23,25 @@ from uuid import uuid4
 from PIL import Image
 
 
-def wait_for_server_exit(port: int, timeout: float = 10) -> None:
-    """An exited launcher must not leave its API serving from the temp bundle."""
+def server_accepting(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def wait_for_server_exit(port: int, timeout: float = 10, *, probe=server_accepting) -> None:
+    """Require a stable refusal without filling a live server's listen queue."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with socket.socket() as probe:
-            probe.settimeout(0.2)
-            if probe.connect_ex(("127.0.0.1", port)) != 0:
-                return
-        time.sleep(0.1)
-    raise AssertionError("The packaged launcher exited but its API is still running")
+    if not probe(port):
+        return
+    # Give a child which is already shutting down the requested grace period,
+    # then probe once more. Repeated successful connections against a listener
+    # which does not accept can fill its backlog and create a false refusal.
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+    if probe(port):
+        raise AssertionError("The packaged launcher exited but its API is still running")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):

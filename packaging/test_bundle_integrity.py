@@ -1,6 +1,5 @@
 """Release archive checks reject altered bytes and accidental external links."""
 import json
-import socket
 from pathlib import Path
 
 import pytest
@@ -42,11 +41,18 @@ def test_manifest_rejects_external_symlinks(tmp_path):
 
 
 def test_packaged_shutdown_check_refuses_a_lingering_server_without_stopping_it():
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(4)
-        port = listener.getsockname()[1]
-        with pytest.raises(AssertionError, match="still running"):
-            wait_for_server_exit(port, timeout=0.05)
-        assert listener.fileno() >= 0
-    wait_for_server_exit(port, timeout=1)
+    calls = []
+
+    def accepting(port):
+        calls.append(port)
+        return True
+
+    with pytest.raises(AssertionError, match="still running"):
+        wait_for_server_exit(32123, timeout=0.05, probe=accepting)
+    assert calls == [32123, 32123]
+
+
+def test_packaged_shutdown_check_accepts_an_immediate_refusal():
+    calls = []
+    wait_for_server_exit(32123, timeout=0.01, probe=lambda port: calls.append(port) or False)
+    assert calls == [32123]
