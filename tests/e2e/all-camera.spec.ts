@@ -422,11 +422,23 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
   }) => {
     test.setTimeout(45000);
     const posts: any[] = [];
+    const completed = new Set<string>();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("request", (r) => {
       if (r.method() === "POST" && r.url().endsWith("/api/interactions/jobs"))
         posts.push({ body: r.postDataJSON(), at: Date.now() });
+    });
+    page.on("response", async (response) => {
+      if (
+        response.request().method() !== "GET" ||
+        !/\/api\/interactions\/jobs\/[a-f0-9-]+$/.test(response.url()) ||
+        !response.ok()
+      )
+        return;
+      const job = await response.json().catch(() => null);
+      if (job?.status === "completed" && job.result?.id)
+        completed.add(job.result.id);
     });
     await openGrid(page, installation, layout);
     if (layout === "2x2") {
@@ -442,6 +454,11 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     const count = layout === "2x2" ? 4 : 6;
     await expect
       .poll(() => posts.length, { timeout: 22000 })
+      .toBeGreaterThanOrEqual(count);
+    // A POST means processing started, not that its observation is available.
+    // Wait on the real completion boundary before checking React's history.
+    await expect
+      .poll(() => completed.size, { timeout: 10000 })
       .toBeGreaterThanOrEqual(count);
     await expect(page.locator(".interaction-result")).toHaveCount(count, {
       timeout: 5000,
