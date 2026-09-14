@@ -843,6 +843,12 @@ test("Windows connection setup offers the complete tool and creates a scoped dev
   const code = await (await issued).json();
   await expect(dialog).toContainText("PowerShell");
   await expect(dialog).toContainText("py -3 cloud_companion.py enrol");
+  await expect(dialog.locator(".command-panel code")).toContainText(
+    "--name 'Synthetic Windows laptop'",
+  );
+  await expect(dialog).toContainText(
+    "paste the code shown above and press Enter",
+  );
   await expect(dialog).toContainText("does not select a camera");
   const link = dialog.getByRole("link", {
     name: "Download the connection tool",
