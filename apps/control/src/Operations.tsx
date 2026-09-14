@@ -52,6 +52,11 @@ function path(name: string, scope: string, status = "") {
   if (status && status !== "ALL") query.set("status", status);
   return `/${name}${query.size ? `?${query}` : ""}`;
 }
+function commandArgument(value: string, windows: boolean) {
+  return windows
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", `'"'"'`)}'`;
+}
 function sourceAvailable(alert: Alert, now: number) {
   if (!alert.source_expires_at) return true;
   const deadline = Date.parse(alert.source_expires_at);
@@ -413,6 +418,7 @@ function EnrolmentForm(props: WorkspaceProps & { close: () => void }) {
   const [platform, setPlatform] = useState("");
   const [result, setResult] = useState<OneTimeToken | null>(null);
   const mutation = useMutation(props.changed);
+  const windows = platform === "WINDOWS";
   if (result)
     return (
       <>
@@ -446,8 +452,9 @@ function EnrolmentForm(props: WorkspaceProps & { close: () => void }) {
             in the extracted folder.
           </li>
           <li>
-            Run the enrolment command below. Enter this code privately when
-            prompted; it expires after ten minutes.
+            Run the enrolment command below. When the terminal asks for the
+            one-use connection code, paste the code shown above and press Enter.
+            It expires after ten minutes.
           </li>
           <li>
             Run the connection tool and keep that terminal open. Check this
@@ -459,12 +466,12 @@ function EnrolmentForm(props: WorkspaceProps & { close: () => void }) {
             Requires Python 3. Keep the adapter file beside the connection tool.
           </small>
           <pre>
-            <code>{`${platform === "WINDOWS" ? "py -3" : "python3"} cloud_companion.py enrol --server ${window.location.origin} --name "Exact laptop name"
-${platform === "WINDOWS" ? "py -3" : "python3"} cloud_companion.py run`}</code>
+            <code>{`${windows ? "py -3" : "python3"} cloud_companion.py enrol --server ${window.location.origin} --name ${commandArgument(name, windows)}
+${windows ? "py -3" : "python3"} cloud_companion.py run`}</code>
           </pre>
           <p>
-            Replace the name with the one shown above. Stop connection reports
-            with Ctrl+C. The code is never part of the command or a URL.
+            The command already contains the exact laptop name. Stop connection
+            reports with Ctrl+C. The code is never part of the command or a URL.
           </p>
         </div>
         <div className="notice subtle">
