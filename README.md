@@ -14,7 +14,7 @@ This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly se
 
 ## Start the protected local release
 
-Read [Plan U](docs/release/plan-u.md), the [six-pharmacy release plan](docs/release/tuesday-release-plan.md), [installation guide](deployment/README.md), [named account setup](docs/release/pilot-identity.md) and [platform support record](docs/release/platform-support.md). Start with a separate pilot database; changing an environment variable cannot convert demonstration data into client data.
+Read [Plan U](docs/release/plan-u.md), [Plan B for central pharmacy monitoring](docs/release/plan-b.md), the [six-pharmacy release plan](docs/release/tuesday-release-plan.md), [installation guide](deployment/README.md), [named account setup](docs/release/pilot-identity.md) and [platform support record](docs/release/platform-support.md). Start with a separate pilot database; changing an environment variable cannot convert demonstration data into client data.
 
 From a prepared source checkout:
 

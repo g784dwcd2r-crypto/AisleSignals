@@ -22,6 +22,8 @@ See [release verification](docs/release/verification.md), [administration](docs/
 
 The approved next desktop-to-cloud programme is [Plan U](docs/release/plan-u.md): complete Mac/Windows applications, signed lifecycle-managed installers, qualified RTSP/ONVIF and CCTV-window capture, pharmacy layout calibration, measured detection evaluation and the commissioned CCTV-to-cloud review flow.
 
+The approved central operations programme is [Plan B](docs/release/plan-b.md): a role-scoped multi-pharmacy dashboard, freshness-aware four/six-camera branch views, encrypted alert clips, temporary audited live access, central review and bounded remote diagnostics. Plan B is planned work; it is not implemented or commissioned yet.
+
 This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, simultaneous all-camera product analysis, direct RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
 
 ## Historical prototype record
