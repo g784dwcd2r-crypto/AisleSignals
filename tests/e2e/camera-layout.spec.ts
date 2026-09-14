@@ -358,6 +358,13 @@ for (const change of ["tile", "board", "source"] as const)
     await page
       .getByRole("button", { name: "Start detection", exact: true })
       .click();
+    for (const label of [
+      "Entrance zone is visible",
+      "Exit zone is visible",
+      "Cashier zone is visible",
+      "Relevant shelf zones are visible",
+    ])
+      await page.getByLabel(label, { exact: true }).check();
     await page
       .getByRole("button", { name: "Test product alarm sound", exact: true })
       .click();

@@ -299,6 +299,13 @@ test("a hung real API heartbeat stops pose, clears samples and cancels a pending
   );
   expect(submitted.status()).toBe(202);
   const id = (await submitted.json()).id;
+  for (const label of [
+    "Entrance zone is visible",
+    "Exit zone is visible",
+    "Cashier zone is visible",
+    "Relevant shelf zones are visible",
+  ])
+    await page.getByLabel(label, { exact: true }).check();
   await page
     .getByRole("button", { name: "Test product alarm sound", exact: true })
     .click();
