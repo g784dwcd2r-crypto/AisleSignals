@@ -22,6 +22,16 @@ The pharmacy laptop remains the primary CCTV and detection runtime. It analyses 
 
 Every API, background job, stream, clip, export and remote command must derive organisation and branch authority from the authenticated session. A branch identifier supplied by a browser or laptop never grants access.
 
+### Team membership lifecycle
+
+- A company administrator can invite users and manage access only inside their company. A pharmacy manager can manage staff only for branches where that manager has administration authority.
+- Administrators assign the minimum required role and explicit branch access. Media viewing, live viewing, evidence export, incident management, team administration and support access remain separate permissions.
+- Changing a role or branch assignment invalidates the user's existing sessions and applies to API calls, background work, open live sessions and future notifications immediately.
+- Removing a team member disables authentication, revokes every session, live-view grant and pending invitation, removes future notifications and reassigns outstanding review work.
+- Removal does not erase the person's historical reviews, acknowledgements or audit entries. Historical records retain a stable actor reference and display name for accountability.
+- The final active company owner cannot remove or demote themselves until ownership is transferred to another verified active owner.
+- High-risk changes, including owner transfer, media-export permission and support access, require recent authentication and create an immutable audit event.
+
 ## Workstreams
 
 | ID | Deliverable | Completion evidence |
@@ -34,6 +44,7 @@ Every API, background job, stream, clip, export and remote command must derive o
 | B6 | Remote diagnostics and controls | Authorised commands can request health refresh, restart an owned AisleSignals process, reconnect a source or run an alarm test; commands are signed, expiring, idempotent and fully audited |
 | B7 | Reliability and observability | Stream loss, frozen frames, laptop sleep, queue delay, storage failure and notification failure produce separate health states and recovery records |
 | B8 | Privacy, retention and audit | Controller/processor responsibilities are recorded; access purpose, viewer, branch, timestamps and actions are audited; snapshot and clip retention, deletion, export and legal hold follow configured policy and branch authority |
+| B9 | Team and access administration | Authorised administrators can invite, assign, change, suspend and remove team access; changes take effect immediately, preserve case history and are fully audited |
 
 ## Operating flow
 
@@ -108,13 +119,19 @@ Add signed commands for health refresh, reconnection, application restart and al
 
 **Gate B5:** duplicate, expired, replayed and out-of-scope commands are rejected; successful and failed attempts are auditable; local recovery remains available.
 
-### B6 — Commission branch by branch
+### B6 — Add team and access administration
+
+Build the team directory, invitation lifecycle, role editor, branch assignments, permission matrix, suspension and removal actions. Revoke sessions and active grants when authority changes, preserve historical actor references and reassign unresolved work. Require recent authentication for high-risk changes and protect the final owner.
+
+**Gate B6:** cross-company and unassigned-branch access tests fail closed; role reduction and removal terminate existing sessions and live access; pending invitations can be revoked; the final owner cannot be removed; historical alert and incident records remain attributable.
+
+### B7 — Commission branch by branch
 
 Run controller approval, privacy, access, camera mapping, snapshot, clip, live-view, alarm and recovery acceptance at each branch. Activate only the accepted evidence mode, cameras and roles, then monitor alert load and service health during the supervised pilot.
 
 ## Relationship to Plan U
 
-[Plan U](plan-u.md) builds the complete pharmacy laptop application and its real CCTV-to-cloud detection path. Plan B builds the authorised central control centre above that path. B1 can begin with current heartbeat data, while B2–B6 depend on the relevant Plan U camera, detector, packaging and commissioning gates.
+[Plan U](plan-u.md) builds the complete pharmacy laptop application and its real CCTV-to-cloud detection path. Plan B builds the authorised central control centre above that path. B1 and B6 can begin with the current cloud identity and heartbeat foundation, while the media and commissioning stages depend on the relevant Plan U camera, detector, packaging and commissioning gates.
 
 ## Completion rule
 
