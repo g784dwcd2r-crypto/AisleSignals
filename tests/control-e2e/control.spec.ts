@@ -1066,3 +1066,57 @@ test("Windows connection setup offers the complete tool and creates a scoped dev
   await expect(row).toContainText("Windows");
   await expect(row).toContainText("Synthetic Windows Branch");
 });
+
+test("download centre exposes the verified connection utility and secure pairing route", async ({
+  page,
+  installation,
+}) => {
+  await bootstrap(page, installation);
+  await navigate(page, "Downloads");
+
+  await expect(
+    page.getByRole("heading", { name: "Download AisleSignals", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Connection utility available now"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", {
+      name: "One-click installers are in preparation",
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const macDownload = page.getByRole("link", {
+    name: "Download for macOS",
+    exact: true,
+  });
+  const windowsDownload = page.getByRole("link", {
+    name: "Download for Windows",
+    exact: true,
+  });
+  await expect(macDownload).toHaveAttribute(
+    "href",
+    "/downloads/cloud-companion.zip",
+  );
+  await expect(windowsDownload).toHaveAttribute(
+    "href",
+    "/downloads/cloud-companion.zip",
+  );
+  const archive = await page.request.get(
+    installation.url + "/downloads/cloud-companion.zip",
+  );
+  expect(archive.status()).toBe(200);
+  expect(archive.headers()["content-type"]).toBe("application/zip");
+  expect((await archive.body()).subarray(0, 4).toString("hex")).toBe(
+    "504b0304",
+  );
+  await checkAccessibility(page);
+
+  await page
+    .getByRole("button", { name: "Pair a laptop", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Connected where it matters" }),
+  ).toBeVisible();
+});

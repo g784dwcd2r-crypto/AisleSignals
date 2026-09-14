@@ -1000,6 +1000,213 @@ td small {
   color: #646e61;
   margin: 0;
 }
+.downloads-heading {
+  align-items: flex-end;
+}
+.downloads-heading .eyebrow {
+  display: block;
+  margin-bottom: 7px;
+}
+.downloads-availability {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 17px 19px;
+  margin-bottom: 20px;
+  border: 1px solid #d8e6da;
+  border-radius: 12px;
+  color: #3d6553;
+  background: #edf6ef;
+}
+.downloads-availability > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.downloads-availability strong {
+  display: block;
+  font-size: 13px;
+  color: #315c49;
+  margin-bottom: 3px;
+}
+.downloads-availability p {
+  margin: 0;
+  max-width: 850px;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-bottom: 22px;
+}
+.download-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  box-shadow: 0 2px 2px #17302302;
+}
+.download-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 17px;
+}
+.download-platform-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  border-radius: 13px;
+  color: #2e6857;
+  background: #eaf3ec;
+}
+.download-card h2 {
+  margin: 5px 0 0;
+  font-size: 18px;
+}
+.download-card > p {
+  color: #657068;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.download-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.download-state.available {
+  color: #39705c;
+  background: #e8f3ea;
+}
+.download-details {
+  margin: 4px 0 20px;
+  border-top: 1px solid #edf0eb;
+}
+.download-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf0eb;
+  font-size: 11px;
+}
+.download-details dt {
+  color: #68726b;
+}
+.download-details dd {
+  margin: 0;
+  color: #3d554a;
+  font-weight: 600;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.download-action {
+  align-self: flex-start;
+  margin-top: auto;
+  text-decoration: none;
+}
+.downloads-steps-panel {
+  margin-bottom: 22px;
+}
+.download-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 23px;
+}
+.download-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+  padding-right: 20px;
+}
+.download-steps li + li {
+  padding-left: 20px;
+  border-left: 1px solid #e9ede7;
+}
+.download-steps li > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border-radius: 50%;
+  color: #fff;
+  background: #477767;
+  font-size: 10px;
+  font-weight: 700;
+}
+.download-steps strong {
+  display: block;
+  font-size: 11px;
+  color: #405b4d;
+  margin: 3px 0 5px;
+}
+.download-steps p {
+  margin: 0;
+  color: #687269;
+  font-size: 10px;
+  line-height: 1.55;
+}
+.installer-roadmap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 24px;
+  border: 1px dashed #ced8d0;
+  border-radius: var(--radius);
+  background: #fafbf8;
+}
+.installer-roadmap-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  max-width: 760px;
+}
+.download-platform-icon.muted-icon {
+  color: #69756c;
+  background: #eef1ec;
+}
+.installer-roadmap h2 {
+  margin: 5px 0 6px;
+  font-size: 16px;
+}
+.installer-roadmap p {
+  margin: 0;
+  color: #677169;
+  font-size: 11px;
+  line-height: 1.65;
+}
+.installer-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.installer-checks span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: #5d6d63;
+}
 .toolbar {
   display: flex;
   align-items: center;
@@ -1773,6 +1980,18 @@ dl {
   .section-heading .button {
     font-size: 10px;
   }
+  .download-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 22px;
+  }
+  .download-steps li:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .installer-roadmap {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .auth-story {
     padding: 32px;
   }
@@ -1924,6 +2143,32 @@ dl {
   }
   .section-heading .button {
     font-size: 11px;
+  }
+  .download-grid {
+    grid-template-columns: 1fr;
+  }
+  .download-card {
+    padding: 20px;
+  }
+  .download-steps {
+    grid-template-columns: 1fr;
+    padding: 20px;
+  }
+  .download-steps li,
+  .download-steps li + li,
+  .download-steps li:nth-child(3) {
+    padding: 0;
+    border-left: 0;
+  }
+  .download-steps li + li {
+    padding-top: 18px;
+    border-top: 1px solid #e9ede7;
+  }
+  .installer-roadmap {
+    padding: 20px;
+  }
+  .installer-roadmap-copy > .download-platform-icon {
+    display: none;
   }
   .toolbar {
     padding: 13px 15px;

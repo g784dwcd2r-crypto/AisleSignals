@@ -5,6 +5,7 @@ Protected local release candidate — 13 September 2026. Product owner: Jawahir 
 | Area | Current implementation and limit |
 |---|---|
 | Administration | Browser first-owner setup using a private, expiring local code. Managers create branches/users, assign roles, disable/re-enable and reset passphrases. Backend reauthentication, branch authority, last-manager protection, session revocation and stale-edit rejection. |
+| Downloads | Dedicated authenticated download centre for the current macOS/Windows Python 3 connection utility, platform requirements, secure pairing route and four-step setup guide. Signed one-click desktop installers remain explicitly pending release approval. |
 | Protected identity | Separate initially empty pilot database; named passwords, branch switching, current session authority and no public demo accounts. Local accounts only; no MFA, email invitations or hosted group synchronisation. |
 | LIVE DETECTION | Explicit screen/device/recording input, camera-cropped pose boxes/keypoints, stable unique display matching and conservative limb/duplicate filtering. Versioned experimental rules; restart after camera-area changes, source loss, hidden tabs, sleep or stalled frames. [Quality review](docs/release/detection-quality-review.md). |
 | Product interactions | Local pretrained Qwen3-VL sampled-frame analysis for pickup, return, basket placement, possible concealment and uncertainty; evidence and human review. Actual inference exercised locally. No measured client-pharmacy accuracy or theft determination. |
