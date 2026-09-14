@@ -3,8 +3,10 @@
 from boto3 import client as boto_client
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from secrets import token_bytes
+from uuid import uuid4
 
-from .evidence_store import MAX_ENVELOPE_BYTES, EvidenceStoreError, _key
+from .evidence_store import MAX_ENVELOPE_BYTES, EvidenceObjectMissing, EvidenceStoreError, _key
 
 
 class R2EvidenceBlobStore:
@@ -32,6 +34,12 @@ class R2EvidenceBlobStore:
         response = error.response or {}
         return (response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 412
                 or response.get("Error", {}).get("Code") in {"PreconditionFailed", "412"})
+
+    @staticmethod
+    def _missing(error: ClientError) -> bool:
+        response = error.response or {}
+        return (response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404
+                or response.get("Error", {}).get("Code") in {"NoSuchKey", "NotFound", "404"})
 
     def put_if_absent(self, key: str, value: bytes) -> bool:
         if not isinstance(value, bytes) or len(value) > MAX_ENVELOPE_BYTES:
@@ -63,6 +71,10 @@ class R2EvidenceBlobStore:
             return content
         except EvidenceStoreError:
             raise
+        except ClientError as error:
+            if self._missing(error):
+                raise EvidenceObjectMissing("Evidence object is unavailable.") from None
+            raise EvidenceStoreError("Evidence object is unavailable.") from None
         except Exception:
             raise EvidenceStoreError("Evidence object is unavailable.") from None
         finally:
@@ -80,8 +92,27 @@ class R2EvidenceBlobStore:
             raise EvidenceStoreError("Evidence object deletion is unavailable.") from None
 
     def probe(self) -> bool:
+        key = f"evidence/{uuid4()}.bin"
+        payload = token_bytes(64)
+        created = False
         try:
-            self._client.head_bucket(Bucket=self.bucket)
-            return True
+            created = self.put_if_absent(key, payload)
+            if not created or self.put_if_absent(key, payload):
+                return False
+            if self.get(key) != payload:
+                return False
+            self.delete(key)
+            created = False
+            try:
+                self.get(key)
+            except EvidenceObjectMissing:
+                return True
+            return False
         except Exception:
             return False
+        finally:
+            if created:
+                try:
+                    self.delete(key)
+                except EvidenceStoreError:
+                    pass

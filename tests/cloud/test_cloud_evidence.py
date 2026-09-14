@@ -2,6 +2,7 @@ from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -29,6 +30,7 @@ class LockCheckingStore(MemoryEvidenceBlobStore):
         self.on_put = None
         self.on_get = None
         self.fail_operation = None
+        self.fail_delete_keys = set()
         self.lock_checks = 0
 
     def _unlocked(self, key):
@@ -59,14 +61,14 @@ class LockCheckingStore(MemoryEvidenceBlobStore):
 
     def delete(self, key):
         self._unlocked(key)
-        if self.fail_operation == "delete":
+        if self.fail_operation == "delete" or key in self.fail_delete_keys:
             raise EvidenceStoreError("synthetic store failure")
         return super().delete(key)
 
 
 def evidence_settings(settings, path):
     return replace(settings, evidence_mode="ENCRYPTED", evidence_policy="SHORT_LIVED_V1",
-                   evidence_kek=b"k" * 32, evidence_kek_version="synthetic-v1",
+                   evidence_keks=(("synthetic-v1", b"k" * 32),), evidence_kek_version="synthetic-v1",
                    evidence_store_backend="FILESYSTEM", evidence_store_path=Path(path))
 
 
@@ -112,22 +114,28 @@ def stat_mode(path):
 def test_evidence_configuration_defaults_off_and_fails_closed(tmp_path):
     assert CloudSettings.from_env({"CLOUD_ENV": "development"}).evidence_mode == "METADATA_ONLY"
     base = {"CLOUD_ENV": "development", "CLOUD_EVIDENCE_MODE": "ENCRYPTED",
-            "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(),
+            "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEKS": json.dumps({"v1": Fernet.generate_key().decode()}),
             "CLOUD_EVIDENCE_KEK_VERSION": "v1", "CLOUD_EVIDENCE_STORE_BACKEND": "FILESYSTEM",
             "CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)}
     assert CloudSettings.from_env(base).evidence_mode == "ENCRYPTED"
-    for key in ("CLOUD_EVIDENCE_POLICY", "CLOUD_EVIDENCE_KEK", "CLOUD_EVIDENCE_KEK_VERSION",
+    for key in ("CLOUD_EVIDENCE_POLICY", "CLOUD_EVIDENCE_KEKS", "CLOUD_EVIDENCE_KEK_VERSION",
                 "CLOUD_EVIDENCE_STORE_BACKEND", "CLOUD_EVIDENCE_STORE_PATH"):
         with pytest.raises(ConfigurationError):
             CloudSettings.from_env({name: value for name, value in base.items() if name != key})
     with pytest.raises(ConfigurationError):
-        CloudSettings.from_env({"CLOUD_ENV": "development", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode()})
+        CloudSettings.from_env({"CLOUD_ENV": "development", "CLOUD_EVIDENCE_KEKS": json.dumps({"v1": Fernet.generate_key().decode()})})
+    with pytest.raises(ConfigurationError):
+        CloudSettings.from_env({**base, "CLOUD_EVIDENCE_KEKS": '{"v1":"a","v1":"b"}'})
+    with pytest.raises(ConfigurationError):
+        CloudSettings.from_env({**base, "CLOUD_EVIDENCE_KEK_VERSION": "missing"})
+    with pytest.raises(ConfigurationError):
+        CloudSettings.from_env({**base, "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode()})
 
 
 def test_r2_configuration_is_explicit_eu_scoped_and_render_rejects_filesystem(tmp_path):
     shared = {"CLOUD_ENV": "staging", "CLOUD_ALLOWED_HOSTS": "control.example.test",
               "CLOUD_EVIDENCE_MODE": "ENCRYPTED", "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1",
-              "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(), "CLOUD_EVIDENCE_KEK_VERSION": "v1",
+              "CLOUD_EVIDENCE_KEKS": json.dumps({"v1": Fernet.generate_key().decode()}), "CLOUD_EVIDENCE_KEK_VERSION": "v1",
               "CLOUD_EVIDENCE_STORE_BACKEND": "R2", "CLOUD_R2_ACCOUNT_ID": "a" * 32,
               "CLOUD_R2_JURISDICTION": "eu", "CLOUD_R2_BUCKET": "aislesignals-evidence-staging",
               "CLOUD_R2_ACCESS_KEY_ID": "A" * 32, "CLOUD_R2_SECRET_ACCESS_KEY": "s" * 64}
@@ -141,7 +149,7 @@ def test_r2_configuration_is_explicit_eu_scoped_and_render_rejects_filesystem(tm
     with pytest.raises(ConfigurationError):
         CloudSettings.from_env({"CLOUD_ENV": "staging", "RENDER": "true",
             "RENDER_EXTERNAL_HOSTNAME": "control.example.test", "CLOUD_EVIDENCE_MODE": "ENCRYPTED",
-            "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(),
+            "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEKS": json.dumps({"v1": Fernet.generate_key().decode()}),
             "CLOUD_EVIDENCE_KEK_VERSION": "v1", "CLOUD_EVIDENCE_STORE_BACKEND": "FILESYSTEM",
             "CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)})
 
@@ -363,6 +371,80 @@ def test_blob_failures_do_not_publish_view_or_delete_metadata(workspace):
                             (evidence["evidence_id"],)).fetchone()[0] == "REVOKED"
         assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_BLOB_DELETED' AND subject_id=%s",
                             (evidence["evidence_id"],)).fetchone()[0] == 0
+
+
+def test_cleanup_rotates_past_a_failing_old_object(workspace):
+    settings, owner, store, north, _ = workspace
+    laptop = device(owner, north)
+    evidence_ids = []
+    for content in (b"old-object", b"newer-object"):
+        source = observation()
+        ingest(owner, laptop, source)
+        evidence = owner.post(f"/device-api/sync/v1/observations/{source['source_event_id']}/evidence",
+                              headers=bearer(laptop), json=manifest(content)).json()
+        assert owner.put("/device-api/sync/v1/evidence/" + evidence["evidence_id"],
+                         headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content).status_code == 200
+        evidence_ids.append(evidence["evidence_id"])
+    with psycopg.connect(settings.database_url) as conn:
+        conn.execute("""UPDATE aislesignals_control.evidence_objects
+            SET state='REVOKED',expires_at=clock_timestamp()-INTERVAL '1 hour',
+                revoked_at=clock_timestamp()-INTERVAL '2 hours'
+            WHERE id=%s""", (evidence_ids[0],))
+        conn.execute("""UPDATE aislesignals_control.evidence_objects
+            SET state='REVOKED',expires_at=clock_timestamp()-INTERVAL '1 hour',
+                revoked_at=clock_timestamp()-INTERVAL '1 hour'
+            WHERE id=%s""", (evidence_ids[1],))
+        old_key = conn.execute("SELECT object_key FROM aislesignals_control.evidence_objects WHERE id=%s",
+                               (evidence_ids[0],)).fetchone()[0]
+    store.fail_delete_keys.add(old_key)
+    cleanup = EvidenceCleanup(owner.app.state.control_store, owner.app.state.evidence_service, batch_size=1)
+    first = cleanup.run_once()
+    second = cleanup.run_once()
+    assert (first.deleted, first.deferred, second.deleted, second.deferred) == (0, 1, 1, 0)
+    with psycopg.connect(settings.database_url) as conn:
+        rows = conn.execute("""SELECT id,state,delete_attempts,delete_retry_at
+            FROM aislesignals_control.evidence_objects WHERE id=ANY(%s::uuid[]) ORDER BY revoked_at""",
+            (evidence_ids,)).fetchall()
+        assert rows[0][1] == "REVOKED" and rows[0][2] == 1 and rows[0][3] is not None
+        assert rows[1][1] == "DELETED"
+
+
+def test_rotated_keyring_reads_old_and_new_evidence(workspace):
+    settings, owner, store, north, _ = workspace
+    laptop = device(owner, north)
+
+    old_source, old_content = observation(), b"encrypted-under-v1"
+    old_alert = ingest(owner, laptop, old_source)
+    old_evidence = owner.post(
+        f"/device-api/sync/v1/observations/{old_source['source_event_id']}/evidence",
+        headers=bearer(laptop), json=manifest(old_content)).json()
+    assert owner.put("/device-api/sync/v1/evidence/" + old_evidence["evidence_id"],
+                     headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=old_content).status_code == 200
+
+    rotated_settings = replace(
+        settings, evidence_keks=(("synthetic-v1", b"k" * 32), ("synthetic-v2", b"n" * 32)),
+        evidence_kek_version="synthetic-v2")
+    rotated_app = create_app(rotated_settings, maintenance_factory=NonRecurringMaintenance, evidence_store=store)
+    with TestClient(rotated_app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as rotated:
+        rotated.cookies.update(owner.cookies)
+        old_download = rotated.get(
+            f"/control-api/alerts/{old_alert['id']}/evidence/{old_evidence['evidence_id']}")
+        assert old_download.status_code == 200 and old_download.content == old_content
+
+        new_source, new_content = observation(), b"encrypted-under-v2"
+        new_alert = ingest(rotated, laptop, new_source)
+        new_evidence = rotated.post(
+            f"/device-api/sync/v1/observations/{new_source['source_event_id']}/evidence",
+            headers=bearer(laptop), json=manifest(new_content)).json()
+        assert rotated.put("/device-api/sync/v1/evidence/" + new_evidence["evidence_id"],
+                           headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=new_content).status_code == 200
+        new_download = rotated.get(
+            f"/control-api/alerts/{new_alert['id']}/evidence/{new_evidence['evidence_id']}")
+        assert new_download.status_code == 200 and new_download.content == new_content
+
+    with psycopg.connect(settings.database_url) as conn:
+        versions = conn.execute("SELECT kek_version FROM aislesignals_control.evidence_objects ORDER BY created_at").fetchall()
+        assert [row[0] for row in versions] == ["synthetic-v1", "synthetic-v2"]
 
 
 @pytest.mark.parametrize("changes", [

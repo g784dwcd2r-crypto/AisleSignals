@@ -67,8 +67,10 @@ class EvidenceService:
     def __init__(self, settings, store: EvidenceBlobStore | None = None):
         self.settings = settings
         self.enabled = settings.evidence_mode == "ENCRYPTED"
+        self._keks = dict(settings.evidence_keks)
         if self.enabled:
-            if not settings.evidence_policy or not settings.evidence_kek or not settings.evidence_kek_version:
+            if (not settings.evidence_policy or not settings.evidence_kek_version
+                    or settings.evidence_kek_version not in self._keks):
                 raise EvidenceStoreError("Cloud evidence policy is incomplete.")
             if store is not None:
                 self.store = store
@@ -90,10 +92,15 @@ class EvidenceService:
             fail(503, "EVIDENCE_DISABLED", "Cloud evidence is not enabled for this service.")
 
     def encrypt(self, row, content: bytes) -> bytes:
-        return seal(content, kek=self.settings.evidence_kek, kek_version=row["kek_version"], aad=_aad(row))
+        if row["kek_version"] != self.settings.evidence_kek_version:
+            raise EvidenceCryptoError("Evidence write key is unavailable.")
+        return seal(content, kek=self._keks[row["kek_version"]], kek_version=row["kek_version"], aad=_aad(row))
 
     def decrypt(self, row, envelope: bytes) -> bytes:
-        return open_envelope(envelope, kek=self.settings.evidence_kek,
+        kek = self._keks.get(row["kek_version"])
+        if kek is None:
+            raise EvidenceCryptoError("Evidence read key is unavailable.")
+        return open_envelope(envelope, kek=kek,
                              expected_version=row["kek_version"], aad=_aad(row))
 
     def probe(self) -> bool:

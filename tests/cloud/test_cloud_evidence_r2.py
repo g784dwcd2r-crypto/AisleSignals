@@ -5,7 +5,7 @@ from botocore.exceptions import ClientError, ConnectTimeoutError
 from botocore.stub import Stubber
 
 from services.cloud.evidence_r2 import R2EvidenceBlobStore
-from services.cloud.evidence_store import MAX_ENVELOPE_BYTES, EvidenceStoreError
+from services.cloud.evidence_store import MAX_ENVELOPE_BYTES, EvidenceObjectMissing, EvidenceStoreError
 
 
 KEY = "evidence/00000000-0000-0000-0000-000000000001.bin"
@@ -55,8 +55,8 @@ class FakeS3:
         return {"ContentLength": len(value), "Body": body}
 
     def delete_object(self, **kwargs):
-        self._failure("delete")
         self.calls.append(("delete", kwargs))
+        self._failure("delete")
         self.objects.pop((kwargs["Bucket"], kwargs["Key"]), None)
         return {"ResponseMetadata": {"HTTPStatusCode": 204}}
 
@@ -84,7 +84,7 @@ def test_r2_is_private_create_only_bounded_and_idempotent():
     assert subject.get(KEY) == content and fake.last_body.closed_by_store is True
     subject.delete(KEY)
     subject.delete(KEY)
-    with pytest.raises(EvidenceStoreError):
+    with pytest.raises(EvidenceObjectMissing):
         subject.get(KEY)
     with pytest.raises(EvidenceStoreError):
         subject.put_if_absent(KEY, b"x" * (MAX_ENVELOPE_BYTES + 1))
@@ -118,9 +118,29 @@ def test_r2_failures_are_opaque_and_never_report_success(operation):
     assert "sensitive" not in str(caught.value) and "AccessDenied" not in str(caught.value)
 
 
+def test_probe_validates_create_only_put_bounded_get_delete_and_absence():
+    fake, subject = FakeS3(), None
+    subject = store(fake)
+    assert subject.probe() is True
+    assert fake.objects == {}
+    assert [call[0] for call in fake.calls] == ["put", "put", "get", "delete", "get"]
+
+
+def test_probe_fails_closed_for_read_only_and_delete_denied_credentials():
+    read_only = FakeS3()
+    read_only.fail["put"] = client_error("AccessDenied", 403)
+    assert store(read_only).probe() is False and read_only.objects == {}
+
+    delete_denied = FakeS3()
+    delete_denied.fail["delete"] = client_error("AccessDenied", 403)
+    assert store(delete_denied).probe() is False
+    assert len(delete_denied.objects) == 1
+    assert [call[0] for call in delete_denied.calls].count("delete") == 2
+
+
 def test_r2_transport_failure_probe_and_malformed_stream_fail_closed():
     fake, subject = FakeS3(), None
-    fake.fail["probe"] = ConnectTimeoutError(endpoint_url="https://private.invalid")
+    fake.fail["put"] = ConnectTimeoutError(endpoint_url="https://private.invalid")
     subject = store(fake)
     assert subject.probe() is False
     fake.fail.clear()

@@ -22,8 +22,8 @@ an arbitrary URL or create a public/presigned link.
 | `CLOUD_EVIDENCE_MODE` | `ENCRYPTED` only after the release gates below pass |
 | `CLOUD_EVIDENCE_POLICY` | `SHORT_LIVED_V1` |
 | `CLOUD_EVIDENCE_STORE_BACKEND` | `R2`; `FILESYSTEM` is development-only and rejected on Render |
-| `CLOUD_EVIDENCE_KEK` | Canonical base64url encoding of a random 32-byte application key |
-| `CLOUD_EVIDENCE_KEK_VERSION` | Stable version label; preserve the matching key until its evidence is deleted |
+| `CLOUD_EVIDENCE_KEKS` | JSON object mapping 1–8 unique version labels to canonical base64url 32-byte keys; every retained database version must remain present |
+| `CLOUD_EVIDENCE_KEK_VERSION` | Current keyring version used for new writes |
 | `CLOUD_R2_ACCOUNT_ID` | Lower-case 32-character Cloudflare account ID |
 | `CLOUD_R2_JURISDICTION` | `eu` |
 | `CLOUD_R2_BUCKET` | Private environment-specific bucket name |
@@ -53,6 +53,8 @@ A lost success response is reconciled by reading and authenticating the existing
 envelope. Timeouts, throttling, provider errors, missing/corrupt READY objects
 and failed deletes produce an opaque unavailable result. They never mark an
 object READY or DELETED. Pending laptop delivery and revoked cleanup retry later.
+Failed physical deletes receive a bounded exponential retry time (one second
+through one hour), so a permanently failing old object cannot monopolise a batch.
 
 ## Staging and production gates
 
@@ -64,8 +66,10 @@ object READY or DELETED. Pending laptop delivery and revoked cleanup retry later
 3. Create distinct bucket-scoped Object Read & Write credentials. Record a
    rotation owner without copying credentials into source, tickets or logs.
 4. Deploy the code while `CLOUD_EVIDENCE_MODE=METADATA_ONLY`. Add all R2 and KEK
-   secrets atomically, switch to `ENCRYPTED`, and redeploy. Startup must fail if
-   the bucket cannot be authenticated.
+   secrets atomically, switch to `ENCRYPTED`, and redeploy. Startup writes a
+   private random canary with conditional create, reads it using the bounded
+   path, deletes it and verifies absence. Startup fails if any capability is
+   unavailable and makes a best-effort delete if the probe stops part-way.
 5. In staging, run a synthetic create/read/conditional-conflict/delete probe,
    then the laptop manifest → upload → dashboard → authorised review journey.
    Restart/redeploy Render and prove the object persists.
@@ -77,6 +81,16 @@ For rollback, first return evidence mode to `METADATA_ONLY` so laptops retain
 and retry their local queues. Preserve PostgreSQL, both R2 buckets and every KEK
 version referenced by retained rows. Do not roll back to a filesystem-backed
 encrypted Render release and do not delete storage as part of application rollback.
+
+For KEK rotation, generate a new 32-byte key and add it under a new version in
+`CLOUD_EVIDENCE_KEKS` without removing existing entries. Change
+`CLOUD_EVIDENCE_KEK_VERSION` to the new version in the same secret update and
+redeploy. Verify that one pre-rotation object and one post-rotation object both
+download before completing the rotation. Remove an old key only after a database
+query proves no retained evidence row references that version and the applicable
+backup retention period has ended. Never reuse a version label for different
+key material; the service rejects duplicate labels and a current version absent
+from the keyring.
 
 Cloudflare references: [S3 compatibility](https://developers.cloudflare.com/r2/api/s3/api/),
 [R2 credentials](https://developers.cloudflare.com/r2/api/tokens/),
