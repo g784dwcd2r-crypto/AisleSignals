@@ -1083,6 +1083,15 @@ test("download centre exposes the verified connection utility and secure pairing
     ),
   ).toBeVisible();
   await expect(
+    page.getByRole("link", {
+      name: "Download macOS pilot (.dmg)",
+      exact: true,
+    }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-macos-v0.1.0/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg",
+  );
+  await expect(
     page.getByRole("heading", {
       name: "Desktop installation files are not released yet",
       exact: true,

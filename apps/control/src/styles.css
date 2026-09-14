@@ -1091,6 +1091,37 @@ td small {
   color: #39705c;
   background: #e8f3ea;
 }
+.download-state.pilot {
+  color: #7a5b22;
+  background: #fbf0d8;
+}
+.featured-download {
+  margin-bottom: 24px;
+  border-color: #c8dbcd;
+  background: linear-gradient(135deg, #ffffff 70%, #eef6ef);
+}
+.featured-download .download-details {
+  max-width: 620px;
+  width: 100%;
+}
+.download-caution {
+  display: block;
+  max-width: 720px;
+  margin-top: 15px;
+  line-height: 1.6;
+}
+.downloads-subheading {
+  margin: 28px 0 15px;
+}
+.downloads-subheading h2 {
+  margin: 5px 0 4px;
+  font-size: 17px;
+}
+.downloads-subheading p {
+  margin: 0;
+  color: #667168;
+  font-size: 11px;
+}
 .download-details {
   margin: 4px 0 20px;
   border-top: 1px solid #edf0eb;
