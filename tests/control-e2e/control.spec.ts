@@ -1078,21 +1078,23 @@ test("download centre exposes the verified connection utility and secure pairing
     page.getByRole("heading", { name: "Download AisleSignals", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Connection utility available now"),
+    page.getByText(
+      "Connection utility available now — this is not an installer",
+    ),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", {
-      name: "One-click installers are in preparation",
+      name: "Desktop installation files are not released yet",
       exact: true,
     }),
   ).toBeVisible();
 
   const macDownload = page.getByRole("link", {
-    name: "Download for macOS",
+    name: "Download macOS connection utility ZIP",
     exact: true,
   });
   const windowsDownload = page.getByRole("link", {
-    name: "Download for Windows",
+    name: "Download Windows connection utility ZIP",
     exact: true,
   });
   await expect(macDownload).toHaveAttribute(

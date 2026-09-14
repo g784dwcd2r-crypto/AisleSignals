@@ -59,11 +59,13 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
       <div className="downloads-availability" role="status">
         <PackageCheck size={21} />
         <div>
-          <strong>Connection utility available now</strong>
+          <strong>
+            Connection utility available now — this is not an installer
+          </strong>
           <p>
-            This utility securely reports that a laptop is online. CCTV
-            selection, monitoring and speaker setup are completed in the local
-            AisleSignals application.
+            The ZIP contains two Python files that securely report a laptop as
+            online. It does not install the complete AisleSignals desktop app,
+            select CCTV, start monitoring or configure its speaker.
           </p>
         </div>
       </div>
@@ -104,9 +106,10 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
               className="button primary download-action"
               href="/downloads/cloud-companion.zip"
               download
+              aria-label={`Download ${platform.name} connection utility ZIP`}
             >
               <Download size={17} />
-              Download for {platform.name}
+              Download connection utility (.zip)
             </a>
           </article>
         ))}
@@ -174,21 +177,21 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
           <div>
             <span className="eyebrow">DESKTOP APPLICATION</span>
             <h2 id="installer-heading">
-              One-click installers are in preparation
+              Desktop installation files are not released yet
             </h2>
             <p>
-              Signed macOS and Windows installers, automatic updates and startup
-              on login still need release approval before customer download.
-              This page will publish them when those checks pass.
+              The macOS .dmg and Windows .msi still need signing, automatic
+              updates and branch-laptop acceptance before customer download.
+              This page will publish the real installers when those checks pass.
             </p>
           </div>
         </div>
         <div className="installer-checks" aria-label="Installer release checks">
           <span>
-            <TerminalSquare size={16} /> Unsigned pilot builds tested
+            <TerminalSquare size={16} /> macOS .dmg: not released
           </span>
           <span>
-            <ShieldCheck size={16} /> Signing and branch acceptance pending
+            <ShieldCheck size={16} /> Windows .msi: not released
           </span>
         </div>
       </section>
