@@ -66,7 +66,7 @@ jobs:
           test -x "$cloud_postgres_bin/pg_ctl"
           echo "$cloud_postgres_bin" >> "$GITHUB_PATH"
       - name: Python, cloud, desktop packaging and migration checks
-        run: python -m pytest tests packaging/test_*.py -q
+        run: python -m pytest tests packaging -q
         env:
           CLOUD_RUN_POSTGRES_TESTS: '1'
       - run: npx playwright install --with-deps chromium
