@@ -13,6 +13,7 @@ from pathlib import Path
 import platform
 import shutil
 import socket
+import stat
 import sys
 import time
 import urllib.error
@@ -61,7 +62,36 @@ class PilotConfig:
         return self.data_dir / "aislesignals.db"
 
 
-def load_config(path: Path | None = None, *, root: Path = ROOT) -> PilotConfig:
+def command_path(value: Path) -> Path:
+    """CLI paths are relative to the working directory, on every entry point."""
+    text = str(value)
+    if not text.strip() or any(ord(c) < 32 for c in text):
+        raise ConfigurationError("Provide a local filesystem path without control characters.")
+    return Path(os.path.abspath(value.expanduser()))
+
+
+def add_storage_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", type=Path, help="Configuration JSON; otherwise use config.json in --data-dir or the default data directory")
+    parser.add_argument("--data-dir", type=Path, help="Private data directory; also selects config.json and defaults unspecified model storage to its vision-runtime subdirectory")
+    parser.add_argument("--runtime-dir", type=Path, help="Override vision_runtime_dir for this command; use the same flag when setting up and starting the model")
+
+
+def resolve_config(path: Path | None = None, *, root: Path = ROOT,
+                   data_dir: Path | None = None, runtime_dir: Path | None = None) -> PilotConfig:
+    """Select one config file, then validate and apply explicit storage overrides."""
+    if data_dir is not None:
+        data_dir = command_path(data_dir)
+    if path is None:
+        candidate = (data_dir if data_dir is not None else default_data_dir(root)) / "config.json"
+        # An invalid existing selection must not silently become a fresh setup.
+        path = candidate if candidate.exists() or candidate.is_symlink() else None
+    else:
+        path = command_path(path)
+    return load_config(path, root=root, data_dir=data_dir, runtime_dir=runtime_dir)
+
+
+def load_config(path: Path | None = None, *, root: Path = ROOT,
+                data_dir: Path | None = None, runtime_dir: Path | None = None) -> PilotConfig:
     values = {}
     if path is not None:
         try:
@@ -104,6 +134,14 @@ def load_config(path: Path | None = None, *, root: Path = ROOT) -> PilotConfig:
             raise ConfigurationError(f"Invalid {key}; provide a local filesystem path.")
         p = Path(value).expanduser()
         paths[key] = Path(os.path.abspath(p if p.is_absolute() else root / p))
+    # Apply only after validating the complete selected configuration. Explicit
+    # server/runtime fields are known from this same read, never a second read.
+    if data_dir is not None:
+        paths["data_dir"] = command_path(data_dir)
+        if "vision_runtime_dir" not in values:
+            paths["vision_runtime_dir"] = paths["data_dir"] / "vision-runtime"
+    if runtime_dir is not None:
+        paths["vision_runtime_dir"] = command_path(runtime_dir)
     if "vision_server" not in values:
         pins = model_module(root)
         if hasattr(pins, "default_server"):
@@ -119,8 +157,33 @@ def model_module(root: Path = ROOT):
 
 
 def private_path_safe(path: Path) -> bool:
-    """Reject symlink traversal rather than silently relocating sensitive data."""
-    return all(not part.is_symlink() for part in (path, *path.parents))
+    """Reject links/reparse points rather than relocate sensitive data.
+
+    Windows directory junctions are reparse points, not Python symbolic links.
+    Unrecognised reparse types also fail closed; an ordinary private directory
+    is required for model credentials, application data and reports. POSIX
+    ancestors must resist replacement by other users, including while a child
+    service opens a validated token by path. Root/current-owned sticky temporary
+    directories are safe ancestors; this does not validate Windows ACLs.
+    """
+    for part in (path, *path.parents):
+        try:
+            metadata = part.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return False
+        if stat.S_ISLNK(metadata.st_mode) or (
+            getattr(metadata, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            return False
+        if os.name == "posix" and stat.S_ISDIR(metadata.st_mode):
+            if metadata.st_uid not in {0, os.geteuid()}:
+                return False
+            if metadata.st_mode & 0o022 and not metadata.st_mode & stat.S_ISVTX:
+                return False
+    return True
 
 
 def port_available(port: int) -> bool:
@@ -197,7 +260,7 @@ def preflight(config: PilotConfig) -> dict:
     safe = private_path_safe(config.data_dir) and private_path_safe(config.database)
     if config.data_dir.exists() and not config.data_dir.is_dir():
         safe = False
-    add(result("data_path", "PASS" if safe else "FAIL", "Data directory and database must not traverse symbolic links; existing database is preserved."))
+    add(result("data_path", "PASS" if safe else "FAIL", "Private paths must reject links/reparse points and unsafe POSIX directory ownership or writable ancestors; existing database is preserved."))
     existing = next((p for p in (config.data_dir, *config.data_dir.parents) if p.exists()), config.root)
     try:
         free = shutil.disk_usage(existing).free
@@ -268,13 +331,12 @@ def write_report(path: Path, report: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path)
+    add_storage_arguments(parser)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     try:
         root = source_root()
-        default = default_data_dir(root) / "config.json"
-        config = load_config(args.config or (default if default.is_file() else None), root=root)
+        config = resolve_config(args.config, root=root, data_dir=args.data_dir, runtime_dir=args.runtime_dir)
         report = preflight(config)
         if args.report:
             write_report(args.report, report)

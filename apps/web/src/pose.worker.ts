@@ -2,17 +2,19 @@ import { FilesetResolver, PoseLandmarker } from "@mediapipe/tasks-vision";
 import type { PosePoint } from "./liveDetectionTypes";
 
 type Request =
-  | { type: "init"; baseUrl: string }
+  | { type: "init"; baseUrl: string; mode?: "VIDEO" | "IMAGE" }
   | { type: "frame"; id: number; bitmap: ImageBitmap; timestampMs: number };
 
 let model: PoseLandmarker | null = null;
 let lastTimestamp = -1;
 let busy = false;
+let mode: "VIDEO" | "IMAGE" = "VIDEO";
 
 self.onmessage = async (message: MessageEvent<Request>) => {
   const request = message.data;
   if (request.type === "init") {
     try {
+      mode = request.mode === "IMAGE" ? "IMAGE" : "VIDEO";
       const files = await FilesetResolver.forVisionTasks(
         `${request.baseUrl}vision/wasm`,
         true,
@@ -22,7 +24,7 @@ self.onmessage = async (message: MessageEvent<Request>) => {
           modelAssetPath: `${request.baseUrl}vision/pose_landmarker_lite.task`,
           delegate: "CPU",
         },
-        runningMode: "VIDEO",
+        runningMode: mode,
         numPoses: 4,
         minPoseDetectionConfidence: 0.5,
         minPosePresenceConfidence: 0.5,
@@ -50,7 +52,10 @@ self.onmessage = async (message: MessageEvent<Request>) => {
       throw new Error("Invalid or overlapping frame.");
     busy = true;
     lastTimestamp = request.timestampMs;
-    const result = model.detectForVideo(request.bitmap, request.timestampMs);
+    const result =
+      mode === "IMAGE"
+        ? model.detect(request.bitmap)
+        : model.detectForVideo(request.bitmap, request.timestampMs);
     const poses: PosePoint[][] = result.landmarks.map((landmarks) =>
       landmarks.map(({ x, y, z, visibility }) => ({ x, y, z, visibility })),
     );

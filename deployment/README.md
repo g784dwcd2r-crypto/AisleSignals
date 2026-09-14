@@ -14,6 +14,8 @@ The config supports only the fields in the example plus `vision_server` and `pyt
 
 ## Check, then start
 
+Use matching `--config`, `--data-dir` and `--runtime-dir` selections for model setup, readiness and startup. Explicit `--data-dir` selects that directory's config and, when no runtime override is configured, its `vision-runtime` directory. See [model setup and storage](../docs/release/model-setup-consistency.md) for precedence, existing-command compatibility and interrupted setup recovery.
+
 Mac/source:
 
 ```sh

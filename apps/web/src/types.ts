@@ -115,6 +115,9 @@ export type InteractionCaseSource = {
   run_id: string;
   source_kind: "CAMERA" | "SCREEN_CAPTURE" | "RECORDED_VIDEO";
   source_label: string;
+  camera_context?: import("./cameraContext").CameraContext | null;
+  camera_id?: string;
+  camera_label?: string;
   created_at: string;
   expires_at: string;
   linked_at: string;

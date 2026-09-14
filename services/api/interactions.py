@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import io
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from uuid import UUID
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import Field, StrictFloat, StrictInt, field_validator, model_validator
+from PIL import Image
 
 from .interaction_vision import (
     MAX_JPEG_BYTES,
@@ -31,7 +33,7 @@ from .interaction_vision import (
     VisionProvider,
     validate_frames,
 )
-from .models import Input, InteractionCaseCreate
+from .models import CameraContext, Input, InteractionCaseCreate, camera_provenance
 from .store import Store, digest, encode, ident, now
 from .evidence_crypto import EvidenceCipher, PilotDatabaseLock, read_frame
 
@@ -53,6 +55,7 @@ class InteractionInput(Input):
     run_id: UUID
     source_kind: Literal["SCREEN_CAPTURE", "CAMERA", "RECORDED_VIDEO"]
     source_label: str = Field(min_length=1, max_length=120)
+    camera_context: CameraContext | None = None
     frames: list[InteractionFrame] = Field(min_length=3, max_length=6)
 
     @field_validator("source_label")
@@ -100,6 +103,7 @@ def saved_view(item):
         "created_at": item["created_at"],
         "expires_at": item["expires_at"],
         **result,
+        **camera_provenance(item),
         "frames": [
             {
                 "at_seconds": frame["at_seconds"],
@@ -458,7 +462,8 @@ def install_interactions(app, context, problem, new_incident, idempotent):
             + "/"
             + ctx.user["site_id"]
         )
-        payload_hash = digest(encode(body.model_dump(mode="json")))
+        # Omitted/null camera context preserves pre-upgrade single-camera retry hashes.
+        payload_hash = digest(encode(body.model_dump(mode="json", exclude_none=True)))
         previous = ctx.conn.execute(
             "SELECT * FROM idempotency WHERE actor_id=? AND route=? AND key=?",
             (ctx.user["id"], route, key),
@@ -489,11 +494,17 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                 for frame in body.frames
             ]
             frames = validate_frames(decoded)
+            if body.camera_context:
+                expected_size = body.camera_context.jpeg_size()
+                for _, jpeg in frames:
+                    with Image.open(io.BytesIO(jpeg)) as image:
+                        if image.size != expected_size:
+                            raise VisionError("Sample dimensions do not match the declared camera crop.")
         except (binascii.Error, ValueError, VisionError):
             problem(
                 422,
                 "INVALID_FRAMES",
-                "Use three to six complete JPEG frames, at most 350 KB and 768 pixels per edge, in chronological order over at most twelve seconds.",
+                "Use three to six complete JPEG frames, at most 350 KB and 768 pixels per edge, in chronological order over at most twelve seconds. Camera-context samples must match the declared crop and bounded resize dimensions.",
             )
         try:
             enough_disk = shutil.disk_usage(service.evidence_root).free >= MIN_FREE_DISK_BYTES + sum(len(data) + 64 for _, data in frames)
@@ -539,6 +550,7 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                 "runtime_context": request.headers.get("x-aislesignals-runtime"),
                 "source_kind": body.source_kind,
                 "source_label": body.source_label,
+                **({"camera_context": body.camera_context.model_dump(mode="json")} if body.camera_context else {}),
                 "created_at": now(),
                 "expires_at": (
                     datetime.now(timezone.utc) + timedelta(seconds=RETENTION_SECONDS)
@@ -756,6 +768,7 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                 "id": item["id"], "version": item["version"],
                 "run_id": item["run_id"], "source_kind": item["source_kind"],
                 "source_label": item["source_label"], "created_at": item["created_at"],
+                **camera_provenance(item),
                 "expires_at": item["expires_at"], "observation": item["result"],
                 "review": item["review"], "frames": item["frames"],
                 "linked_at": now(), "linked_by": {"id": ctx.user["id"], "name": ctx.user["name"]},

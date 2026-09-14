@@ -1,3 +1,9 @@
+import CameraContextDetails from "./CameraContextDetails";
+import { validateCameraContext, cameraContextId } from "./cameraContext";
+import type { CameraContext } from "./cameraContext";
+import type { ConfirmedCameraLayout } from "./CameraLayoutPicker";
+import { MultiCameraScheduler } from "./multiCameraScheduler";
+import type { AllCameraRun } from "./multiCameraInteractions";
 import { runtimeHealth } from "./runtimeHealth";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -91,9 +97,13 @@ function safeLabel(label: string) {
 /** Only real frame observations enter the engine. Source/model lifetimes are explicit. */
 export default function LiveDetection({
   branchName,
+  branchId = "",
+  organisationId = "",
   onOpenInteractionCase,
 }: {
   branchName: string;
+  branchId?: string;
+  organisationId?: string;
   onOpenInteractionCase?: (id: string) => Promise<void>;
 }) {
   const health = useSyncExternalStore(
@@ -106,6 +116,17 @@ export default function LiveDetection({
     label: "PRODUCT ANALYSIS CHECKING",
     guidance: "Checking the separate local product model.",
   });
+  const [allMode, setAllMode] = useState(false);
+  const allModeRef = useRef(false);
+  const [confirmedLayout, setConfirmedLayout] =
+    useState<ConfirmedCameraLayout | null>(null);
+  const layoutRef = useRef<ConfirmedCameraLayout | null>(null);
+  const [allRun, setAllRun] = useState<AllCameraRun | null>(null);
+  const allPoseStop = useRef<(() => void) | null>(null);
+  const [poseCoverage, setPoseCoverage] = useState<ReturnType<
+    MultiCameraScheduler["snapshot"]
+  > | null>(null);
+  const sourceIdentity = useRef({ key: "", id: "" });
   const [source, setSource] = useState<Source | null>(null);
   const [selectedCamera, setSelectedCamera] = useState<SelectedCamera | null>(
     null,
@@ -115,7 +136,9 @@ export default function LiveDetection({
     "Connect a CCTV view or choose a recording to begin.",
   );
   const [error, setError] = useState("");
-  const [tracks, setTracks] = useState<LiveTrack[]>([]);
+  const [tracks, setTracks] = useState<
+    (LiveTrack & { cameraIndex?: number })[]
+  >([]);
   const [metrics, setMetrics] = useState({ fps: 0, latency: 0, frames: 0 });
   const [dimensions, setDimensions] = useState({ width: 16, height: 9 });
   const [skeleton, setSkeleton] = useState(true);
@@ -193,6 +216,9 @@ export default function LiveDetection({
   }
   function stop(reason = "Detection stopped.", releaseCapture = true) {
     interactionCancel.current?.();
+    allPoseStop.current?.();
+    allPoseStop.current = null;
+    if (mounted.current) setAllRun(null);
     interactionSilence.current?.();
     continuityRef.current?.close();
     continuityRef.current = null;
@@ -261,6 +287,33 @@ export default function LiveDetection({
     setMetrics({ fps: 0, latency: 0, frames: 0 });
     setActiveAlert(null);
     setError("");
+  }
+
+  function confirmLayout(layout: ConfirmedCameraLayout | null) {
+    layoutRef.current = layout;
+    setConfirmedLayout(layout);
+    if (!layout || layout.layout === "single") {
+      if (allModeRef.current)
+        stop(
+          "Camera layout changed. Confirm the layout and explicitly restart all-camera detection.",
+          false,
+        );
+      allModeRef.current = false;
+      setAllMode(false);
+    }
+  }
+  function changeCameraMode(value: boolean) {
+    if (value && (!layoutRef.current || layoutRef.current.layout === "single"))
+      return;
+    stop(
+      "Camera mode changed. Start detection again with fresh camera histories.",
+      false,
+    );
+    soundOptions.current.movementAlarmEnabled = false;
+    setMovementAlarmEnabled(false);
+    allModeRef.current = value;
+    setAllMode(value);
+    setPoseCoverage(null);
   }
 
   function chooseTrackingCamera(selection: SelectedCamera | null) {
@@ -343,7 +396,12 @@ export default function LiveDetection({
       saveInFlight.current.delete(item.input.event_id);
     }
   }
-  function trigger(event: LiveBehaviourEvent, current: Source, offset: number) {
+  function trigger(
+    event: LiveBehaviourEvent,
+    current: Source,
+    offset: number,
+    cameraContext?: CameraContext,
+  ) {
     if (
       !runtimeHealth.canMonitor() ||
       !runningRef.current ||
@@ -359,13 +417,20 @@ export default function LiveDetection({
     }
     const eventId = crypto.randomUUID();
     const wantsSound =
+      !allModeRef.current &&
       soundOptions.current.movementAlarmEnabled &&
       !soundOptions.current.muted &&
       soundOptions.current.volume > 0;
     let soundRequested = false;
     if (!alarmEvent.current) {
       alarmEvent.current = eventId;
-      setActiveAlert({ eventId, label: event.label, detail: event.detail });
+      setActiveAlert({
+        eventId,
+        label: cameraContext
+          ? `Camera ${cameraContext.camera_index + 1}: ${event.label}`
+          : event.label,
+        detail: event.detail,
+      });
       if (
         wantsSound &&
         performance.now() - lastAlarmStarted.current >= 30_000
@@ -412,6 +477,7 @@ export default function LiveDetection({
         );
     }
     const input: LiveEventInput = {
+      ...(cameraContext ? { camera_context: cameraContext } : {}),
       run_id: runId.current,
       event_id: eventId,
       source_kind: current.kind,
@@ -509,7 +575,11 @@ export default function LiveDetection({
       selectedCamera?.sourceKey === (source?.url ?? source?.stream?.id ?? "")
         ? selectedCamera
         : null;
-    if (camera && (camera.crop.width < 1 || camera.crop.height < 1)) {
+    if (
+      !allMode &&
+      camera &&
+      (camera.crop.width < 1 || camera.crop.height < 1)
+    ) {
       const area = camera.crop;
       context.fillStyle = "rgba(0,0,0,.38)";
       context.fillRect(0, 0, w, area.y * h);
@@ -564,7 +634,7 @@ export default function LiveDetection({
       context.lineWidth = Math.max(2, w / 400);
       context.strokeRect(b.x * w, b.y * h, b.width * w, b.height * h);
       context.font = `600 ${Math.max(13, w / 68)}px sans-serif`;
-      const label = `#${track.id}  ${track.label}`;
+      const label = `${track.cameraIndex === undefined ? "" : `C${track.cameraIndex + 1} · `}#${track.id}  ${track.label}`;
       const textWidth = context.measureText(label).width;
       const textX = Math.max(0, Math.min(b.x * w, w - textWidth - 12));
       const textY = Math.max(0, b.y * h - 27);
@@ -605,7 +675,16 @@ export default function LiveDetection({
         });
       }
     }
-  }, [tracks, skeleton, dimensions, zone, zoneEnabled, selectedCamera, source]);
+  }, [
+    tracks,
+    skeleton,
+    dimensions,
+    zone,
+    zoneEnabled,
+    selectedCamera,
+    source,
+    allMode,
+  ]);
 
   function chooseFile(file: File | undefined) {
     if (!file) return;
@@ -806,6 +885,38 @@ export default function LiveDetection({
           ? selectedCameraRef.current
           : null;
       const crop = camera?.crop ?? null;
+      const grid = allModeRef.current ? layoutRef.current : null;
+      if (
+        allModeRef.current &&
+        (!grid ||
+          grid.layout === "single" ||
+          grid.sourceKey !== sourceKey ||
+          !branchId ||
+          !organisationId)
+      )
+        throw new Error(
+          "Confirm a four/six-camera layout in the active pharmacy before starting.",
+        );
+      if (generation > 2147483647)
+        throw new Error(
+          "Restart the application before creating another camera run.",
+        );
+      if (sourceIdentity.current.key !== sourceKey)
+        sourceIdentity.current = { key: sourceKey, id: crypto.randomUUID() };
+      const cameras =
+        grid && grid.layout !== "single"
+          ? grid.tiles.map((tile) =>
+              validateCameraContext({
+                source_id: sourceIdentity.current.id,
+                epoch: generation,
+                layout: grid.layout,
+                camera_index: tile.index,
+                source_width: video.videoWidth,
+                source_height: video.videoHeight,
+                crop: tile.crop,
+              }),
+            )
+          : null;
       const region = poseFrameRegion(video.videoWidth, video.videoHeight, crop);
       const trackedSource = camera
         ? {
@@ -823,7 +934,10 @@ export default function LiveDetection({
           ? "Sound muted. Visual alerts and logging are enabled."
           : audioResult.message,
       );
-      detector = await createPoseDetector(controller.signal);
+      detector = await createPoseDetector(
+        controller.signal,
+        cameras ? "IMAGE" : "VIDEO",
+      );
       if (!mounted.current || generation !== runGeneration.current) {
         detector.close();
         return;
@@ -879,6 +993,171 @@ export default function LiveDetection({
       runningRef.current = true;
       setPhase("running");
       setStatus("Analysing frames. Waiting for a clear body pose…");
+      if (cameras) {
+        const run: AllCameraRun = Object.freeze({
+          runId: runId.current,
+          generation,
+          sourceKey,
+          sourceKind: current.kind,
+          sourceLabel: current.label,
+          runtime: runtimeHealth.snapshot().context!,
+          cameras: Object.freeze(cameras),
+        });
+        setAllRun(run);
+        const scheduler = new MultiCameraScheduler({
+          sampleIntervalMs: 500,
+          maxInFlight: 1,
+          maxFrameAgeMs: 1000,
+          maxResultAgeMs: 1000,
+        });
+        const scheduled = scheduler.start({
+          organisationId,
+          branchId,
+          sourceId: sourceIdentity.current.id,
+          sourceWidth: video.videoWidth,
+          sourceHeight: video.videoHeight,
+          cameras: cameras.map((item) => ({
+            id: cameraContextId(item),
+            crop: item.crop,
+          })),
+        });
+        const perCamera = cameras.map((camera) => {
+          const region = poseFrameRegion(
+            video.videoWidth,
+            video.videoHeight,
+            camera.crop,
+          );
+          return {
+            camera,
+            region,
+            engine: new LiveBehaviourEngine({
+              sensitivity,
+              restrictedZone: poseZoneInCamera(
+                zoneEnabled ? zone : null,
+                region.area,
+              ),
+            }),
+            tracks: [] as LiveTrack[],
+            lastAt: -Infinity,
+          };
+        });
+        const poseStartedAt = performance.now();
+        let closed = false,
+          completed = 0;
+        const heartbeat = setInterval(() => {
+          const snapshot = scheduler.snapshot();
+          if (!closed && mounted.current) setPoseCoverage(snapshot);
+          if (!closed && !snapshot.active)
+            stop(
+              "All-camera processing continuity ended. Start again with fresh camera state.",
+            );
+        }, 100);
+        allPoseStop.current = () => {
+          closed = true;
+          scheduler.stop();
+          if (mounted.current) setPoseCoverage(scheduler.snapshot());
+          clearInterval(heartbeat);
+          detector?.close();
+          perCamera.forEach((camera) => camera.engine.reset());
+        };
+        const tickAll = async () => {
+          if (
+            closed ||
+            !runtimeHealth.canMonitor() ||
+            !runningRef.current ||
+            generation !== runGeneration.current
+          )
+            return;
+          const now = performance.now(),
+            frame = continuity.latest();
+          const work = frame
+            ? scheduler.dispatch(scheduled, {
+                ...frame,
+                sourceWidth: video.videoWidth,
+                sourceHeight: video.videoHeight,
+              })
+            : null;
+          const ticket = work?.tickets[0];
+          if (ticket) {
+            const state = perCamera.find(
+              (item) => cameraContextId(item.camera) === ticket.camera.id,
+            )!;
+            const abort = () => detector?.close();
+            ticket.signal.addEventListener("abort", abort, { once: true });
+            try {
+              const poses = await detector!.detect(
+                video,
+                now,
+                state.camera.crop,
+              );
+              const accepted = scheduler.settle(ticket, "completed");
+              if (
+                closed ||
+                generation !== runGeneration.current ||
+                !runtimeHealth.canMonitor() ||
+                !continuity.isFresh(maxResultAgeMs)
+              )
+                return;
+              if (accepted.status === "accepted") {
+                const result = state.engine.update(
+                  poses,
+                  ticket.frame.mediaTime * 1000,
+                  state.region.width / state.region.height,
+                );
+                state.tracks = result.tracks;
+                state.lastAt = performance.now();
+                completed++;
+                setMetrics({
+                  frames: completed,
+                  fps:
+                    (completed * 1000) /
+                    Math.max(1, performance.now() - poseStartedAt),
+                  latency: performance.now() - ticket.frame.observedAt,
+                });
+                for (const event of result.events)
+                  trigger(event, current, ticket.frame.mediaTime, state.camera);
+              } else {
+                state.engine.reset();
+                state.tracks = [];
+              }
+              const stamp = performance.now();
+              setTracks(
+                perCamera.flatMap((item) =>
+                  stamp - item.lastAt > 1200
+                    ? []
+                    : projectPoseTracks(item.tracks, item.region.area).map(
+                        (track) => ({
+                          ...track,
+                          cameraIndex: item.camera.camera_index,
+                        }),
+                      ),
+                ),
+              );
+              setStatus(
+                `All ${cameras.length} cameras rotate through one IMAGE-mode worker. Tracks remain camera-local; delayed cameras lose movement continuity.`,
+              );
+            } catch (failure) {
+              scheduler.settle(ticket, "failed");
+              if (!closed && generation === runGeneration.current) {
+                stop(
+                  "All-camera pose worker stopped. No late camera result may be used.",
+                );
+                setError(message(failure));
+              }
+              return;
+            } finally {
+              ticket.signal.removeEventListener("abort", abort);
+            }
+          }
+          if (!closed && generation === runGeneration.current)
+            tickTimer.current = setTimeout(
+              () => void tickAll(),
+              Math.max(50, performance.now() - now),
+            );
+        };
+        void tickAll();
+        return;
+      }
       let lastSequence = -1,
         lastSample = performance.now(),
         frames = 0,
@@ -1059,7 +1338,7 @@ export default function LiveDetection({
       <section className="ld-source-panel" aria-labelledby="ld-source-heading">
         <div>
           <h2 id="ld-source-heading">1. Choose your CCTV input</h2>
-          <p>Share a single camera view for the clearest body tracking.</p>
+          <p>Choose one camera or confirm a four/six-camera grid below.</p>
         </div>
         <div className="ld-source-actions">
           <button
@@ -1184,16 +1463,20 @@ export default function LiveDetection({
         <div className="ld-camera-context">
           <div>
             <strong>
-              {selectedCamera?.sourceKey ===
-              (source?.url ?? source?.stream?.id ?? "")
-                ? selectedCamera?.label
-                : "Full source · camera area not selected"}
+              {allMode
+                ? `All ${confirmedLayout?.tiles.length ?? 0} confirmed cameras`
+                : selectedCamera?.sourceKey ===
+                    (source?.url ?? source?.stream?.id ?? "")
+                  ? selectedCamera?.label
+                  : "Full source · camera area not selected"}
             </strong>
             <span>
-              {selectedCamera?.sourceKey ===
-              (source?.url ?? source?.stream?.id ?? "")
-                ? "Body tracking and product sampling use this camera area."
-                : "Choose the camera picture to exclude browser controls and improve available detail."}
+              {allMode
+                ? "Separate camera histories; sequential local processing. See each camera’s measured coverage below."
+                : selectedCamera?.sourceKey ===
+                    (source?.url ?? source?.stream?.id ?? "")
+                  ? "Body tracking and product sampling use this camera area."
+                  : "Choose the camera picture to exclude browser controls and improve available detail."}
             </span>
           </div>
           <button
@@ -1307,12 +1590,74 @@ export default function LiveDetection({
           </div>
         </div>
       </section>
+      {confirmedLayout && confirmedLayout.layout !== "single" && (
+        <fieldset className="ld-camera-mode">
+          <legend>Camera processing mode</legend>
+          <label>
+            <input
+              type="radio"
+              name="camera-mode"
+              checked={!allMode}
+              onChange={() => changeCameraMode(false)}
+            />
+            Selected camera only
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="camera-mode"
+              checked={allMode}
+              onChange={() => changeCameraMode(true)}
+            />
+            All {confirmedLayout.tiles.length} confirmed cameras
+          </label>
+          <p>
+            Changing mode stops detection and sound. Start explicitly after
+            checking the camera layout.
+          </p>
+        </fieldset>
+      )}
+      {allMode && poseCoverage && (
+        <section
+          className="ld-all-camera-coverage"
+          aria-label="Per-camera body tracking coverage"
+        >
+          {poseCoverage.cameras.map((camera, index) => (
+            <div key={camera.id}>
+              <strong>Camera {index + 1} body tracking</strong>
+              <p>
+                {!poseCoverage.active
+                  ? "Stopped"
+                  : camera.completionAgeMs === null
+                    ? "Waiting for first observation"
+                    : camera.completionAgeMs > 1200
+                      ? "Degraded: movement history reset after a sampling gap"
+                      : "Recent pose processing"}
+              </p>
+              <span>
+                {camera.completed}/{camera.expectedSamples} completed target
+                opportunities · {camera.missedSamples} missed
+              </span>
+              <p>
+                {camera.completionAgeMs === null
+                  ? "No completed pose frame"
+                  : `Last frame ${(camera.completionAgeMs / 1000).toFixed(1)}s ago`}
+              </p>
+            </div>
+          ))}
+        </section>
+      )}
       <div className="ld-control-row">
         <div className="ld-run-buttons">
           <button
             className="ld-primary"
             type="button"
-            disabled={!source?.ready || busy || !health.ready}
+            disabled={
+              !source?.ready ||
+              busy ||
+              !health.ready ||
+              (allMode && (!branchId || !organisationId))
+            }
             onClick={() => void start()}
           >
             <Play size={18} /> Start detection
@@ -1428,6 +1773,7 @@ export default function LiveDetection({
             <input
               type="checkbox"
               checked={movementAlarmEnabled}
+              disabled={allMode}
               onChange={(event) => {
                 const next = event.target.checked;
                 soundOptions.current.movementAlarmEnabled = next;
@@ -1493,9 +1839,11 @@ export default function LiveDetection({
             {soundStatus}
           </p>
           <p className="ld-hint">
-            An alert requests up to three 8-second attention tones over 28
-            seconds. Silence or acknowledge at any time. Browser and laptop
-            volume control actual loudness.
+            {allMode
+              ? "All-camera product alarms use the sound check below: one bounded 8-second tone with a global 30-second cooldown. Movement-rule sound is off in this mode."
+              : "An alert requests up to three 8-second attention tones over 28 seconds."}{" "}
+            Silence or acknowledge at any time. Browser and laptop volume
+            control actual loudness.
           </p>
         </section>
       </div>
@@ -1505,8 +1853,16 @@ export default function LiveDetection({
           aria-label="People currently tracked"
         >
           {tracks.map((track) => (
-            <div key={track.id} className={`ld-track ld-track-${track.status}`}>
-              <span>Person #{track.id}</span>
+            <div
+              key={`${track.cameraIndex ?? "single"}:${track.id}`}
+              className={`ld-track ld-track-${track.status}`}
+            >
+              <span>
+                {track.cameraIndex === undefined
+                  ? ""
+                  : `Camera ${track.cameraIndex + 1} · `}
+                Person #{track.id}
+              </span>
               <strong>{track.label}</strong>
               <small>Current view only</small>
             </div>
@@ -1514,6 +1870,10 @@ export default function LiveDetection({
         </section>
       )}
       <InteractionAnalysis
+        allMode={allMode}
+        allRun={allRun}
+        allCameraCount={confirmedLayout?.tiles.length ?? 0}
+        onConfirmedLayout={confirmLayout}
         videoRef={videoRef}
         cancelRef={interactionCancel}
         silenceRef={interactionSilence}
@@ -1569,6 +1929,7 @@ export default function LiveDetection({
         {pending.map((item) => (
           <div className="ld-event ld-event-pending" key={item.input.event_id}>
             <div>
+              <CameraContextDetails context={item.input.camera_context} />
               <strong>{item.label}</strong>
               <p>{item.detail}</p>
               <small>
@@ -1597,6 +1958,7 @@ export default function LiveDetection({
             key={event.id}
           >
             <div>
+              <CameraContextDetails context={event.camera_context} />
               <strong>{event.label}</strong>
               <p>{event.detail}</p>
               <small>
