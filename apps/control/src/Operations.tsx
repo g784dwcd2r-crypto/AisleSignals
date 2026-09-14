@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { client } from "./api";
 import { connectionStatus } from "./health";
+import EvidenceReview from "./EvidenceReview";
 import type { WorkspaceProps } from "./Admin";
 import type {
   Alert,
@@ -866,6 +867,11 @@ function AlertDetail({
           This timestamp does not establish the time the video was captured.
         </p>
       )}
+      <EvidenceReview
+        alertId={alert.id}
+        state={alert.evidence_state || "NONE"}
+        items={alert.evidence || []}
+      />
       {alert.review ? (
         <section className="review-complete">
           <span className="inline-icon">

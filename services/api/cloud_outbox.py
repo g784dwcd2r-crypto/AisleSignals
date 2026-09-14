@@ -261,10 +261,15 @@ def mark_restored(conn, *, now):
         conn.execute("""UPDATE cloud_sync_items SET payload=NULL,payload_hash='',
             lease_token=NULL,lease_until_ms=NULL,claim_generation=NULL,settled_token=NULL""")
         conn.execute("DELETE FROM cloud_sync_capacity")
-        return {
+        result = {
             "bindings_restored": conn.execute("SELECT count(*) FROM cloud_sync_bindings").fetchone()[0],
             "blocked_obligations": conn.execute("SELECT count(*) FROM cloud_sync_items WHERE error_code='RESTORED_REQUIRES_MANAGEMENT'").fetchone()[0],
         }
+        # Media uses a separate additive schema so old databases and observation
+        # wire contracts stay unchanged. Fence it in this same restore commit.
+        from .cloud_media_outbox import mark_restored as mark_media_restored
+        mark_media_restored(conn, now=now)
+        return result
 
 
 class Outbox:

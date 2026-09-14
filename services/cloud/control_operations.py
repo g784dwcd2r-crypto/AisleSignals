@@ -132,6 +132,8 @@ def alert_view(row):
     return {
         **{key: row[key] for key in ("id", "pharmacy_id", "pharmacy_name", "device_id", "device_name", "source_event_id", "event_code", "title", "source_label", "occurred_at", "received_at", "historical", "status", "version", "incident_id", "timestamp_basis", "source_expires_at")},
         "review": None if row["review_outcome"] is None else {"outcome": row["review_outcome"], "note": row["review_note"], "by": row["reviewed_by"], "at": row["reviewed_at"]},
+        "evidence": row.get("evidence", []),
+        "evidence_state": row.get("evidence_state", "NONE"),
     }
 
 
@@ -151,7 +153,36 @@ def select_rows(conn, principal, kind, selected=None, record_id=None, status=Non
     if kind == "devices":
         columns, joins, order, view = "r.*, p.name AS pharmacy_name", "", "r.created_at", device_view
     elif kind == "alerts":
-        columns, joins, order, view = "r.*, p.name AS pharmacy_name, d.name AS device_name, i.id AS incident_id", f"JOIN {SCHEMA}.devices d ON d.id=r.device_id AND d.organisation_id=r.organisation_id LEFT JOIN {SCHEMA}.incidents i ON i.alert_id=r.id AND i.organisation_id=r.organisation_id", "r.received_at", alert_view
+        columns = f"""r.*, p.name AS pharmacy_name, d.name AS device_name, i.id AS incident_id,
+            COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id',e.id,'kind',e.kind,'content_type',e.content_type,'byte_count',e.expected_bytes,
+                'state',CASE WHEN e.state='AVAILABLE' THEN 'READY' ELSE 'PENDING' END,
+                'expires_at',e.expires_at)
+                ORDER BY e.created_at,e.id) FROM {SCHEMA}.evidence_objects e
+                WHERE e.alert_id=r.id AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id
+                AND e.expires_at>clock_timestamp() AND
+                    (e.state='AVAILABLE' OR (e.state='PENDING' AND e.created_at>=clock_timestamp()-INTERVAL '15 minutes'))), '[]'::jsonb) AS evidence,
+            CASE
+                WHEN NOT EXISTS (SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=r.id
+                    AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id) THEN 'NONE'
+                WHEN NOT EXISTS (SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=r.id
+                    AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id
+                    AND e.expires_at>clock_timestamp() AND
+                    (e.state='AVAILABLE' OR (e.state='PENDING' AND e.created_at>=clock_timestamp()-INTERVAL '15 minutes'))) THEN 'EXPIRED'
+                WHEN EXISTS (SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=r.id
+                    AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id
+                    AND e.state='AVAILABLE' AND e.expires_at>clock_timestamp())
+                 AND EXISTS (SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=r.id
+                    AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id
+                    AND e.state='PENDING' AND e.expires_at>clock_timestamp()
+                    AND e.created_at>=clock_timestamp()-INTERVAL '15 minutes') THEN 'PARTIAL'
+                WHEN EXISTS (SELECT 1 FROM {SCHEMA}.evidence_objects e WHERE e.alert_id=r.id
+                    AND e.organisation_id=r.organisation_id AND e.pharmacy_id=r.pharmacy_id
+                    AND e.state='PENDING' AND e.expires_at>clock_timestamp()
+                    AND e.created_at>=clock_timestamp()-INTERVAL '15 minutes') THEN 'PENDING'
+                ELSE 'READY'
+            END AS evidence_state"""
+        joins, order, view = f"JOIN {SCHEMA}.devices d ON d.id=r.device_id AND d.organisation_id=r.organisation_id LEFT JOIN {SCHEMA}.incidents i ON i.alert_id=r.id AND i.organisation_id=r.organisation_id", "r.received_at", alert_view
     else:
         columns, joins, order, view = f"r.*, p.name AS pharmacy_name, NOT {source_available_sql('a')} AS source_unavailable", f"JOIN {SCHEMA}.alerts a ON a.id=r.alert_id AND a.organisation_id=r.organisation_id AND a.pharmacy_id=r.pharmacy_id", "r.created_at", incident_view
     params = [principal.organisation_id, permitted]

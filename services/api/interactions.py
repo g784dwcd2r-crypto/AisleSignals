@@ -133,8 +133,7 @@ def job_view(item):
 class InteractionService:
     def __init__(self, store, cloud_provider=None):
         self.store = store
-        from .cloud_hooks import CloudHooks
-        self.cloud_hooks = CloudHooks(store, cloud_provider) if cloud_provider is not None else None
+        self.cloud_hooks = None
         self.provider = VisionProvider()
         self.runtime_current = lambda item: True  # Installed by the owning API process.
         db = Path(store.path).resolve()
@@ -156,6 +155,9 @@ class InteractionService:
             except BaseException:
                 self.database_lock.close()
                 raise
+        if cloud_provider is not None:
+            from .cloud_hooks import CloudHooks
+            self.cloud_hooks = CloudHooks(store, cloud_provider, evidence_root=self.evidence_root, cipher=self.cipher)
         self.closed = threading.Event()
         self.janitor = None
         self._retention_pending = False
@@ -462,8 +464,11 @@ async def interaction_lifespan(app):
         if app.state.store.mode == "pilot" and service.cloud_hooks is not None:
             service.hold_cloud_delivery()
             from .cloud_delivery import CloudDelivery
-            delivery = CloudDelivery(app.state.store, app.state.cloud_connection,
-                                     source_state=service.cloud_hooks.source_state)
+            options = {'source_state': service.cloud_hooks.source_state}
+            if hasattr(service.cloud_hooks, 'media_source') and hasattr(service.cloud_hooks, 'read_media'):
+                options.update(media_source=service.cloud_hooks.media_source,
+                               media_reader=service.cloud_hooks.read_media)
+            delivery = CloudDelivery(app.state.store, app.state.cloud_connection, **options)
             app.state.cloud_delivery = delivery
             if not delivery.start():
                 raise RuntimeError("CLOUD_DELIVERY_START_FAILED")

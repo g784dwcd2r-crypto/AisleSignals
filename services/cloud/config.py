@@ -6,6 +6,7 @@ import os
 import re
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, urlsplit
+from pathlib import Path
 
 
 class ConfigurationError(ValueError):
@@ -31,6 +32,11 @@ class CloudSettings:
     port: int
     auth_key: str | None = field(default=None, repr=False)
     bootstrap_token: str | None = field(default=None, repr=False)
+    evidence_mode: str = "METADATA_ONLY"
+    evidence_policy: str | None = None
+    evidence_kek: bytes | None = field(default=None, repr=False)
+    evidence_kek_version: str | None = None
+    evidence_store_path: Path | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
@@ -97,6 +103,28 @@ class CloudSettings:
                 raise ConfigurationError("CLOUD_AUTH_KEY must be a canonical base64url-encoded 32-byte secret.") from None
         if bootstrap_token and (not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", bootstrap_token) or not auth_key):
             raise ConfigurationError("CLOUD_BOOTSTRAP_TOKEN requires a random URL-safe secret and CLOUD_AUTH_KEY.")
+        evidence_mode = values.get("CLOUD_EVIDENCE_MODE", "METADATA_ONLY")
+        if evidence_mode not in {"METADATA_ONLY", "ENCRYPTED"}:
+            raise ConfigurationError("CLOUD_EVIDENCE_MODE must be METADATA_ONLY or ENCRYPTED.")
+        evidence_policy = values.get("CLOUD_EVIDENCE_POLICY") or None
+        evidence_kek_version = values.get("CLOUD_EVIDENCE_KEK_VERSION") or None
+        evidence_store = values.get("CLOUD_EVIDENCE_STORE_PATH") or None
+        encoded_kek = values.get("CLOUD_EVIDENCE_KEK") or None
+        evidence_kek = None
+        if encoded_kek:
+            try:
+                evidence_kek = base64.urlsafe_b64decode(encoded_kek)
+                if len(evidence_kek) != 32 or base64.urlsafe_b64encode(evidence_kek).decode() != encoded_kek:
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise ConfigurationError("CLOUD_EVIDENCE_KEK must be a canonical base64url-encoded 32-byte secret.") from None
+        if evidence_mode == "ENCRYPTED":
+            if (evidence_policy != "SHORT_LIVED_V1" or evidence_kek is None
+                    or not evidence_kek_version or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", evidence_kek_version)
+                    or not evidence_store or not Path(evidence_store).is_absolute()):
+                raise ConfigurationError("Encrypted cloud evidence requires policy, key version, KEK and an absolute store path.")
+        elif any((evidence_policy, evidence_kek, evidence_kek_version, evidence_store)):
+            raise ConfigurationError("Evidence policy, KEK and store require CLOUD_EVIDENCE_MODE=ENCRYPTED.")
         return cls(
             environment=environment,
             allowed_hosts=allowed_hosts,
@@ -106,4 +134,9 @@ class CloudSettings:
             port=port,
             auth_key=auth_key,
             bootstrap_token=bootstrap_token,
+            evidence_mode=evidence_mode,
+            evidence_policy=evidence_policy,
+            evidence_kek=evidence_kek,
+            evidence_kek_version=evidence_kek_version,
+            evidence_store_path=Path(evidence_store) if evidence_store else None,
         )

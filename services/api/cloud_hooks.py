@@ -14,8 +14,13 @@ def utcnow():
 
 
 class CloudHooks:
-    def __init__(self, store, provider, *, clock=utcnow):
+    def __init__(self, store, provider, *, clock=utcnow, evidence_root=None, cipher=None):
+        from .cloud_media_outbox import MediaOutbox, install_schema
         self.store, self.provider, self.clock = store, provider, clock
+        self.media = MediaOutbox()
+        self.evidence_root, self.cipher = evidence_root, cipher
+        with store.transaction() as conn:
+            install_schema(conn)
 
     def _scope(self, conn, user):
         row = conn.execute("SELECT value FROM runtime_settings WHERE key='installation_id'").fetchone()
@@ -75,7 +80,15 @@ class CloudHooks:
             if not isinstance(observation, MappedObservation):
                 item['cloud_sync'] = {'state': 'NOT_QUEUED', 'code': observation.value}
                 return
-            ctx.outbox.enqueue(conn, ctx.scope, ctx.binding, observation, now=self.clock())
+            observation_item_id = ctx.outbox.enqueue(conn, ctx.scope, ctx.binding, observation, now=self.clock())
+            if kind == 'interaction':
+                try:
+                    self.media.enqueue_overview(conn, ctx.scope, ctx.binding, observation_item_id, item, now=self.clock())
+                except Exception:
+                    # Metadata remains useful and follows its established wire
+                    # contract. Missing/corrupt evidence must never fabricate an
+                    # overview or roll back the observation admission.
+                    pass
             item['cloud_sync'] = {'state': 'QUEUED'}
         except Exception:
             # enqueue's savepoint prevents a partial queue row. The local result
@@ -128,3 +141,35 @@ class CloudHooks:
                 or queued[2] != deadline or queued[3] != mapped.payload['source_event_id']):
             return 'INELIGIBLE'
         return 'AVAILABLE'
+
+    def media_source(self, conn, ctx, claim):
+        """Revalidate immutable frame provenance without reading media bytes."""
+        if self.source_state(conn, ctx, claim.entity_kind, claim.entity_id) != 'AVAILABLE':
+            return False
+        row = conn.execute("SELECT body FROM entities WHERE kind=? AND id=? AND organisation_id=? AND site_id=?",
+            (claim.entity_kind, claim.entity_id, ctx.scope.organisation_id, ctx.scope.site_id)).fetchone()
+        try:
+            item = json.loads(row[0])
+            frame = item['frames'][claim.frame_index]
+            return (frame['sha256'] == claim.sha256 and frame['bytes'] == claim.byte_count
+                    and claim.frame_index in item['result']['evidence_frame_indices'])
+        except (TypeError, KeyError, IndexError, ValueError):
+            return False
+
+    def read_media(self, claim):
+        if self.evidence_root is None or self.cipher is None:
+            raise RuntimeError('MEDIA_READER_UNAVAILABLE')
+        from .evidence_crypto import read_frame
+        with self.store.transaction() as conn:
+            row = conn.execute("""SELECT e.body FROM entities e JOIN cloud_media_items m ON m.entity_id=e.id AND m.entity_kind=e.kind
+                JOIN cloud_sync_bindings b ON b.id=m.binding_id
+                WHERE m.id=? AND m.binding_id=? AND e.kind=? AND e.id=?
+                    AND e.organisation_id=b.organisation_id AND e.site_id=b.site_id""",
+                (claim.id, claim.binding.id, claim.entity_kind, claim.entity_id)).fetchone()
+            if row is None:
+                raise RuntimeError('MEDIA_SOURCE_UNAVAILABLE')
+            item = json.loads(row[0])
+        data = read_frame(self.evidence_root, item, claim.frame_index, self.cipher, 350 * 1024)
+        if len(data) != claim.byte_count or not hmac.compare_digest(hashlib.sha256(data).hexdigest(), claim.sha256):
+            raise RuntimeError('MEDIA_SOURCE_INVALID')
+        return data
