@@ -432,11 +432,13 @@ def main() -> int:
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int)
     parser.add_argument("--casework-only", action="store_true", help="Disable product interaction analysis for this launch")
+    parser.add_argument("--owner-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--api-child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.api_child:
         return run_api_child()
     supervisor = None
+    owner_watchdog = None
     try:
         root = source_root()
         config = resolve_config(args.config, root=root, data_dir=args.data_dir, runtime_dir=args.runtime_dir)
@@ -470,6 +472,11 @@ def main() -> int:
         token_path = ensure_token(config) if config.vision_enabled else None
         env = service_environment(config, token_path)
         supervisor = Supervisor(config, env)
+        from scripts.desktop_owner import DesktopOwnerError, start_watchdog
+        try:
+            owner_watchdog = start_watchdog(args.owner_pid, supervisor.stop_event)
+        except DesktopOwnerError as error:
+            raise ConfigurationError(str(error)) from None
         shutdown_signals = [signal.SIGINT, signal.SIGTERM]
         if os.name != "nt" and hasattr(signal, "SIGHUP"):
             shutdown_signals.append(signal.SIGHUP)
@@ -519,6 +526,8 @@ def main() -> int:
     finally:
         if supervisor is not None:
             supervisor.shutdown()
+            if owner_watchdog is not None:
+                owner_watchdog.join(timeout=1)
             try:
                 supervisor.status("FAILED" if supervisor.last_state == "FAILED" else "REARM_REQUIRED" if supervisor.rearm_required else "STOPPED", "Launcher stopped its owned services. Reopen it and explicitly select the CCTV source to resume.")
             except OSError:

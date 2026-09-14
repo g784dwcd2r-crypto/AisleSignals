@@ -1,21 +1,36 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#include <fcntl.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-static NSString *const ASLocalURL = @"http://127.0.0.1:8765/#live-detection";
-static NSString *const ASCloudURL = @"https://aislesignals-control-staging.onrender.com/";
+static NSString *ASCloudURL(void) {
+    NSString *configured = NSBundle.mainBundle.infoDictionary[@"AisleSignalsCloudOrigin"];
+    return configured.length ? configured : @"https://invalid.invalid/";
+}
 
 @interface ASAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSSegmentedControl *modeControl;
 @property(nonatomic, strong) NSTask *backend;
+@property(nonatomic, strong) NSFileHandle *logHandle;
 @property(nonatomic) NSInteger loadAttempts;
 @property(nonatomic) BOOL applicationLoaded;
+@property(nonatomic) BOOL terminating;
+@property(nonatomic) NSInteger localPort;
+@property(nonatomic, copy) NSString *localURL;
 @end
 
 @implementation ASAppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    self.localPort = [self selectLocalPort];
+    self.localURL = [NSString stringWithFormat:@"http://127.0.0.1:%ld/#live-detection", (long)self.localPort];
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
     configuration.websiteDataStore = [WKWebsiteDataStore defaultDataStore];
     self.webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
@@ -75,40 +90,130 @@ static NSString *const ASCloudURL = @"https://aislesignals-control-staging.onren
 }
 
 - (void)loadCloudWorkspace {
-    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASCloudURL]
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASCloudURL()]
                                                cachePolicy:NSURLRequestUseProtocolCachePolicy
                                            timeoutInterval:15.0]];
 }
 
+- (BOOL)allowedTopLevelURL:(NSURL *)url {
+    if ([url.scheme isEqualToString:@"about"]) return YES;
+    NSURLComponents *candidate = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    NSURLComponents *local = [NSURLComponents componentsWithString:self.localURL];
+    NSURLComponents *cloud = [NSURLComponents componentsWithString:ASCloudURL()];
+    if (candidate.user.length || candidate.password.length) return NO;
+    BOOL localMatch = [candidate.scheme isEqualToString:local.scheme] &&
+        [candidate.host.lowercaseString isEqualToString:local.host.lowercaseString] &&
+        candidate.port.integerValue == local.port.integerValue;
+    BOOL cloudMatch = [candidate.scheme isEqualToString:@"https"] &&
+        [candidate.host.lowercaseString isEqualToString:cloud.host.lowercaseString] &&
+        candidate.port.integerValue == cloud.port.integerValue;
+    return localMatch || cloudMatch;
+}
+
+- (NSInteger)selectLocalPort {
+    // Reserve-probe a private high port. NSTask cannot inherit a listening
+    // socket, so the child still owns the authoritative bind. If another
+    // process wins the short handoff race, child termination fails the window
+    // closed instead of adopting that process.
+    for (NSInteger attempt = 0; attempt < 64; attempt++) {
+        int descriptor = socket(AF_INET, SOCK_STREAM, 0);
+        if (descriptor < 0) continue;
+        struct sockaddr_in address = {0};
+        address.sin_len = sizeof(address);
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        NSInteger port = 18000 + arc4random_uniform(28000);
+        address.sin_port = htons((uint16_t)port);
+        int result = bind(descriptor, (struct sockaddr *)&address, sizeof(address));
+        close(descriptor);
+        if (result == 0) return port;
+    }
+    return 0;
+}
+
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action
+    decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    // Subresources retain WebKit's same-origin/CSP controls. A top-level link,
+    // redirect or target=_blank must never turn the authenticated desktop
+    // window into an arbitrary credential-bearing browser.
+    if (action.targetFrame == nil || (action.targetFrame.mainFrame && ![self allowedTopLevelURL:action.request.URL])) {
+        decisionHandler(WKNavigationActionPolicyCancel);
+        if (!self.terminating) [self showFailure:@"AisleSignals blocked navigation outside its configured local and cloud workspaces."];
+        return;
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+- (NSFileHandle *)privateLogHandle:(NSError **)error {
+    NSURL *support = [[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                            inDomains:NSUserDomainMask] firstObject];
+    NSURL *directory = [support URLByAppendingPathComponent:@"AisleSignals" isDirectory:YES];
+    NSFileManager *manager = NSFileManager.defaultManager;
+    if (![manager createDirectoryAtURL:directory withIntermediateDirectories:YES
+                            attributes:@{NSFilePosixPermissions: @0700} error:error]) return nil;
+    struct stat directoryInfo;
+    if (lstat(directory.fileSystemRepresentation, &directoryInfo) != 0 || !S_ISDIR(directoryInfo.st_mode) ||
+        S_ISLNK(directoryInfo.st_mode) || directoryInfo.st_uid != getuid() || chmod(directory.fileSystemRepresentation, 0700) != 0) {
+        if (error) *error = [NSError errorWithDomain:@"ie.aislesignals.desktop" code:1
+            userInfo:@{NSLocalizedDescriptionKey: @"The private log directory is unsafe."}];
+        return nil;
+    }
+    NSURL *logURL = [directory URLByAppendingPathComponent:@"desktop.log"];
+    int descriptor = open(logURL.fileSystemRepresentation, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
+    if (descriptor < 0 || fchmod(descriptor, 0600) != 0) {
+        if (descriptor >= 0) close(descriptor);
+        if (error) *error = [NSError errorWithDomain:@"ie.aislesignals.desktop" code:2
+            userInfo:@{NSLocalizedDescriptionKey: @"The private desktop log could not be opened."}];
+        return nil;
+    }
+    return [[NSFileHandle alloc] initWithFileDescriptor:descriptor closeOnDealloc:YES];
+}
+
 - (void)startBackend {
+    if (self.localPort == 0) {
+        [self showFailure:@"AisleSignals could not reserve a private local service port."];
+        return;
+    }
     NSURL *resources = NSBundle.mainBundle.resourceURL;
     NSURL *executable = [[resources URLByAppendingPathComponent:@"AisleSignalsPilot"]
         URLByAppendingPathComponent:@"AisleSignalsPilot"];
-    NSURL *support = [[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
-                                                            inDomains:NSUserDomainMask] firstObject];
-    NSURL *logs = [support URLByAppendingPathComponent:@"AisleSignals" isDirectory:YES];
-    [NSFileManager.defaultManager createDirectoryAtURL:logs withIntermediateDirectories:YES attributes:nil error:nil];
-    NSURL *logURL = [logs URLByAppendingPathComponent:@"desktop.log"];
-    if (![NSFileManager.defaultManager fileExistsAtPath:logURL.path]) {
-        [NSFileManager.defaultManager createFileAtPath:logURL.path contents:nil attributes:nil];
+    NSError *error = nil;
+    self.logHandle = [self privateLogHandle:&error];
+    if (!self.logHandle) {
+        [self showFailure:[NSString stringWithFormat:@"AisleSignals could not create its private log. %@", error.localizedDescription]];
+        return;
     }
-    NSFileHandle *log = [NSFileHandle fileHandleForWritingAtPath:logURL.path];
-    [log seekToEndOfFile];
 
     self.backend = [[NSTask alloc] init];
     self.backend.executableURL = executable;
-    self.backend.arguments = @[@"--casework-only", @"--no-browser"];
-    self.backend.standardOutput = log;
-    self.backend.standardError = log;
-    NSError *error = nil;
+    self.backend.arguments = @[@"--casework-only", @"--no-browser", @"--port",
+                               [NSString stringWithFormat:@"%ld", (long)self.localPort], @"--owner-pid",
+                               [NSString stringWithFormat:@"%d", getpid()]];
+    self.backend.standardOutput = self.logHandle;
+    self.backend.standardError = self.logHandle;
+    __weak ASAppDelegate *weakSelf = self;
+    self.backend.terminationHandler = ^(NSTask *task) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            ASAppDelegate *owner = weakSelf;
+            if (owner && !owner.terminating) {
+                [owner showFailure:[NSString stringWithFormat:
+                    @"The secure local service stopped unexpectedly (status %d). Close AisleSignals before retrying; it did not adopt another service on this port.",
+                    task.terminationStatus]];
+            }
+        });
+    };
     if (![self.backend launchAndReturnError:&error]) {
         [self showFailure:[NSString stringWithFormat:@"AisleSignals could not start. %@", error.localizedDescription]];
     }
 }
 
 - (void)loadLocalApplication {
+    if (!self.backend.running) {
+        [self showFailure:@"The secure local service is not running. Close AisleSignals before retrying; an occupied port is never adopted."];
+        return;
+    }
     self.loadAttempts += 1;
-    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASLocalURL]
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:self.localURL]
                                                cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                            timeoutInterval:2.0]];
 }
@@ -128,6 +233,7 @@ static NSString *const ASCloudURL = @"https://aislesignals-control-staging.onren
 }
 
 - (void)showFailure:(NSString *)message {
+    NSLog(@"AisleSignals desktop failure: %@", message);
     NSString *escaped = [[[message stringByReplacingOccurrencesOfString:@"&" withString:@"&amp;"]
         stringByReplacingOccurrencesOfString:@"<" withString:@"&lt;"]
         stringByReplacingOccurrencesOfString:@">" withString:@"&gt;"];
@@ -138,10 +244,17 @@ static NSString *const ASCloudURL = @"https://aislesignals-control-staging.onren
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return YES; }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
+    self.terminating = YES;
     if (self.backend.running) {
         [self.backend terminate];
+        NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:6.0];
+        while (self.backend.running && deadline.timeIntervalSinceNow > 0) {
+            [NSThread sleepForTimeInterval:0.05];
+        }
+        if (self.backend.running) kill(self.backend.processIdentifier, SIGKILL);
         [self.backend waitUntilExit];
     }
+    [self.logHandle closeFile];
 }
 
 @end
