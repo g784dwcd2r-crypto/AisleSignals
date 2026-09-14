@@ -21,6 +21,7 @@ import { BrowserAttentionSound } from "./playbackAlerts";
 import type { DetectionRect, LiveSourceKind } from "./liveDetectionTypes";
 import {
   captureInteractionFrame,
+  claimInteractionSound,
   freshInteractionAlarm,
   InteractionFrameBuffer,
   InteractionAlarmCommission,
@@ -696,9 +697,13 @@ export default function InteractionAnalysis({
             options.current.alarmEnabled &&
             !options.current.muted &&
             options.current.volume > 0 &&
-            attention.current.decide(saved.id, contextKey(), now) ===
-              "REQUEST_SOUND" &&
-            commission.current.claim(contextKey(), saved.id, saved.source_kind);
+            claimInteractionSound(attention.current, commission.current, {
+              id: saved.id,
+              camera: contextKey(),
+              now,
+              context: contextKey(),
+              source: saved.source_kind,
+            });
           if (eligible) {
             const played = sound.current?.play({
               volume: options.current.volume,

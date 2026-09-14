@@ -7,6 +7,7 @@ import {
   safeInteractionFrameUrl,
   interactionCropPixels,
   captureInteractionFrame,
+  claimInteractionSound,
   InteractionAlarmCommission,
 } from "./interactionCapture";
 
@@ -325,6 +326,45 @@ describe("staff product alarm commissioning", () => {
     gate.arm(context, false);
     expect(gate.claim(context, "job-one", "CAMERA")).toBe(false);
     expect(gate.claim(context, "job-two", "CAMERA")).toBe(true);
+  });
+
+  it("keeps accepting commissioned jobs after its bounded history fills", () => {
+    const gate = commissioned();
+    for (let index = 0; index < 1001; index++)
+      expect(gate.claim(context, `job-${index}`, "CAMERA")).toBe(true);
+    expect(gate.claim(context, "job-1000", "CAMERA")).toBe(false);
+  });
+
+  it("does not consume attention or cooldown when commissioning rejects", () => {
+    const attention = new InteractionAttentionPolicy();
+    const gate = new InteractionAlarmCommission();
+    expect(
+      claimInteractionSound(attention, gate, {
+        id: "job-one",
+        camera: "camera-1",
+        now: 1000,
+        context,
+        source: "CAMERA",
+      }),
+    ).toBe(false);
+    expect(attention.check("job-one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    expect(attention.check("job-two", "camera-2", 1001)).toBe("REQUEST_SOUND");
+    const revision = gate.beginTest(context);
+    gate.finishTest(revision, context, 2000);
+    gate.confirm(context, 2001);
+    gate.arm(context, false);
+    expect(
+      claimInteractionSound(attention, gate, {
+        id: "job-one",
+        camera: "camera-1",
+        now: 2002,
+        context,
+        source: "CAMERA",
+      }),
+    ).toBe(true);
+    expect(attention.check("job-two", "camera-2", 2003)).toBe(
+      "GLOBAL_COOLDOWN",
+    );
   });
 });
 

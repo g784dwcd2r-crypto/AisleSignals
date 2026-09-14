@@ -72,20 +72,31 @@ export class InteractionAttentionPolicy {
   private delivered = new Set<string>();
   private quietUntil = new Map<string, number>();
 
-  decide(id: string, camera: string, now: number): AttentionDecision {
+  check(id: string, camera: string, now: number): AttentionDecision {
     if (!id || !camera || !Number.isFinite(now)) return "INVALID";
     if (this.delivered.has(id)) return "ALREADY_DELIVERED";
     if (now < (this.quietUntil.get(camera) ?? -Infinity))
       return "ACKNOWLEDGED_CAMERA_QUIET";
     if (now - this.lastSoundAt < INTERACTION_ALARM_COOLDOWN_MS)
       return "GLOBAL_COOLDOWN";
+    return "REQUEST_SOUND";
+  }
+
+  recordDelivery(id: string, now: number) {
+    if (!id || !Number.isFinite(now) || this.delivered.has(id)) return false;
     if (this.delivered.size >= InteractionAttentionPolicy.MAX_DELIVERED_IDS) {
       const oldest = this.delivered.values().next().value;
       if (oldest !== undefined) this.delivered.delete(oldest);
     }
     this.delivered.add(id);
     this.lastSoundAt = now;
-    return "REQUEST_SOUND";
+    return true;
+  }
+
+  decide(id: string, camera: string, now: number): AttentionDecision {
+    const decision = this.check(id, camera, now);
+    if (decision !== "REQUEST_SOUND") return decision;
+    return this.recordDelivery(id, now) ? "REQUEST_SOUND" : "INVALID";
   }
 
   acknowledge(camera: string, now: number) {
@@ -103,6 +114,7 @@ export class InteractionAttentionPolicy {
 
 /** A browser audio callback is not evidence that a member of staff heard it. */
 export class InteractionAlarmCommission {
+  private static readonly MAX_DELIVERED_IDS = 1000;
   private revision = 0;
   private context = "";
   private testedAt: number | null = null;
@@ -170,13 +182,34 @@ export class InteractionAlarmCommission {
       !this.matches(context) ||
       !id ||
       this.delivered.has(id) ||
-      this.delivered.size >= 1000 ||
       (source === "RECORDED_VIDEO" && !this.recordedAllowed)
     )
       return false;
+    if (this.delivered.size >= InteractionAlarmCommission.MAX_DELIVERED_IDS) {
+      const oldest = this.delivered.values().next().value;
+      if (oldest !== undefined) this.delivered.delete(oldest);
+    }
     this.delivered.add(id);
     return true;
   }
+}
+
+/** Commissioning claims first; cooldown state changes only for an accepted sound request. */
+export function claimInteractionSound(
+  attention: InteractionAttentionPolicy,
+  commission: InteractionAlarmCommission,
+  input: {
+    id: string;
+    camera: string;
+    now: number;
+    context: string;
+    source: LiveSourceKind;
+  },
+) {
+  if (attention.check(input.id, input.camera, input.now) !== "REQUEST_SOUND")
+    return false;
+  if (!commission.claim(input.context, input.id, input.source)) return false;
+  return attention.recordDelivery(input.id, input.now);
 }
 
 /** Bounded ephemeral history. Discontinuities discard sequences rather than joining unrelated moments. */

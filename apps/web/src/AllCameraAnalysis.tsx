@@ -5,6 +5,7 @@ import { runtimeHealth } from "./runtimeHealth";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import {
   captureInteractionFrame,
+  claimInteractionSound,
   freshInteractionAlarm,
   InteractionAlarmCommission,
   InteractionAttentionPolicy,
@@ -271,16 +272,13 @@ export default function AllCameraAnalysis(props: Props) {
             if (
               options.current.armed &&
               !options.current.muted &&
-              attention.current.decide(
-                result.id,
-                cameraKey(ticket.camera),
+              claimInteractionSound(attention.current, commission.current, {
+                id: result.id,
+                camera: cameraKey(ticket.camera),
                 now,
-              ) === "REQUEST_SOUND" &&
-              commission.current.claim(
-                contextKey(),
-                result.id,
-                result.source_kind,
-              )
+                context: contextKey(),
+                source: result.source_kind,
+              })
             ) {
               const played = speaker.current?.play({
                 volume: options.current.volume,
