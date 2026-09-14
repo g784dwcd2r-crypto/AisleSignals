@@ -7,7 +7,7 @@ import {
   safeInteractionFrameUrl,
   interactionCropPixels,
   captureInteractionFrame,
-  claimInteractionSound,
+  prepareInteractionSound,
   InteractionAlarmCommission,
 } from "./interactionCapture";
 
@@ -339,29 +339,31 @@ describe("staff product alarm commissioning", () => {
     const attention = new InteractionAttentionPolicy();
     const gate = new InteractionAlarmCommission();
     expect(
-      claimInteractionSound(attention, gate, {
+      prepareInteractionSound(attention, gate, {
         id: "job-one",
         camera: "camera-1",
         now: 1000,
         context,
         source: "CAMERA",
       }),
-    ).toBe(false);
+    ).toBeNull();
     expect(attention.check("job-one", "camera-1", 1000)).toBe("REQUEST_SOUND");
     expect(attention.check("job-two", "camera-2", 1001)).toBe("REQUEST_SOUND");
     const revision = gate.beginTest(context);
     gate.finishTest(revision, context, 2000);
     gate.confirm(context, 2001);
     gate.arm(context, false);
-    expect(
-      claimInteractionSound(attention, gate, {
-        id: "job-one",
-        camera: "camera-1",
-        now: 2002,
-        context,
-        source: "CAMERA",
-      }),
-    ).toBe(true);
+    const commit = prepareInteractionSound(attention, gate, {
+      id: "job-one",
+      camera: "camera-1",
+      now: 2002,
+      context,
+      source: "CAMERA",
+    });
+    expect(commit).not.toBeNull();
+    expect(attention.check("job-one", "camera-1", 2002)).toBe("REQUEST_SOUND");
+    expect(commit?.()).toBe(true);
+    expect(commit?.()).toBe(false);
     expect(attention.check("job-two", "camera-2", 2003)).toBe(
       "GLOBAL_COOLDOWN",
     );

@@ -194,7 +194,7 @@ export class InteractionAlarmCommission {
   get active() {
     return !!this.context;
   }
-  claim(context: string, id: string, source: LiveSourceKind) {
+  checkClaim(context: string, id: string, source: LiveSourceKind) {
     if (
       !this.armed ||
       !this.confirmed ||
@@ -204,6 +204,10 @@ export class InteractionAlarmCommission {
       (source === "RECORDED_VIDEO" && !this.recordedAllowed)
     )
       return false;
+    return true;
+  }
+  recordClaim(id: string) {
+    if (!id || this.delivered.has(id)) return false;
     if (this.delivered.size >= InteractionAlarmCommission.MAX_DELIVERED_IDS) {
       const oldest = this.delivered.values().next().value;
       if (oldest !== undefined) this.delivered.delete(oldest);
@@ -211,10 +215,13 @@ export class InteractionAlarmCommission {
     this.delivered.add(id);
     return true;
   }
+  claim(context: string, id: string, source: LiveSourceKind) {
+    return this.checkClaim(context, id, source) && this.recordClaim(id);
+  }
 }
 
-/** Commissioning claims first; cooldown state changes only for an accepted sound request. */
-export function claimInteractionSound(
+/** Checks both gates without consuming the ID; commit only after sound playback succeeds. */
+export function prepareInteractionSound(
   attention: InteractionAttentionPolicy,
   commission: InteractionAlarmCommission,
   input: {
@@ -226,9 +233,18 @@ export function claimInteractionSound(
   },
 ) {
   if (attention.check(input.id, input.camera, input.now) !== "REQUEST_SOUND")
-    return false;
-  if (!commission.claim(input.context, input.id, input.source)) return false;
-  return attention.recordDelivery(input.id, input.now);
+    return null;
+  if (!commission.checkClaim(input.context, input.id, input.source))
+    return null;
+  let pending = true;
+  return () => {
+    if (!pending) return false;
+    pending = false;
+    return (
+      commission.recordClaim(input.id) &&
+      attention.recordDelivery(input.id, input.now)
+    );
+  };
 }
 
 /** Bounded ephemeral history. Discontinuities discard sequences rather than joining unrelated moments. */

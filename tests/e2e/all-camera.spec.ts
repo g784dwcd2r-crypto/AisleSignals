@@ -139,6 +139,7 @@ async function openGrid(
         }
         disconnect() {}
         start() {
+          if (state.failSound) throw new Error("synthetic audio failure");
           state.sound++;
         }
         stop() {}
@@ -842,6 +843,38 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
     page.getByLabel("Enable all-camera product analysis", { exact: true }),
   ).not.toBeChecked();
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+});
+
+test("all-camera playback failure disarms sound and pauses automatic submissions", async ({
+  page,
+  installation,
+}) => {
+  test.setTimeout(30000);
+  await openGrid(page, installation, "2x2");
+  await begin(page);
+  const alarm = page.getByLabel(
+    "Experimental attention alarm for all confirmed cameras",
+    { exact: true },
+  );
+  await page
+    .getByRole("button", { name: "Test all-camera alarm sound", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "I heard the all-camera test tone",
+      exact: true,
+    })
+    .click();
+  await alarm.check();
+  await page.evaluate(() => ((window as any).__all.failSound = true));
+  await expect(
+    page.getByLabel("Analyse all cameras automatically", { exact: true }),
+  ).not.toBeChecked({ timeout: 12000 });
+  await expect(alarm).not.toBeChecked();
+  await expect(
+    page.getByText(/sound failed and automatic submissions are paused/i),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 
 test("slow per-camera pose processing exposes lost continuity and a hung worker stops all processing", async ({

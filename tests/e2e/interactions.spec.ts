@@ -16,7 +16,7 @@ async function open(page: Page) {
 
 // Provider responses below are explicit fixtures for workflow tests. They do not
 // demonstrate model accuracy. Actual pretrained inference is tested separately.
-async function modelWorkflow(page: Page, { concealment = false, delayed = false, delayMs = 1800, reviewConflict = false, unavailable = false } = {}) {
+async function modelWorkflow(page: Page, { concealment = false, delayed = false, delayMs = 1800, reviewConflict = false, unavailable = false, serverCancelled = false } = {}) {
   let submitted: any = null;
   const submissions: { payload: any; receivedAt: number }[] = [];
   let item: any = null;
@@ -28,6 +28,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     (window as any).__interactionAudioStarts = 0;
     const start = OscillatorNode.prototype.start;
     OscillatorNode.prototype.start = function (...args) {
+      if ((window as any).__interactionAudioFail) throw new Error('synthetic audio failure');
       (window as any).__interactionAudioStarts++;
       return start.apply(this, args);
     };
@@ -66,7 +67,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
   });
   await page.route(`**/api/interactions/jobs/${jobId}`, async route => {
     if (delayed) await new Promise(resolve => setTimeout(resolve, delayMs));
-    await route.fulfill({ json: { id: jobId, status: 'completed', result: item } }).catch(() => {});
+    await route.fulfill({ json: serverCancelled ? { id: jobId, status: 'cancelled' } : { id: jobId, status: 'completed', result: item } }).catch(() => {});
   });
   await page.route(`**/api/interactions/jobs/${jobId}/cancel`, async route => {
     cancelled++;
@@ -281,6 +282,29 @@ test('explicit experimental alarm requests audio only for a fresh eligible resul
   expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(2);
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+});
+
+test('unexpected server cancellation disarms and pauses automatic analysis', async ({ page }) => {
+  await modelWorkflow(page, { concealment: true, serverCancelled: true });
+  await open(page);
+  await collect(page, true);
+  await page.getByLabel('Analyse automatically', { exact: true }).check();
+  await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked({ timeout: 8000 });
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+  await expect(page.getByText('Analysis interrupted. Automatic submission is paused; check the service and retry.', { exact: true })).toBeVisible();
+});
+
+test('attention playback failure is not recorded and fails closed', async ({ page }) => {
+  await modelWorkflow(page, { concealment: true });
+  await open(page);
+  await collect(page, true);
+  await page.evaluate(() => ((window as any).__interactionAudioFail = true));
+  await page.getByLabel('Analyse automatically', { exact: true }).check();
+  await expect(page.locator('.interaction-alert')).toBeVisible();
+  await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked({ timeout: 8000 });
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+  await expect(page.getByText(/sound failed and automatic analysis is paused/i)).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(1);
 });
 
 test('stopping cancels the pending job and a late concealment response cannot sound', async ({ page }) => {

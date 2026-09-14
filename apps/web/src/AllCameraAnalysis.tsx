@@ -5,7 +5,7 @@ import { runtimeHealth } from "./runtimeHealth";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import {
   captureInteractionFrame,
-  claimInteractionSound,
+  prepareInteractionSound,
   freshInteractionAlarm,
   InteractionAlarmCommission,
   InteractionAttentionPolicy,
@@ -265,6 +265,7 @@ export default function AllCameraAnalysis(props: Props) {
             lastAlarmAt: -Infinity,
             result,
           });
+          let soundFailure = "";
           if (fresh) {
             setAlerts((previous) =>
               [
@@ -276,29 +277,45 @@ export default function AllCameraAnalysis(props: Props) {
                 ),
               ].slice(0, 6),
             );
-            if (
+            const soundReservation =
               options.current.armed &&
               !options.current.muted &&
-              claimInteractionSound(attention.current, commission.current, {
+              prepareInteractionSound(attention.current, commission.current, {
                 id: result.id,
                 camera: cameraKey(ticket.camera),
                 now,
                 context: contextKey(),
                 source: result.source_kind,
-              })
-            ) {
+              });
+            if (soundReservation) {
               const played = speaker.current?.play({
                 volume: options.current.volume,
                 durationSeconds: 8,
               });
-              setSoundMessage(
-                `${cameraName(ticket.camera)}: ${played?.message ?? "Sound unavailable; review the visual observation."}`,
-              );
+              if (played?.ok && soundReservation())
+                setSoundMessage(
+                  `${cameraName(ticket.camera)}: ${played.message}`,
+                );
+              else {
+                soundFailure =
+                  played?.message ??
+                  "Sound unavailable; review the visual observation.";
+                options.current.automatic = false;
+                if (mounted.current) setAutomatic(false);
+                disarm(
+                  `${soundFailure} Automatic submissions are paused; repeat the sound check before re-enabling them.`,
+                );
+              }
             }
+            if (soundFailure)
+              setStatus(
+                `${cameraName(ticket.camera)}: visual attention remains; sound failed and automatic submissions are paused.`,
+              );
           }
-          setStatus(
-            `${cameraName(ticket.camera)}: ${interactionLabels[result.action]}. ${fresh ? "Fresh attention; review required." : "Saved for staff review; no fresh alarm requested."}`,
-          );
+          if (!soundFailure)
+            setStatus(
+              `${cameraName(ticket.camera)}: ${interactionLabels[result.action]}. ${fresh ? "Fresh attention; review required." : "Saved for staff review; no fresh alarm requested."}`,
+            );
           return;
         }
         if (job.status === "failed" || job.status === "cancelled") {

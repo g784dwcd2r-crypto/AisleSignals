@@ -21,7 +21,7 @@ import { BrowserAttentionSound } from "./playbackAlerts";
 import type { DetectionRect, LiveSourceKind } from "./liveDetectionTypes";
 import {
   captureInteractionFrame,
-  claimInteractionSound,
+  prepareInteractionSound,
   confirmedCameraCalibration,
   freshInteractionAlarm,
   InteractionFrameBuffer,
@@ -722,31 +722,42 @@ export default function InteractionAnalysis({
             result: saved,
           });
           if (visibleAttention) setHighlight(saved.id);
-          const eligible =
+          const soundReservation =
             visibleAttention &&
             options.current.alarmEnabled &&
             !options.current.muted &&
             options.current.volume > 0 &&
-            claimInteractionSound(attention.current, commission.current, {
+            prepareInteractionSound(attention.current, commission.current, {
               id: saved.id,
               camera: contextKey(),
               now,
               context: contextKey(),
               source: saved.source_kind,
             });
-          if (eligible) {
+          let sounded = false;
+          let soundFailure = "";
+          if (soundReservation) {
             const played = sound.current?.play({
               volume: options.current.volume,
               durationSeconds: 8,
             });
-            setSoundStatus(
-              played?.message ??
-                "Audio is unavailable. Review the highlighted result.",
-            );
+            if (played?.ok && soundReservation()) {
+              sounded = true;
+              setSoundStatus(played.message);
+            } else {
+              soundFailure =
+                played?.message ??
+                "Audio is unavailable. Review the highlighted result.";
+              options.current.automatic = false;
+              setAutomatic(false);
+              disarmAlarm(
+                `${soundFailure} Automatic analysis is paused; repeat the sound check before re-enabling it.`,
+              );
+            }
           }
           const delay = Math.round((now - frames.at(-1)!.capturedAt) / 1000);
           setStatus(
-            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${eligible ? "Attention requested; review the sampled frames." : delay > 15 ? "Delayed result saved for review; no alarm." : visibleAttention ? "Visual attention requested; sound was not triggered." : "Saved for review."}`,
+            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${sounded ? "Attention requested; review the sampled frames." : soundFailure ? "Visual attention remains; sound failed and automatic analysis is paused." : delay > 15 ? "Delayed result saved for review; no alarm." : visibleAttention ? "Visual attention requested; sound was not triggered." : "Saved for review."}`,
           );
           return;
         }
@@ -754,11 +765,10 @@ export default function InteractionAnalysis({
           throw new Error(
             result.error || "The local model could not analyse this sequence.",
           );
-        if (result.status === "cancelled") {
-          setSubmittedWindow(null);
-          setStatus("Analysis cancelled. No alarm was triggered.");
-          return;
-        }
+        if (result.status === "cancelled")
+          throw new Error(
+            "The local service cancelled analysis unexpectedly. No alarm was triggered.",
+          );
         if (age > 120_000) {
           await api(
             `/interactions/jobs/${created.id}/cancel`,
