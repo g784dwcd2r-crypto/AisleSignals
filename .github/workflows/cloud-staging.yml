@@ -84,4 +84,6 @@ jobs:
           path: |
             .local/control-browser-results/
             .local/control-browser-report/
+          # Only synthetic browser evidence in these two explicit directories.
+          include-hidden-files: true
           retention-days: 7
