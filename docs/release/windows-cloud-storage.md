@@ -86,11 +86,24 @@ reusing a sequence. Closing an owned process releases its handles and locks.
 The counter must contain canonical decimal digits and one newline. Empty,
 malformed, oversized or exhausted state is preserved and rejected. Clock
 rollback never decreases a valid saved value. A new counter is written to a
-private same-directory temporary file and flushed before `MoveFileExW` replaces
-the old name with write-through requested. The validated counter's existing
-owner/DACL are copied to the replacement. There is no cross-volume copy fallback.
+private same-directory temporary file and flushed before a native
+`NtSetInformationFile(FileRenameInformation)` replaces the old name. The rename
+uses the owned temporary file's handle, DELETE access, a simple leaf filename
+and a NULL root directory; it cannot change directories. The same handle is
+flushed again after rename and checked against the intended final path before
+publishing the reservation. The validated counter's existing owner/DACL are
+copied to the replacement. There is no cross-volume copy fallback.
+
+A fully qualified `MoveFileExW` target makes Windows reopen the target directory
+with data-write access, conflicting with the required ancestor fence. The native
+same-directory form avoids that path expansion without releasing any guard or
+relaxing directory sharing. Existing directory-swap and data-writer rejection
+tests remain required alongside successful counter updates.
 The lock stays held until the operation completes; a failed pre-replacement
 flush or rename leaves the old counter untouched and removes the temporary file.
+If the final flush fails after rename, the outcome is uncertain and the operation
+raises without publishing a reservation; the advanced counter is left intact.
+The next attempt advances past it rather than rolling it back or reusing it.
 
 This provides restart-safe reservations using NTFS/Windows flush and rename
 semantics. It is not an independently tested guarantee against arbitrary disk,
@@ -114,7 +127,7 @@ The macOS authoring run used the existing isolated Python 3.12 environment:
 ../AisleSignals-camera-release/.venv/bin/python -m pytest tests/cloud/test_cloud_private_windows.py -q
 ```
 
-Result: **103 passed, 19 skipped**. The skipped cases need actual Windows NTFS:
+The current policy tests run on macOS; native cases require Windows NTFS:
 private creation, preservation of occupied files and ACLs, unsafe ACL refusal,
 hard links, junctions, held-directory rename prevention, refusal of an empty
 ancestor granting another principal reparse-capable write access before creating
@@ -134,4 +147,5 @@ browser or API test cannot replace them.
 - [FSCTL_SET_REPARSE_POINT](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4aeefef8-92c3-4abc-af7a-a610caf8a165): why ancestor `FILE_WRITE_DATA` and `FILE_WRITE_ATTRIBUTES` grants are rejected even with delete sharing disabled.
 - [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle) and [GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew): opened-object identity, link count and final path.
 - [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex): exclusive bounded lock acquisition and process/handle lifetime.
-- [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers) and [MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw): flush and same-volume replacement semantics.
+- [FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers): flush file information before publishing a reservation.
+- [FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) and [NtSetInformationFile](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntsetinformationfile): documented NULL-root/simple-leaf rename within the source directory, and why a fully qualified target needs an incompatible target-directory write open.

@@ -153,6 +153,43 @@ def test_windows_structure_layouts_are_not_host_c_ulong_layouts():
     assert C.sizeof(storage.ACE_HEADER) == 4
     assert C.sizeof(storage.SECURITY_ATTRIBUTES) == (24 if C.sizeof(C.c_void_p) == 8 else 12)
     assert C.sizeof(storage.OVERLAPPED) == (32 if C.sizeof(C.c_void_p) == 8 else 20)
+    assert C.sizeof(storage.IO_STATUS_BLOCK) == 2 * C.sizeof(C.c_void_p)
+    assert storage.FILE_RENAME_INFORMATION.filename.offset == (20 if C.sizeof(C.c_void_p) == 8 else 12)
+
+
+def test_native_rename_packet_uses_only_leaf_utf16_and_null_root():
+    name = "synthetic-连接.sequence"
+    data = storage._rename_information(name)
+    info = storage.FILE_RENAME_INFORMATION.from_buffer(data)
+    assert info.replace == 1 and info.root is None
+    assert info.name_bytes == len(name.encode("utf-16-le"))
+    offset = storage.FILE_RENAME_INFORMATION.filename.offset
+    assert data.raw[offset:offset + info.name_bytes].decode("utf-16-le") == name
+
+
+@pytest.mark.parametrize("name", ["", ".", "..", r"C:\elsewhere\sequence", r"..\sequence", "other/sequence", "sequence:stream", "NUL", "sequence."])
+def test_native_rename_packet_cannot_change_directory_or_use_streams(name):
+    with pytest.raises(storage.UnsafeWindowsPath):
+        storage._rename_information(name)
+
+
+def test_rename_calls_native_class10_without_path_expansion_and_maps_failure():
+    native = object.__new__(storage._Native)
+    calls = []
+    def rename(handle, completion, data, size, information_class):
+        info = storage.FILE_RENAME_INFORMATION.from_buffer(data)
+        calls.append((handle, information_class, info.root, info.name_bytes, size))
+        return 0
+    native.NtSetInformationFile = rename
+    native.RtlNtStatusToDosError = lambda code: 32
+    native.rename_same_directory(1234, "sequence")
+    assert calls == [(1234, 10, None, 16, C.sizeof(storage.FILE_RENAME_INFORMATION) + 16)]
+    native.NtSetInformationFile = lambda *args: -1073741757
+    with pytest.raises(BlockingIOError):
+        native.rename_same_directory(1234, "sequence")
+    native.NtSetInformationFile = lambda *args: 0x103
+    with pytest.raises(OSError):
+        native.rename_same_directory(1234, "sequence")
 
 
 @pytest.mark.parametrize("raw", [b"", b"01\n", b"-1\n", b"1", b"1\r\n", b"1\n2\n", b" 1\n", b"nan\n", b"9999999999999999\n"])
@@ -439,12 +476,14 @@ def test_native_malformed_counter_preserved(native_target, raw):
 
 
 @NATIVE
-@pytest.mark.parametrize("operation", ["FlushFileBuffers", "MoveFileExW"])
+@pytest.mark.parametrize("operation", ["FlushFileBuffers", "rename_same_directory"])
 def test_native_failed_flush_or_replace_preserves_old_counter(native_target, monkeypatch, operation):
     storage.reserve_sequence(native_target, 100)
     native = storage._Native()
     before_acl = security_bytes(native_target)
     def failure(*args):
+        if operation == "rename_same_directory":
+            raise storage._error(5)
         C.set_last_error(5)
         return 0
     monkeypatch.setattr(native, operation, failure)
@@ -454,3 +493,39 @@ def test_native_failed_flush_or_replace_preserves_old_counter(native_target, mon
     assert native_target.read_bytes() == b"100\n"
     assert security_bytes(native_target) == before_acl
     assert not list(native_target.parent.glob(".aislesignals-sequence-*.tmp"))
+
+
+@NATIVE
+def test_native_same_directory_counter_rename_retains_all_ancestor_fences(native_target):
+    storage.ensure_new_destination(native_target)
+    native = storage._Native()
+    # An independent caller also holds the protected ancestors: no temporary
+    # release or downgrade of any guard can make this update succeed.
+    with native.parent(native_target):
+        assert storage.reserve_sequence(native_target, 100) == 100
+        assert storage.reserve_sequence(native_target, 0) == 101
+        with pytest.raises(OSError):
+            os.rename(native_target.parent, native_target.parent.with_name("must-not-move"))
+    assert native_target.read_bytes() == b"101\n"
+
+
+@NATIVE
+def test_native_failed_postrename_flush_does_not_roll_back_or_reuse_counter(native_target, monkeypatch):
+    storage.reserve_sequence(native_target, 100)
+    native = storage._Native()
+    original = native.FlushFileBuffers
+    calls = 0
+    def fail_second(handle):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            C.set_last_error(5)
+            return 0
+        return original(handle)
+    monkeypatch.setattr(native, "FlushFileBuffers", fail_second)
+    monkeypatch.setattr(storage, "_Native", lambda: native)
+    with pytest.raises(OSError):
+        storage.reserve_sequence(native_target, 0)
+    assert calls == 2 and native_target.read_bytes() == b"101\n"
+    monkeypatch.setattr(native, "FlushFileBuffers", original)
+    assert storage.reserve_sequence(native_target, 0) == 102

@@ -38,6 +38,7 @@ DIRECTORY = 0x00000010
 OPEN_REPARSE_POINT = 0x00200000
 BACKUP_SEMANTICS = 0x02000000
 WRITE_THROUGH = 0x80000000
+DELETE_ACCESS = 0x00010000
 # Read/traverse/list plus ADD_SUBDIRECTORY are permitted on ancestors. ADD_FILE
 # aliases FILE_WRITE_DATA and can authorize in-place reparse assignment, so it
 # is rejected even when delete sharing is disabled. Every new component is
@@ -75,6 +76,29 @@ class ACL(C.Structure):
 
 class ACE_HEADER(C.Structure):
     _fields_ = [("kind", BYTE), ("flags", BYTE), ("size", WORD)]
+
+
+class IO_STATUS_BLOCK(C.Structure):
+    # NTSTATUS/pointer union occupies pointer width, including its alignment.
+    _fields_ = [("status", PTR), ("information", C.c_size_t)]
+
+
+class FILE_RENAME_INFORMATION(C.Structure):
+    _fields_ = [("replace", DWORD), ("root", HANDLE), ("name_bytes", DWORD),
+                ("filename", WORD * 1)]
+
+
+def _rename_information(name):
+    """Native same-directory form: simple leaf and NULL root, never a path."""
+    if not isinstance(name, str) or PureWindowsPath(name).name != name:
+        raise UnsafeWindowsPath("A same-directory rename requires a simple file name.")
+    _lexical_path("C:\\synthetic\\" + name)
+    encoded = name.encode("utf-16-le")
+    data = C.create_string_buffer(C.sizeof(FILE_RENAME_INFORMATION) + len(encoded))
+    info = FILE_RENAME_INFORMATION.from_buffer(data)
+    info.replace, info.root, info.name_bytes = 1, None, len(encoded)
+    C.memmove(C.addressof(data) + FILE_RENAME_INFORMATION.filename.offset, encoded, len(encoded))
+    return data
 
 
 @dataclass(frozen=True)
@@ -168,6 +192,7 @@ class _Native:
             raise UnsafeWindowsPath("The Windows storage adapter requires Windows.")
         self.kernel = C.WinDLL("kernel32", use_last_error=True)
         self.advapi = C.WinDLL("advapi32", use_last_error=True)
+        self.ntdll = C.WinDLL("ntdll", use_last_error=True)
         self._bind()
         token = HANDLE()
         self.ok(self.OpenProcessToken(self.GetCurrentProcess(), 8, C.byref(token)))
@@ -205,7 +230,6 @@ class _Native:
             "FlushFileBuffers": (BOOL, [HANDLE]),
             "LockFileEx": (BOOL, [HANDLE, DWORD, DWORD, DWORD, DWORD, p(OVERLAPPED)]),
             "UnlockFileEx": (BOOL, [HANDLE, DWORD, DWORD, DWORD, p(OVERLAPPED)]),
-            "MoveFileExW": (BOOL, [C.c_wchar_p, C.c_wchar_p, DWORD]),
             "DeleteFileW": (BOOL, [C.c_wchar_p]),
         }
         security = {
@@ -220,7 +244,11 @@ class _Native:
             "GetSecurityDescriptorControl": (BOOL, [PTR, p(WORD), p(DWORD)]),
             "IsValidAcl": (BOOL, [PTR]), "GetAce": (BOOL, [PTR, DWORD, p(PTR)]),
         }
-        for library, items in ((self.kernel, declarations), (self.advapi, security)):
+        native = {
+            "NtSetInformationFile": (C.c_int32, [HANDLE, p(IO_STATUS_BLOCK), PTR, DWORD, DWORD]),
+            "RtlNtStatusToDosError": (DWORD, [C.c_int32]),
+        }
+        for library, items in ((self.kernel, declarations), (self.advapi, security), (self.ntdll, native)):
             for name, (restype, argtypes) in items.items():
                 fn = getattr(library, name)
                 fn.restype, fn.argtypes = restype, argtypes
@@ -401,6 +429,19 @@ class _Native:
             offset += count.value
         self.ok(self.FlushFileBuffers(handle))
 
+    def rename_same_directory(self, handle, name):
+        # Full targets trigger IopOpenLinkOrRenameTarget's FILE_WRITE_DATA
+        # directory open, which must fail under our held ancestor fence. The
+        # documented NULL-root/simple-leaf form renames in the source handle's
+        # existing directory without opening that target directory by pathname.
+        # Use the native API so a Win32 wrapper cannot expand the leaf via cwd.
+        data, completion = _rename_information(name), IO_STATUS_BLOCK()
+        status = self.NtSetInformationFile(handle, C.byref(completion), data, len(data), 10)
+        # CreateFile handles are synchronous. Do not treat STATUS_PENDING or
+        # informational status as a durable completed rename.
+        if status != 0:
+            raise _error(self.RtlNtStatusToDosError(status))
+
 
 def validate_path(path):
     """Validate existing components without creating anything; return a Path."""
@@ -472,11 +513,16 @@ def reserve_sequence(path, now_ms):
                 temporary = target.with_name(".aislesignals-sequence-" + secrets.token_hex(16) + ".tmp")
                 created = False
                 try:
-                    with native.opened(temporary, access=GENERIC_WRITE, disposition=CREATE_NEW, descriptor=descriptor) as (handle, _, _):
+                    with native.opened(temporary, access=GENERIC_WRITE | DELETE_ACCESS, disposition=CREATE_NEW, descriptor=descriptor) as (handle, _, _):
                         created = True
                         native.write(handle, f"{sequence}\n".encode("ascii"))
-                    native.ok(native.MoveFileExW(native.name(temporary), native.name(target), 0x01 | 0x08))
-                    created = False
+                        native.rename_same_directory(handle, target.name)
+                        created = False
+                        # Flush file information again after the rename before
+                        # publishing a reservation. A failure here is uncertain:
+                        # leave the advanced counter intact; never roll it back.
+                        native.ok(native.FlushFileBuffers(handle))
+                        native.check(handle, target)
                 finally:
                     if created:
                         native.ok(native.DeleteFileW(native.name(temporary)))
