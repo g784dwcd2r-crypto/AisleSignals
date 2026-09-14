@@ -4,12 +4,24 @@ on:
   push:
     branches: [main, codex/cloud-staging]
     paths:
+      - 'apps/control/**'
+      - 'scripts/build_control.py'
+      - 'scripts/cloud_companion.py'
+      - 'control-playwright.config.ts'
+      - 'tests/control-e2e/**'
+      - '.node-version'
       - 'services/cloud/**'
       - 'tests/cloud/**'
       - 'deployment/render-staging.yaml'
       - '.github/workflows/cloud-staging.yml'
   pull_request:
     paths:
+      - 'apps/control/**'
+      - 'scripts/build_control.py'
+      - 'scripts/cloud_companion.py'
+      - 'control-playwright.config.ts'
+      - 'tests/control-e2e/**'
+      - '.node-version'
       - 'services/cloud/**'
       - 'tests/cloud/**'
       - 'deployment/render-staging.yaml'
@@ -25,9 +37,9 @@ concurrency:
 
 jobs:
   cloud:
-    name: Stateless staging API and configuration
+    name: Management console, PostgreSQL and browser workflows
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +49,19 @@ jobs:
           cache-dependency-path: |
             services/cloud/requirements.txt
             services/cloud/requirements-test.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/control/package-lock.json
       - run: python -m pip install -r services/cloud/requirements-test.txt
+      - run: npm ci
+      - run: npm ci --prefix apps/control
+      - run: npm --prefix apps/control run build
+      - run: npm --prefix apps/control test
+      - run: npm --prefix apps/control run format:check
       - name: Locate PostgreSQL tools for disposable integration tests
         run: |
           cloud_postgres_bin="$(pg_config --bindir)"
@@ -47,3 +71,19 @@ jobs:
       - run: python -m pytest tests/cloud -q
         env:
           CLOUD_RUN_POSTGRES_TESTS: '1'
+
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test -c control-playwright.config.ts
+        env:
+          CLOUD_TEST_PYTHON: python
+          CONTROL_E2E_PORT: '60644'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: control-browser-failure
+          path: |
+            .local/control-browser-results/
+            .local/control-browser-report/
+          # Only synthetic browser evidence in these two explicit directories.
+          include-hidden-files: true
+          retention-days: 7

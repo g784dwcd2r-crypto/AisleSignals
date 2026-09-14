@@ -1,4 +1,4 @@
-# Free, infrastructure-only staging with an expiring metadata-only database.
+# Free management staging with an expiring PostgreSQL database.
 # Review the Blueprint preview in the existing AisleSignals / Staging project.
 # No paid resource or automatic deploy is enabled by this file.
 previews:
@@ -16,7 +16,7 @@ projects:
             repo: https://github.com/g784dwcd2r-crypto/AisleSignals
             branch: codex/cloud-staging
             autoDeployTrigger: "off"
-            buildCommand: python -m pip install -r services/cloud/requirements.txt
+            buildCommand: python scripts/build_control.py
             startCommand: python -m services.cloud.start_with_schema
             # Requires the compatible infrastructure schema; not product readiness.
             healthCheckPath: /health/ready
@@ -28,6 +28,12 @@ projects:
                 value: staging
               - key: CLOUD_DATABASE_SSLMODE
                 value: require
+              - key: NODE_VERSION
+                value: "24.14.1"
+              - key: CLOUD_AUTH_KEY
+                sync: false
+              - key: CLOUD_BOOTSTRAP_TOKEN
+                sync: false
               - key: DATABASE_URL
                 fromDatabase:
                   name: aislesignals-postgres-staging

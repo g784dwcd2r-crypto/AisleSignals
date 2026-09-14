@@ -91,6 +91,7 @@ export type Incident = {
   title: string;
   notes: string;
   candidate_id: string | null;
+  interaction_source?: InteractionCaseSource;
   classification: Classification;
   status: "OPEN" | "CLOSED";
   outcome: Outcome;
@@ -107,6 +108,29 @@ export type Incident = {
     approved: boolean;
     created_at: string;
   };
+};
+export type InteractionCaseSource = {
+  id: string;
+  version: number;
+  run_id: string;
+  source_kind: "CAMERA" | "SCREEN_CAPTURE" | "RECORDED_VIDEO";
+  source_label: string;
+  created_at: string;
+  expires_at: string;
+  linked_at: string;
+  linked_by: { id: string; name: string };
+  observation: {
+    action: string;
+    reason: string;
+    model: string;
+    prompt_version?: string;
+    provenance?: string;
+    validated?: boolean;
+  };
+  review: { outcome: string; note: string; at: string; by: string };
+  frames: { at_seconds: number; sha256: string; bytes: number }[];
+  evidence_kind: "sampled_jpeg_derivatives";
+  retention_notice: string;
 };
 export type Assistance = {
   id: string;

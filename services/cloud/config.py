@@ -1,6 +1,7 @@
 """Explicit cloud-only configuration; exception text never contains values."""
 
 from dataclasses import dataclass, field
+import base64
 import os
 import re
 from collections.abc import Mapping
@@ -28,6 +29,8 @@ class CloudSettings:
     database_sslmode: str
     bind_host: str
     port: int
+    auth_key: str | None = field(default=None, repr=False)
+    bootstrap_token: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
@@ -83,6 +86,17 @@ class CloudSettings:
                 _hostname(parsed.hostname) if parsed.hostname != "::1" else None
             except (ValueError, UnicodeError):
                 raise ConfigurationError("DATABASE_URL must be a valid PostgreSQL URL with the configured TLS mode.") from None
+        auth_key = values.get("CLOUD_AUTH_KEY") or None
+        bootstrap_token = values.get("CLOUD_BOOTSTRAP_TOKEN") or None
+        if auth_key:
+            try:
+                decoded = base64.urlsafe_b64decode(auth_key)
+                if len(decoded) != 32 or base64.urlsafe_b64encode(decoded).decode() != auth_key:
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise ConfigurationError("CLOUD_AUTH_KEY must be a canonical base64url-encoded 32-byte secret.") from None
+        if bootstrap_token and (not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", bootstrap_token) or not auth_key):
+            raise ConfigurationError("CLOUD_BOOTSTRAP_TOKEN requires a random URL-safe secret and CLOUD_AUTH_KEY.")
         return cls(
             environment=environment,
             allowed_hosts=allowed_hosts,
@@ -90,4 +104,6 @@ class CloudSettings:
             database_sslmode=sslmode,
             bind_host="0.0.0.0" if on_render else "127.0.0.1",
             port=port,
+            auth_key=auth_key,
+            bootstrap_token=bootstrap_token,
         )

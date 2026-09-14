@@ -14,6 +14,7 @@ import json
 import os
 import secrets
 import sqlite3
+import stat
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -372,7 +373,79 @@ def create_app(db_path=None, web_dist=None, mode=None):
         "invalid-user", application.state.dummy_salt,
         600_000 if mode == "pilot" else 210_000,
     )
-    install_interactions(application, context, problem)
+    # Safe browser health projection. Never expose launcher paths, free-text detail,
+    # command lines or tokens. A process identity changes even in direct dev mode.
+    api_id = secrets.token_hex(16)
+    supervised = mode == "pilot" and os.environ.get("AISLESIGNALS_PILOT_SUPERVISED_CHILD") == "1"
+    vision_interlocked = os.environ.get("AISLESIGNALS_VISION_DISABLED") == "1"
+    report_path = Path(application.state.store.path).parent / "runtime-status.json"
+
+    def runtime_snapshot():
+        value = dict(api_id=api_id, runtime_id=None, recovery_generation=0,
+                     supervised=supervised, state="API_ONLY", monitoring_allowed=not supervised,
+                     product_available=None, report_age_ms=None, context=None)
+        if supervised:
+            value["state"] = "UNAVAILABLE"
+            try:
+                if report_path.is_symlink():
+                    raise ValueError("Report must be a regular private file")
+                fd = os.open(report_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+                with os.fdopen(fd, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise ValueError("Invalid report file")
+                    raw = stream.read(32769)
+                if len(raw) > 32768:
+                    raise ValueError("Report too large")
+                report = json.loads(raw)
+                runtime_id = report.get("runtime_id", "")
+                generation = report.get("recovery_generation")
+                if (report.get("schema_version") != 1 or not isinstance(runtime_id, str)
+                        or len(runtime_id) != 32 or any(c not in "0123456789abcdef" for c in runtime_id)
+                        or type(generation) is not int or not 0 <= generation <= 1_000_000):
+                    raise ValueError("Invalid report identity")
+                stamp = datetime.fromisoformat(report["generated_at"].replace("Z", "+00:00"))
+                if stamp.tzinfo is None:
+                    raise ValueError("Timestamp requires timezone")
+                age = (datetime.now(timezone.utc) - stamp).total_seconds()
+                state = report.get("state")
+                services = report["services"]
+                if not isinstance(services, list) or len(services) > 2:
+                    raise ValueError("Invalid services")
+                by_name = {entry["name"]: entry for entry in services}
+                if ((set(by_name) != {"api", "vision"} and not (vision_interlocked and set(by_name) == {"api"}))
+                        or len(by_name) != len(services)):
+                    raise ValueError("Missing services")
+                def ready(name):
+                    item = by_name[name]
+                    checked = datetime.fromisoformat(item["last_checked_at"].replace("Z", "+00:00"))
+                    return (checked.tzinfo is not None and item.get("health") == "READY"
+                            and item.get("running") is True and item.get("disabled") is False
+                            and -2 <= (datetime.now(timezone.utc) - checked).total_seconds() <= 8)
+                api_ready = ready("api")
+                vision_disabled = vision_interlocked and ("vision" not in by_name or by_name["vision"].get("disabled") is True)
+                vision_ready = not vision_interlocked and "vision" in by_name and ready("vision")
+                allowed_state = state in {"SERVICES_READY", "REARM_REQUIRED"} or (state == "DEGRADED" and vision_disabled)
+                allowed = (-2 <= age <= 8 and allowed_state and api_ready and (vision_ready or vision_disabled))
+                value.update(runtime_id=runtime_id, recovery_generation=generation,
+                             state=state if state in {"STARTING", "SERVICES_READY", "DEGRADED", "RECOVERING", "REARM_REQUIRED", "FAILED", "STOPPED"} else "UNAVAILABLE",
+                             monitoring_allowed=allowed, product_available=allowed and vision_ready,
+                             report_age_ms=round(age * 1000))
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                pass  # A malformed/missing/stale report fails closed, without disclosing its path.
+        if value["monitoring_allowed"]:
+            value["context"] = digest(f"{api_id}:{value['runtime_id']}:{value['recovery_generation']}")
+        return value
+
+    install_interactions(application, context, problem, new_incident, idempotent)
+    def job_runtime_current(item):
+        bound = item.get("runtime_context")
+        if bound is None and not supervised:
+            return True  # Direct legacy/dev API callers; no supervised coverage claimed.
+        current = runtime_snapshot()
+        return (isinstance(bound, str) and len(bound) == 64 and all(c in "0123456789abcdef" for c in bound) and current["monitoring_allowed"]
+                and secrets.compare_digest(bound, current["context"]))
+    application.state.interactions.runtime_current = job_runtime_current
+
     from .pilot_admin import install_pilot_admin
     install_pilot_admin(application, context, problem)
 
@@ -525,8 +598,26 @@ def create_app(db_path=None, web_dist=None, mode=None):
                     # Starlette's pinned _CachedRequest forwards this bounded
                     # body to FastAPI, preserving its normal JSON validation.
                     request._body = bytes(buffered)
+        # Only active monitoring is fenced. Cancellation, reviewed history and
+        # casework remain accessible while the model/runtime recovers.
+        monitor_route = (
+            request.method == "POST" and request.url.path in {"/api/interactions/jobs", "/api/live-events"}
+            or request.method == "GET" and request.url.path.startswith("/api/interactions/jobs/")
+            and request.url.path.count("/") == 4
+        )
+        supplied_context = request.headers.get("x-aislesignals-runtime")
+        guarded = monitor_route and (supervised or supplied_context is not None)
+        def valid_runtime():
+            current = runtime_snapshot()
+            return (current["monitoring_allowed"] and isinstance(supplied_context, str)
+                    and len(supplied_context) == 64 and all(c in "0123456789abcdef" for c in supplied_context)
+                    and secrets.compare_digest(supplied_context, current["context"]))
+        if response is None and guarded and not valid_runtime():
+            response = rejected(409, "RUNTIME_CONTEXT_CHANGED", "Monitoring requires a fresh healthy runtime context. Restart detection explicitly after recovery.")
         if response is None:
             response = await call_next(request)
+            if guarded and response.status_code < 400 and not valid_runtime():
+                response = rejected(409, "RUNTIME_CONTEXT_CHANGED", "The runtime changed during this request. No live result may be used; restart after recovery.")
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -543,6 +634,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
     @application.get("/api/health")
     def health():
         return dict(status="ok", mode="pilot" if mode == "pilot" else "synthetic-prototype", version="0.1.0")
+
+    @application.get("/api/runtime/health")
+    def browser_health(ctx=Depends(context)):
+        return {**runtime_snapshot(), "site_id": ctx.user["site_id"]}
 
     @application.get("/api/runtime")
     def runtime():
@@ -1213,7 +1308,7 @@ def create_app(db_path=None, web_dist=None, mode=None):
         match_version(item, body.expected_version)
         payload = dict(
             format="AisleSignals case record v0.1" if mode == "pilot" else "AisleSignals synthetic case record v0.1",
-            provenance="SYNTHETIC PROTOTYPE. No real video or person identity. This is not a real video evidence package.",
+            provenance=("Staff-reviewed local case metadata. Linked experimental observations are not established facts; sampled JPEGs are referenced, not embedded, and retain their original expiry/deletion policy." if mode == "pilot" else "SYNTHETIC PROTOTYPE. No real video or person identity. This is not a real video evidence package."),
             exported_at=now(),
             exported_by=public_user(ctx.user),
             purpose=body.purpose,

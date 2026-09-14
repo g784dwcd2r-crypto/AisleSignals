@@ -1,4 +1,4 @@
-"""Explicit metadata migration then serve, for disposable cloud staging only.
+"""Explicit cloud schema migration then serve, for staging only.
 
 Run with ``python -m services.cloud.start_with_schema``. The normal server
 entry point does not migrate. This is not a production migration framework.
@@ -40,7 +40,7 @@ def main() -> int:
             return _fail("DATABASE_NOT_READY")
     except Exception:
         return _fail("DATABASE_NOT_READY")
-    print("Cloud staging metadata schema verified. Customer access and synchronisation remain unavailable.", flush=True)
+    print("Cloud staging schema verified. Management access requires configured credentials and verified MFA.", flush=True)
     return server.main()
 
 

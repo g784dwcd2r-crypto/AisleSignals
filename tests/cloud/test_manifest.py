@@ -24,7 +24,7 @@ def test_free_blueprint_has_only_reviewed_health_service_and_private_staging_dat
     assert service["autoDeployTrigger"] == "off"
     assert service["branch"] == "codex/cloud-staging"
     assert service["repo"] == "https://github.com/g784dwcd2r-crypto/AisleSignals"
-    assert service["buildCommand"] == "python -m pip install -r services/cloud/requirements.txt"
+    assert service["buildCommand"] == "python scripts/build_control.py"
     assert service["startCommand"] == "python -m services.cloud.start_with_schema"
     assert service["healthCheckPath"] == "/health/ready"
     assert "preDeployCommand" not in service and "disk" not in service
@@ -32,6 +32,9 @@ def test_free_blueprint_has_only_reviewed_health_service_and_private_staging_dat
         {"key": "PYTHON_VERSION", "value": "3.12.14"},
         {"key": "CLOUD_ENV", "value": "staging"},
         {"key": "CLOUD_DATABASE_SSLMODE", "value": "require"},
+        {"key": "NODE_VERSION", "value": "24.14.1"},
+        {"key": "CLOUD_AUTH_KEY", "sync": False},
+        {"key": "CLOUD_BOOTSTRAP_TOKEN", "sync": False},
         {"key": "DATABASE_URL", "fromDatabase": {"name": "aislesignals-postgres-staging", "property": "connectionString"}},
     ]
     assert environment["databases"] == [{
