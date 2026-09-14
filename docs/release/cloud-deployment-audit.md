@@ -68,19 +68,12 @@ python deployment/verify_cloud_release.py \
 
 ## External production blockers
 
-The repository contains only a staging Render manifest. It names a Free web
-service, Free PostgreSQL and the historical `codex/cloud-staging` branch, so it
-cannot be used as evidence for the reported paid upgrade. No production Render
-hostname, service ID, database ID, deploy ID, environment inventory, backup
-policy or restore result is recorded in the repository or exposed by the public
-staging service.
-
-The current cloud configuration accepts only `staging` and `development`, and
-the checked startup command is explicitly staging-only. A production service
-must not be pointed at this release under a misleading staging mode. Supporting
-`CLOUD_ENV=production`, a migration-only pre-deploy step and a checked no-migrate
-runtime requires a separate reviewed backend change outside this deployment-only
-workstream.
+The historical staging manifest still names a Free web service, Free PostgreSQL
+and `codex/cloud-staging`, so it cannot prove the reported paid upgrade. This
+release adds a separate paid production template and production runtime; neither
+has been applied to Render. No production Render hostname, service ID, database
+ID, deploy ID, environment inventory, backup policy or restore result is recorded
+in the repository or exposed by the public staging service.
 
 Before a production deployment, an authorised operator must provide or record:
 
