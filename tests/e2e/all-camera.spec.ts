@@ -113,7 +113,10 @@ async function openGrid(
       const state = ((window as any).__all = {
         modes: [] as string[],
         workers: 0,
+        cameraCount: layout === "2x2" ? 4 : 6,
         pose: [] as any[],
+        occludedCamera: null as number | null,
+        occludedFrames: [] as number[],
         sound: 0,
         ended: false,
       });
@@ -183,6 +186,13 @@ async function openGrid(
             for (let c = 0; c < 3; c++) rgb[c] += pixels[i + c] / 256;
           state.pose.push({ width: sample.width, height: sample.height, rgb });
           if (state.pose.length > 60) state.pose.shift();
+          // The sixth synthetic tile is cyan. Select the mock's gap from the
+          // actual cropped pixels, never from a production camera ID or label.
+          const occluded =
+            state.occludedCamera === 6 &&
+            rgb[1] - rgb[0] > 45 &&
+            rgb[2] - rgb[0] > 45;
+          if (occluded) state.occludedFrames.push(request.timestampMs);
           request.bitmap.close();
           const points = Array.from({ length: 33 }, () => ({
             x: 0.5,
@@ -208,7 +218,11 @@ async function openGrid(
             if (!this.closed)
               this.onmessage?.(
                 {
-                  data: { type: "result", id: request.id, poses: [points] },
+                  data: {
+                    type: "result",
+                    id: request.id,
+                    poses: occluded ? [] : [points],
+                  },
                 },
                 state.delay ?? 0,
               );
@@ -335,6 +349,26 @@ async function begin(page: Page, automatic = true) {
     await page
       .getByLabel("Analyse all cameras automatically", { exact: true })
       .check();
+  await page.evaluate(() => {
+    // Record initial UI identities when they actually appear. A camera-local
+    // gap can correctly retire Person #1 while later evidence is reviewed.
+    const state = (window as any).__all;
+    state.firstTracks = {};
+    const observer = new MutationObserver(() => {
+      for (const label of document.querySelectorAll(".ld-track > span")) {
+        const text = label.textContent ?? "",
+          camera = /^Camera ([1-6]) · Person #\d+$/.exec(text)?.[1];
+        if (camera) state.firstTracks[camera] ??= text;
+      }
+      if (Object.keys(state.firstTracks).length === state.cameraCount)
+        observer.disconnect();
+    });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+  });
   await page
     .getByRole("button", { name: "Start detection", exact: true })
     .click();
@@ -446,10 +480,13 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     for (let i = 1; i <= count; i++)
       await expect(
         page
-          .locator(".ld-track")
-          .filter({ hasText: `Camera ${i} · Person #1` }),
+          .locator(".ld-track > span")
+          .filter({ hasText: new RegExp(`^Camera ${i} · Person #[1-9]\\d*$`) }),
       ).toHaveCount(1);
     const pose = await page.evaluate(() => (window as any).__all);
+    expect(Object.values(pose.firstTracks)).toEqual(
+      Array.from({ length: count }, (_, i) => `Camera ${i + 1} · Person #1`),
+    );
     expect(pose.modes).toEqual(["IMAGE"]);
     expect(pose.workers).toBe(1);
     expect(pose.sound).toBe(0);
@@ -520,6 +557,50 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
       .poll(() => page.evaluate(() => (window as any).__all.workers))
       .toBe(0);
   });
+
+test("a Camera 6 observation gap retires its anonymous ID without joining other camera histories", async ({
+  page,
+  installation,
+}) => {
+  await openGrid(page, installation, "2x3");
+  await begin(page, false);
+  const labels = page.locator(".ld-track > span");
+  await expect(labels).toHaveText(
+    Array.from({ length: 6 }, (_, i) => `Camera ${i + 1} · Person #1`),
+  );
+
+  await page.evaluate(() => ((window as any).__all.occludedCamera = 6));
+  // Observe a real series of cropped inference requests spanning the gap;
+  // do not advance clocks or depend on a fixed sleep completing on CI.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const frames = (window as any).__all.occludedFrames as number[];
+        return frames.length > 1 ? frames.at(-1)! - frames[0] : 0;
+      }),
+    )
+    .toBeGreaterThanOrEqual(1500);
+  await expect(labels).toHaveText(
+    Array.from({ length: 5 }, (_, i) => `Camera ${i + 1} · Person #1`),
+  );
+
+  await page.evaluate(() => ((window as any).__all.occludedCamera = null));
+  await expect(labels).toHaveText([
+    ...Array.from({ length: 5 }, (_, i) => `Camera ${i + 1} · Person #1`),
+    "Camera 6 · Person #2",
+  ]);
+  const state = await page.evaluate(() => (window as any).__all);
+  expect(state.modes).toEqual(["IMAGE"]);
+  expect(state.workers).toBe(1);
+  expect(state.sound).toBe(0);
+  await page
+    .getByRole("button", { name: "Stop detection", exact: true })
+    .click();
+  await expect(labels).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__all.workers))
+    .toBe(0);
+});
 
 test("a held model job never queues another camera; layout invalidation cancels it and disarms before late completion", async ({
   page,
