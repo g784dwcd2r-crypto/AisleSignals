@@ -302,6 +302,26 @@ def create_operations_router():
 def create_device_router():
     router = APIRouter(prefix="/device-api")
 
+    @router.get("/identity")
+    def identity(request: Request):
+        # Reuse intake authority and lock order. This read is not a heartbeat:
+        # it never refreshes monitoring, device activity or a staff session.
+        with device_transaction(request) as (conn, device):
+            target = conn.execute(
+                "SELECT o.name AS organisation_name,p.name AS pharmacy_name "
+                f"FROM {SCHEMA}.organisations o JOIN {SCHEMA}.pharmacies p ON p.organisation_id=o.id "
+                "WHERE o.id=%s AND p.id=%s AND p.active=true",
+                (device["organisation_id"], device["pharmacy_id"]),
+            ).fetchone()
+            if target is None:
+                fail(401, "DEVICE_UNAUTHORIZED", "Connect this laptop using a new enrollment code.")
+            return {
+                "device_id": device["id"], "organisation_id": device["organisation_id"],
+                "organisation_name": target["organisation_name"], "pharmacy_id": device["pharmacy_id"],
+                "pharmacy_name": target["pharmacy_name"], "name": device["name"],
+                "platform": device["platform"], "app_version": device["app_version"],
+            }
+
     @router.post("/enrol", status_code=201)
     def enrol(body: DeviceEnrol, request: Request):
         with request.app.state.control_store.transaction() as conn:

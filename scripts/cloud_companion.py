@@ -3,8 +3,8 @@
 
 Enrollment is explicit and credentials stay in a private local file. The first
 connection reports UNKNOWN camera monitoring: a network heartbeat is not proof
-of detection. This attended utility does not install a startup service. Its private-file
-adapter currently supports macOS/Linux only; Windows use fails closed.
+of detection. This attended utility does not install a startup service. Keep both
+Python files from the download together; Windows uses its native storage adapter.
 """
 
 import argparse
@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from urllib.request import build_opener, HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request
 from uuid import UUID
 
-VERSION = "control-companion-1"
+VERSION = "control-companion-2"
 
 
 class ConnectionFailure(Exception):
@@ -59,9 +59,23 @@ class PrivatePathUnsupported(ValueError):
     pass
 
 
+def windows_storage():
+    if os.name != "nt":
+        return None
+    try:
+        if __package__:
+            from . import cloud_private_windows
+        else:
+            import cloud_private_windows
+    except ImportError:
+        raise PrivatePathUnsupported("The Windows storage adapter is missing. Download the complete connection-tool ZIP and keep both Python files together.") from None
+    return cloud_private_windows
+
+
 def private_file(path):
-    if os.name == "nt":
-        raise PrivatePathUnsupported("The standalone cloud companion requires a verified Windows private-file adapter, which is not available yet. The local detection app and online console remain available.")
+    native = windows_storage()
+    if native is not None:
+        return native.validate_path(path)
     path = Path(path).expanduser().absolute()
     if ".." in path.parts or not path.name or any(item.is_symlink() for item in (path, *path.parents)):
         raise ValueError("Choose a private local path without symbolic links.")
@@ -120,6 +134,10 @@ def write_new(path, data):
     encoded = json.dumps(data).encode("utf-8")
     if len(encoded) > 4096:
         raise ValueError("The connection file is too large.")
+    native = windows_storage()
+    if native is not None:
+        native.write_new(path, encoded)
+        return
     with _private_parent(path, create=True) as (directory, name):
         descriptor = _open_private(directory, name, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
         with os.fdopen(descriptor, "wb") as stream:
@@ -130,18 +148,35 @@ def write_new(path, data):
 
 
 def load_connection(path):
-    with _private_parent(path) as (directory, name):
-        descriptor = _open_private(directory, name, os.O_RDONLY)
-        with os.fdopen(descriptor, "rb") as stream:
-            raw = stream.read(4097)
-        if len(raw) > 4096:
-            raise ValueError("Use a valid private connection file.")
+    native = windows_storage()
+    if native is not None:
+        raw = native.read_bytes(path, 4096)
+    else:
+        with _private_parent(path) as (directory, name):
+            descriptor = _open_private(directory, name, os.O_RDONLY)
+            with os.fdopen(descriptor, "rb") as stream:
+                raw = stream.read(4097)
+    if len(raw) > 4096:
+        raise ValueError("Use a valid private connection file.")
     data = json.loads(raw)
     if not isinstance(data, dict) or set(data) != {"server", "device_id", "device_token", "allow_local"} or not isinstance(data["allow_local"], bool):
         raise ValueError("Use a valid private connection file.")
     server_url(data["server"], data["allow_local"])
     validate_enrolment_response({"device_id": data["device_id"], "device_token": data["device_token"], "heartbeat_interval_seconds": 30})
     return data
+
+
+def ensure_new_destination(path):
+    target = private_file(path)
+    native = windows_storage()
+    if native is not None:
+        return native.ensure_new_destination(target)
+    with _private_parent(target, create=True) as (directory, name):
+        try:
+            os.stat(name, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            return target
+        raise FileExistsError("A connection file already exists.")
 
 
 def validate_enrolment_response(value):
@@ -179,10 +214,13 @@ def reserve_sequence(path, now_ms=None):
     partial counter. Malformed existing state is preserved and fails closed.
     """
     path = private_file(path)
-    import fcntl
     clock = int(time.time() * 1000) if now_ms is None else now_ms
     if type(clock) is not int or clock < 0:
         raise ValueError("The connection clock is invalid.")
+    native = windows_storage()
+    if native is not None:
+        return native.reserve_sequence(path, clock)
+    import fcntl
     with _private_parent(path) as (directory, name):
         lock = _open_private(directory, name + ".lock", os.O_RDWR | os.O_CREAT)
         temporary = None
@@ -256,19 +294,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "enrol":
-            target = private_file(args.config)
-            if target.exists():
-                raise ValueError("A connection file already exists. Keep it, or explicitly choose another --config file.")
             server = server_url(args.server, args.allow_local)
             # Reject unsafe/unwritable path ancestry before consuming a one-use
             # server code. The later exclusive creation still handles a race.
-            with _private_parent(target, create=True) as (directory, name):
-                try:
-                    os.stat(name, dir_fd=directory, follow_symlinks=False)
-                except FileNotFoundError:
-                    pass
-                else:
-                    raise ValueError("A connection file already exists.")
+            target = ensure_new_destination(args.config)
             system = "MACOS" if platform.system() == "Darwin" else "WINDOWS" if platform.system() == "Windows" else "OTHER"
             code = getpass.getpass("One-use laptop connection code: ")
             result = validate_enrolment_response(request(server, "enrol", {"token": code, "name": args.name, "platform": system, "app_version": VERSION}))

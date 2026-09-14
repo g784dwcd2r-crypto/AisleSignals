@@ -655,3 +655,69 @@ test("another tab signing out discards open account records and pending form con
   ).toBe(401);
   await sibling.close();
 });
+
+test("Windows connection setup offers the complete tool and creates a scoped device", async ({
+  page,
+  installation,
+}) => {
+  await bootstrap(page, installation);
+  const branch = await addPharmacy(page, "Synthetic Windows Branch");
+  await navigate(page, "Laptops");
+  await page
+    .getByRole("button", { name: "Connect a laptop", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .getByRole("combobox", { name: "Pharmacy", exact: true })
+    .selectOption(branch.id);
+  await dialog.getByLabel(/^Laptop name/).fill("Synthetic Windows laptop");
+  await dialog
+    .getByLabel("Operating system", { exact: true })
+    .selectOption("WINDOWS");
+  const create = dialog.getByRole("button", {
+    name: "Create connection code",
+    exact: true,
+  });
+  await expect(create).toBeEnabled();
+  const issued = page.waitForResponse((response) =>
+    response.url().endsWith("/devices/enrolments"),
+  );
+  await create.click();
+  const code = await (await issued).json();
+  await expect(dialog).toContainText("PowerShell");
+  await expect(dialog).toContainText("py -3 cloud_companion.py enrol");
+  await expect(dialog).toContainText("does not select a camera");
+  const link = dialog.getByRole("link", {
+    name: "Download the connection tool",
+    exact: true,
+  });
+  await expect(link).toHaveAttribute("href", "/downloads/cloud-companion.zip");
+  const download = await page.request.get(
+    installation.url + "/downloads/cloud-companion.zip",
+  );
+  expect(download.status()).toBe(200);
+  expect(download.headers()["content-type"]).toBe("application/zip");
+  expect((await download.body()).subarray(0, 4).toString("hex")).toBe(
+    "504b0304",
+  );
+  const device = await page.request.post(
+    installation.url + "/device-api/enrol",
+    {
+      data: {
+        token: code.token,
+        name: "Synthetic Windows laptop",
+        platform: "WINDOWS",
+        app_version: "synthetic-windows-ui",
+      },
+    },
+  );
+  expect(device.status()).toBe(201);
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await navigate(page, "Overview");
+  await navigate(page, "Laptops");
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "Synthetic Windows laptop" });
+  await expect(row).toContainText("Windows");
+  await expect(row).toContainText("Synthetic Windows Branch");
+});

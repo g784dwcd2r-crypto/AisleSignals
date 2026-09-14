@@ -22,7 +22,7 @@ def surface(tmp_path):
         yield client,app,web
 
 
-@pytest.mark.parametrize("path", ["/", "/assets/app.js", "/health/live", "/health/ready", "/control-api/setup/status", "/missing"])
+@pytest.mark.parametrize("path", ["/", "/assets/app.js", "/health/live", "/health/ready", "/control-api/setup/status", "/downloads/cloud_companion.py", "/downloads/cloud-companion.zip", "/missing"])
 def test_public_responses_apply_security_headers(surface, path):
     client,_,_ = surface
     response = client.get(path)
@@ -148,3 +148,28 @@ def test_missing_build_is_explicit_and_companion_download_contains_no_config(tmp
         assert "device_token" in response.text  # field name, no configured value
         assert "CLOUD_BOOTSTRAP_TOKEN=" not in response.text and "CLOUD_AUTH_KEY=" not in response.text
         assert "strict-transport-security" not in response.headers
+
+
+def test_connection_download_contains_only_the_two_public_sources(surface,tmp_path):
+    import io
+    import subprocess
+    import sys
+    import zipfile
+    client,_,_=surface
+    response=client.get("/downloads/cloud-companion.zip")
+    assert response.status_code==200
+    assert response.headers["content-type"]=="application/zip"
+    assert response.headers["content-disposition"]=='attachment; filename="AisleSignals-connection-tool.zip"'
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.namelist()==["cloud_companion.py","cloud_private_windows.py"]
+        root=Path(__file__).resolve().parents[2]/"scripts"
+        for name in archive.namelist():
+            raw=archive.read(name)
+            assert raw==(root/name).read_bytes()
+            compile(raw,name,"exec")
+            (tmp_path/name).write_bytes(raw)
+    result=subprocess.run([sys.executable,str(tmp_path/"cloud_companion.py"),"--help"],cwd=tmp_path,capture_output=True,text=True,timeout=10)
+    assert result.returncode==0 and "enrol" in result.stdout
+    result=subprocess.run([sys.executable,"-c","import cloud_private_windows; print('adapter import passed')"],cwd=tmp_path,capture_output=True,text=True,timeout=10)
+    assert result.returncode==0 and result.stdout.strip()=="adapter import passed"
+    assert client.get("/downloads/cloud_private_windows.py").status_code==404

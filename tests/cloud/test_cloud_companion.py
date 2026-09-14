@@ -22,8 +22,6 @@ def connection(server="https://console.example.test", *, allow_local=False):
 
 
 def config_file(tmp_path, data=None):
-    if os.name == "nt":
-        pytest.skip("Windows companion private-file adapter is explicitly unsupported")
     path = tmp_path.resolve()/"private"/"connection.json"
     companion.write_new(path, connection() if data is None else data)
     return path
@@ -100,7 +98,7 @@ def test_group_writable_credential_directory_is_rejected_and_preserved(tmp_path)
     assert stat.S_IMODE(directory.stat().st_mode) == 0o770
 
 
-@pytest.mark.skipif(os.name == "nt",reason="Windows companion fails closed before path traversal")
+@pytest.mark.skipif(os.name == "nt",reason="Native Windows reparse cases are tested by its adapter suite")
 def test_symbolic_file_or_parent_is_rejected(tmp_path):
     root=tmp_path.resolve()
     real=root/"real"
@@ -397,14 +395,16 @@ def test_hard_linked_credential_is_not_read_or_modified(tmp_path):
     assert original.read_bytes()==previous
 
 
-@pytest.mark.skipif(os.name != "nt",reason="Explicit Windows unsupported behavior")
-def test_windows_companion_refuses_before_prompt_network_or_file_creation(tmp_path,monkeypatch,capsys):
+def test_missing_native_adapter_refuses_before_prompt_network_or_file_creation(tmp_path,monkeypatch,capsys):
     path=tmp_path/"untouched"/"connection.json"
-    monkeypatch.setattr(companion,"request",lambda *a,**k:pytest.fail("Unsupported private storage must not contact server"))
-    monkeypatch.setattr(companion.getpass,"getpass",lambda *_:pytest.fail("Unsupported private storage must not request a code"))
+    def unavailable():
+        raise companion.PrivatePathUnsupported("The Windows storage adapter is missing.")
+    monkeypatch.setattr(companion,"windows_storage",unavailable)
+    monkeypatch.setattr(companion,"request",lambda *a,**k:pytest.fail("Unsupported storage must not contact server"))
+    monkeypatch.setattr(companion.getpass,"getpass",lambda *_:pytest.fail("Unsupported storage must not request a code"))
     assert companion.main(["enrol","--server","https://console.example.test","--name","Synthetic Windows","--config",str(path)])==1
     assert not path.parent.exists()
-    assert "Windows private-file adapter" in capsys.readouterr().out
+    assert "Windows storage adapter" in capsys.readouterr().out
     with pytest.raises(companion.PrivatePathUnsupported):
         companion.reserve_sequence(path)
 
@@ -464,3 +464,41 @@ def test_sequence_reservation_survives_actual_new_process_with_earlier_clock(tmp
     first=subprocess.run([sys.executable,"-c",code,script,str(path),"2000"],capture_output=True,text=True,check=True,timeout=10)
     second=subprocess.run([sys.executable,"-c",code,script,str(path),"1000"],capture_output=True,text=True,check=True,timeout=10)
     assert first.stdout.strip()=="2000" and second.stdout.strip()=="2001"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Actual Windows storage integration; synthetic network only")
+def test_native_windows_enrolment_then_heartbeat_preserves_private_connection(tmp_path,monkeypatch,capsys):
+    target=tmp_path/"private"/"connection.json"
+    credential=secrets.token_urlsafe(32)
+    identifier=str(uuid4())
+    calls=[]
+    monkeypatch.setattr(companion.getpass,"getpass",lambda *_:"synthetic-one-use-code")
+    def send(server,route,body,token=None):
+        calls.append((route,body,token))
+        if route=="enrol":
+            assert body["platform"]=="WINDOWS"
+            return {"device_id":identifier,"device_token":credential,"heartbeat_interval_seconds":30}
+        assert route=="heartbeat" and token==credential
+        assert body["monitoring_status"]=="UNKNOWN" and body["camera_count"]==0
+        return {"ok":True,"server_time":"2026-09-14T10:00:00Z"}
+    monkeypatch.setattr(companion,"request",send)
+    assert companion.main(["enrol","--server","https://console.example.test","--name","Synthetic Windows","--config",str(target)])==0
+    before=target.read_bytes()
+    assert companion.main(["run","--once","--config",str(target)])==0
+    assert companion.load_connection(target)["device_id"]==identifier
+    assert target.read_bytes()==before and [call[0] for call in calls]==["enrol","heartbeat"]
+    output=capsys.readouterr().out
+    assert credential not in output and "synthetic-one-use-code" not in output
+
+
+def test_native_preflight_refusal_cannot_consume_connection_code(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    target=tmp_path/"connection.json"
+    def reject(path):
+        raise ValueError("Synthetic unsafe Windows directory")
+    native=SimpleNamespace(validate_path=lambda path:Path(path),ensure_new_destination=reject)
+    monkeypatch.setattr(companion,"windows_storage",lambda:native)
+    monkeypatch.setattr(companion.getpass,"getpass",lambda *_:pytest.fail("Unsafe native destination requested a code"))
+    monkeypatch.setattr(companion,"request",lambda *a,**k:pytest.fail("Unsafe native destination contacted server"))
+    assert companion.main(["enrol","--server","https://console.example.test","--name","Synthetic Windows","--config",str(target)])==1
+    assert not target.exists()
