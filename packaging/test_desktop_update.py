@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -98,7 +99,14 @@ def test_download_streams_and_verifies_before_atomic_publish(tmp_path):
     result = download_release(release, tmp_path / "updates",
                               client=Client(Response(artifact, len(artifact))))
     assert result.read_bytes() == artifact
-    assert result.stat().st_mode & 0o777 == 0o600
+    if os.name == "nt":
+        # Windows does not expose NTFS ACLs as POSIX mode bits. The update is a
+        # public installer whose authenticity is enforced by its signed digest;
+        # still prove the atomic destination is an ordinary local file.
+        assert result.is_file()
+        assert not result.is_symlink()
+    else:
+        assert result.stat().st_mode & 0o777 == 0o600
     assert not list(result.parent.glob(".aislesignals-update-*"))
 
 
