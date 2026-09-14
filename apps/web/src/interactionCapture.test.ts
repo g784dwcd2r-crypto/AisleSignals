@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ACKNOWLEDGED_CAMERA_QUIET_MS,
   freshInteractionAlarm,
+  InteractionAttentionPolicy,
   InteractionFrameBuffer,
   safeInteractionFrameUrl,
   interactionCropPixels,
@@ -323,6 +325,37 @@ describe("staff product alarm commissioning", () => {
     gate.arm(context, false);
     expect(gate.claim(context, "job-one", "CAMERA")).toBe(false);
     expect(gate.claim(context, "job-two", "CAMERA")).toBe(true);
+  });
+});
+
+describe("product attention duplicate and acknowledgement policy", () => {
+  it("shares a global cooldown across cameras without losing later observations", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.decide("one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    expect(policy.decide("two", "camera-2", 2000)).toBe("GLOBAL_COOLDOWN");
+    expect(policy.decide("two", "camera-2", 31000)).toBe("REQUEST_SOUND");
+    expect(policy.decide("two", "camera-2", 62000)).toBe("ALREADY_DELIVERED");
+  });
+
+  it("acknowledgement quiets only that camera and expires deterministically", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.acknowledge("camera-1", 5000)).toBe(true);
+    expect(policy.decide("one", "camera-1", 6000)).toBe(
+      "ACKNOWLEDGED_CAMERA_QUIET",
+    );
+    expect(policy.decide("two", "camera-2", 6000)).toBe("REQUEST_SOUND");
+    expect(
+      policy.decide("three", "camera-1", 5000 + ACKNOWLEDGED_CAMERA_QUIET_MS),
+    ).toBe("REQUEST_SOUND");
+  });
+
+  it("resetting a run clears cooldowns but never replays an already delivered id", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.decide("one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    policy.acknowledge("camera-1", 2000);
+    policy.resetRun();
+    expect(policy.decide("one", "camera-1", 3000)).toBe("ALREADY_DELIVERED");
+    expect(policy.decide("two", "camera-1", 3000)).toBe("REQUEST_SOUND");
   });
 });
 

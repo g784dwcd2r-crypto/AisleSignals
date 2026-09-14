@@ -103,6 +103,13 @@ Each branch also has its own confusion matrix, per-class precision/recall, abste
 
 The overall and per-branch `alarm_eligibility` metrics distinguish a predicted action from the application's routing rule. A correct possible-concealment label with insufficient visible evidence does not count as an eligible alert. Recall uses all concealment-labelled windows, including errors and abstentions. Eligible results on normal labels count against resolved precision; eligible results on `UNCLEAR` ground truth are listed separately because their truth is unresolved. These are replay eligibility counts, not proof that a speaker sounded.
 
+`simulated_alarm_delivery` replays the configured source-time cooldown and
+separates eligible windows, new sound requests, cooldown suppression, missing
+eligible signals and concealment windows without a new sound. It does not test
+browser freshness, the operating-system speaker, network delivery or staff
+response. `routing_rule_strength` summarizes deterministic evidence gates when
+the provider supplies them; it is not calibrated model confidence.
+
 No population accuracy confidence interval is generated: overlapping samples, repeated people and repeated views are dependent observations. Reports retain raw support, null values for unmeasured denominators and explicit uncertainty. The testing coordinator must inspect the per-branch findings instead of pooling six branches into one apparent success.
 
 `execution_mode: PREDICTION_FILE_METRICS_ONLY` means a supplied prediction file was scored. It remains that mode even if the file claims local-model provenance. It tests metric calculation, not model execution. `LOCAL_PROVIDER_EXECUTION` records the evaluator's actual local calls. Neither mode changes `site_acceptance_established: false`.

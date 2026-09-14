@@ -7,6 +7,7 @@ import {
   captureInteractionFrame,
   freshInteractionAlarm,
   InteractionAlarmCommission,
+  InteractionAttentionPolicy,
   interactionLabels,
   type SavedInteraction,
 } from "./interactionCapture";
@@ -73,7 +74,7 @@ export default function AllCameraAnalysis(props: Props) {
   const commission = useRef(new InteractionAlarmCommission());
   const speaker = useRef<BrowserAttentionSound | null>(null);
   const mounted = useRef(true);
-  const lastAlarm = useRef(-Infinity);
+  const attention = useRef(new InteractionAttentionPolicy());
   const progress = useRef({ media: -1, at: 0 });
   const submitRef = useRef<() => Promise<void>>(async () => {});
 
@@ -132,6 +133,7 @@ export default function AllCameraAnalysis(props: Props) {
         ).catch(() => undefined);
     }
     disarm();
+    attention.current.resetRun();
     if (mounted.current) {
       setEnabled(false);
       setAutomatic(false);
@@ -269,14 +271,17 @@ export default function AllCameraAnalysis(props: Props) {
             if (
               options.current.armed &&
               !options.current.muted &&
-              now - lastAlarm.current >= 30000 &&
+              attention.current.decide(
+                result.id,
+                cameraKey(ticket.camera),
+                now,
+              ) === "REQUEST_SOUND" &&
               commission.current.claim(
                 contextKey(),
                 result.id,
                 result.source_kind,
               )
             ) {
-              lastAlarm.current = now;
               const played = speaker.current?.play({
                 volume: options.current.volume,
                 durationSeconds: 8,
@@ -627,10 +632,16 @@ export default function AllCameraAnalysis(props: Props) {
           <span>
             {item.source_kind === "RECORDED_VIDEO" ? "RECORDED TEST. " : ""}
             Check the sampled frames below. Sound may be off or cooling down.
+            Acknowledgement quiets repeat sound from this camera for two
+            minutes; observations continue to be saved for review.
           </span>
           <button
             onClick={() => {
               silence();
+              attention.current.acknowledge(
+                cameraKey(item.camera_context!),
+                performance.now(),
+              );
               setAlerts((previous) =>
                 previous.filter((row) => row.id !== item.id),
               );

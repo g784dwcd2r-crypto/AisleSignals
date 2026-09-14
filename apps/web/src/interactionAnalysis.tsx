@@ -24,6 +24,7 @@ import {
   freshInteractionAlarm,
   InteractionFrameBuffer,
   InteractionAlarmCommission,
+  InteractionAttentionPolicy,
   interactionLabels,
   interactionCropPixels,
   safeInteractionFrameUrl,
@@ -255,6 +256,7 @@ export default function InteractionAnalysis({
   );
   const mounted = useRef(true);
   const commission = useRef(new InteractionAlarmCommission());
+  const attention = useRef(new InteractionAttentionPolicy());
   const historyRevision = useRef(0);
   const refreshRevision = useRef(0);
   const cropPreview = useRef<HTMLCanvasElement>(null);
@@ -300,7 +302,6 @@ export default function InteractionAnalysis({
     cancelled: boolean;
   } | null>(null);
   const sound = useRef<BrowserAttentionSound | null>(null);
-  const lastAlarm = useRef(-Infinity);
   const lastSubmitted = useRef(-Infinity);
   const lastProgress = useRef({ media: -1, wall: 0 });
   const submitRef = useRef<() => Promise<void>>(async () => {});
@@ -348,6 +349,7 @@ export default function InteractionAnalysis({
     if (!context || options.current.muted || options.current.volume <= 0)
       return;
     disarmAlarm();
+    attention.current.resetRun();
     const revision = commission.current.beginTest(context);
     setCommissionStage("testing");
     const speaker = (sound.current ??= new BrowserAttentionSound());
@@ -694,10 +696,10 @@ export default function InteractionAnalysis({
             options.current.alarmEnabled &&
             !options.current.muted &&
             options.current.volume > 0 &&
-            now - lastAlarm.current >= 30_000 &&
+            attention.current.decide(saved.id, contextKey(), now) ===
+              "REQUEST_SOUND" &&
             commission.current.claim(contextKey(), saved.id, saved.source_kind);
           if (eligible) {
-            lastAlarm.current = now;
             const played = sound.current?.play({
               volume: options.current.volume,
               durationSeconds: 8,
@@ -1544,6 +1546,7 @@ export default function InteractionAnalysis({
             type="button"
             onClick={() => {
               silence();
+              attention.current.acknowledge(contextKey(), performance.now());
               setHighlight(null);
               setStatus(
                 "Attention acknowledged. Review the sampled frames and record Useful, Normal shopping or Unclear below.",
@@ -1593,6 +1596,13 @@ export default function InteractionAnalysis({
           </div>
           <p>{item.reason}</p>
           <div className="interaction-facts">
+            {item.evidence_strength && (
+              <span title={item.evidence_strength_note}>
+                Evidence rule strength:{" "}
+                {item.evidence_strength.replaceAll("_", " ").toLowerCase()}
+                {" · not a probability"}
+              </span>
+            )}
             <span>
               Model reports person visible: {item.person_visible ? "yes" : "no"}
             </span>

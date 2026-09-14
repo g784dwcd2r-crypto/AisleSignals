@@ -90,6 +90,38 @@ def test_false_alarm_episodes_use_measured_continuous_duration_and_cooldown(tmp_
     assert normal["simulated_false_alarm_episodes"] == 2
     assert normal["simulated_false_alarms_per_camera_hour"] == 120
     assert normal["physical_alarm_delivery_tested"] is False
+    delivery = report["simulated_alarm_delivery"]
+    assert delivery["eligible_windows"] == 3
+    assert delivery["simulated_new_sound_requests"] == 2
+    assert delivery["cooldown_suppressed_windows"] == 1
+    assert delivery["physical_alarm_delivery_tested"] is False
+
+
+def test_delivery_report_separates_missed_signal_from_cooldown_suppression(tmp_path):
+    windows = [
+        window("c1", label="POSSIBLE_CONCEALMENT", start=0, end=6),
+        window("c2", label="POSSIBLE_CONCEALMENT", start=6, end=12),
+        window("c3", label="POSSIBLE_CONCEALMENT", start=12, end=18),
+    ]
+    data = manifest([session(duration=18)], windows)
+    guesses = predictions(windows, {"c2": {"alarm_eligible": False}})
+    delivery = evaluator.evaluate(data, guesses, tmp_path)["simulated_alarm_delivery"]
+    assert delivery["eligible_windows"] == 2
+    assert delivery["simulated_new_sound_requests"] == 1
+    assert delivery["cooldown_suppressed_windows"] == 1
+    assert delivery["concealment_windows_without_eligible_signal"] == 1
+    assert delivery["concealment_windows_without_new_sound"] == 2
+
+
+def test_optional_rule_strength_is_counted_and_strictly_validated(tmp_path):
+    data = manifest()
+    guesses = predictions(data["windows"])
+    guesses["results"][0]["evidence_strength"] = "STRONG_RULE_MATCH"
+    report = evaluator.evaluate(data, guesses, tmp_path)
+    assert report["routing_rule_strength"]["STRONG_RULE_MATCH"] == 1
+    guesses["results"][0]["evidence_strength"] = "92_PERCENT_CONFIDENT"
+    with pytest.raises(evaluator.EvaluationError, match="Unknown evidence rule strength"):
+        evaluator.evaluate(data, guesses, tmp_path)
 
 
 @pytest.mark.parametrize("issue", ["unmeasured", "coverage_gap", "model_error", "staged"])

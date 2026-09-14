@@ -29,6 +29,9 @@ export type SavedInteraction = {
   reason: string;
   evidence_frame_indices: number[];
   alarm_eligible: boolean;
+  evidence_strength?:
+    "STRONG_RULE_MATCH" | "PARTIAL_RULE_MATCH" | "INSUFFICIENT_RULE_MATCH";
+  evidence_strength_note?: string;
   inference_ms: number;
   frames: { at_seconds: number; url: string }[];
   review: null | { outcome: InteractionReview; note: string };
@@ -52,6 +55,47 @@ export type SampledFrame = {
   sourceHeight: number;
 };
 export const INTERACTION_FRESH_MS = 15_000;
+export const INTERACTION_ALARM_COOLDOWN_MS = 30_000;
+export const ACKNOWLEDGED_CAMERA_QUIET_MS = 120_000;
+
+export type AttentionDecision =
+  | "REQUEST_SOUND"
+  | "ALREADY_DELIVERED"
+  | "GLOBAL_COOLDOWN"
+  | "ACKNOWLEDGED_CAMERA_QUIET"
+  | "INVALID";
+
+/** Sound suppression never discards the saved observation staff can review. */
+export class InteractionAttentionPolicy {
+  private lastSoundAt = -Infinity;
+  private delivered = new Set<string>();
+  private quietUntil = new Map<string, number>();
+
+  decide(id: string, camera: string, now: number): AttentionDecision {
+    if (!id || !camera || !Number.isFinite(now)) return "INVALID";
+    if (this.delivered.has(id)) return "ALREADY_DELIVERED";
+    if (now < (this.quietUntil.get(camera) ?? -Infinity))
+      return "ACKNOWLEDGED_CAMERA_QUIET";
+    if (now - this.lastSoundAt < INTERACTION_ALARM_COOLDOWN_MS)
+      return "GLOBAL_COOLDOWN";
+    if (this.delivered.size >= 1000) return "INVALID";
+    this.delivered.add(id);
+    this.lastSoundAt = now;
+    return "REQUEST_SOUND";
+  }
+
+  acknowledge(camera: string, now: number) {
+    if (!camera || !Number.isFinite(now)) return false;
+    this.quietUntil.set(camera, now + ACKNOWLEDGED_CAMERA_QUIET_MS);
+    return true;
+  }
+
+  resetRun() {
+    this.lastSoundAt = -Infinity;
+    this.quietUntil.clear();
+    // Keep delivered IDs so a late result cannot replay after restart.
+  }
+}
 
 /** A browser audio callback is not evidence that a member of staff heard it. */
 export class InteractionAlarmCommission {

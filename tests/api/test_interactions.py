@@ -418,6 +418,31 @@ def test_unsupported_concealment_becomes_unclear_and_cannot_route_alarm(change):
     assert result["action"] == "UNCLEAR" and result["alarm_eligible"] is False
 
 
+def test_evidence_strength_is_explainable_rule_output_not_probability():
+    strong = public_observation(ModelObservation(**observation()), 3)
+    assert strong["evidence_strength"] == "STRONG_RULE_MATCH"
+    assert "not a probability" in strong["evidence_strength_note"]
+    partial = public_observation(
+        ModelObservation(**observation(visibility="partial", sequence_observed=False)),
+        3,
+    )
+    assert partial["action"] == "UNCLEAR"
+    assert partial["alarm_eligible"] is False
+    assert partial["evidence_strength"] == "PARTIAL_RULE_MATCH"
+    insufficient = public_observation(
+        ModelObservation(
+            action="UNCLEAR",
+            visibility="poor",
+            person_visible=False,
+            product_visible=False,
+            sequence_observed=False,
+            evidence_frame_indices=[],
+        ),
+        3,
+    )
+    assert insufficient["evidence_strength"] == "INSUFFICIENT_RULE_MATCH"
+
+
 @pytest.mark.parametrize("indices", [[-1, 2], [0, 3], [1, 1]])
 def test_model_invalid_evidence_indices_rejected(indices):
     with pytest.raises(VisionError):

@@ -193,7 +193,35 @@ def public_observation(observation: ModelObservation, count: int) -> dict:
         "NORMAL_SHOPPING": "The model reports ordinary browsing without a supported product transition in these sampled frames.",
         "UNCLEAR": "The sampled frames do not provide a sufficiently clear product interaction sequence. No concealment conclusion is supported.",
     }
-    return {**data, "reason": reasons[data["action"]], "alarm_eligible": eligible}
+    # This is a transparent rule strength, not a probability or calibrated model
+    # confidence. It distinguishes an abstention from a fully observed sequence
+    # without inventing statistical certainty.
+    supported = sum(
+        (
+            data["visibility"] == "clear",
+            data["person_visible"],
+            data["product_visible"],
+            data["sequence_observed"],
+            len(indices) >= 2,
+        )
+    )
+    evidence_strength = (
+        "STRONG_RULE_MATCH"
+        if supported == 5
+        else "PARTIAL_RULE_MATCH"
+        if supported >= 3
+        else "INSUFFICIENT_RULE_MATCH"
+    )
+    return {
+        **data,
+        "reason": reasons[data["action"]],
+        "alarm_eligible": eligible,
+        "evidence_strength": evidence_strength,
+        "evidence_strength_note": (
+            "Deterministic visibility/sequence rule strength; not a probability, "
+            "identity finding or proof of theft."
+        ),
+    }
 
 
 class VisionProvider:
