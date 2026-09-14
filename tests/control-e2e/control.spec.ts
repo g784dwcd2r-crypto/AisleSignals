@@ -1093,7 +1093,7 @@ test("download centre exposes the verified connection utility and secure pairing
   );
   await expect(
     page.getByRole("heading", {
-      name: "Desktop installation files are not released yet",
+      name: "Production installers are not released yet",
       exact: true,
     }),
   ).toBeVisible();
