@@ -20,6 +20,8 @@ Protected local release candidate — 13 September 2026. Product owner: Jawahir 
 
 See [release verification](docs/release/verification.md), [administration](docs/release/pilot-administration.md), [installation](deployment/README.md) and [six-branch coordination](docs/release/rollout-coordination.md).
 
+The approved next desktop-to-cloud programme is [Plan U](docs/release/plan-u.md): complete Mac/Windows applications, signed lifecycle-managed installers, qualified RTSP/ONVIF and CCTV-window capture, pharmacy layout calibration, measured detection evaluation and the commissioned CCTV-to-cloud review flow.
+
 This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, simultaneous all-camera product analysis, direct RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
 
 ## Historical prototype record
