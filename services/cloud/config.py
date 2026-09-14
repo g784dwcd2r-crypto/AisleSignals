@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import base64
+import json
 import os
 import re
 from collections.abc import Mapping
@@ -34,9 +35,16 @@ class CloudSettings:
     bootstrap_token: str | None = field(default=None, repr=False)
     evidence_mode: str = "METADATA_ONLY"
     evidence_policy: str | None = None
-    evidence_kek: bytes | None = field(default=None, repr=False)
+    evidence_keks: tuple[tuple[str, bytes], ...] = field(default=(), repr=False)
     evidence_kek_version: str | None = None
+    evidence_store_backend: str | None = None
     evidence_store_path: Path | None = field(default=None, repr=False)
+    r2_account_id: str | None = None
+    r2_jurisdiction: str | None = None
+    r2_bucket: str | None = None
+    r2_access_key_id: str | None = field(default=None, repr=False)
+    r2_secret_access_key: str | None = field(default=None, repr=False)
+    r2_prefix: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
@@ -108,23 +116,64 @@ class CloudSettings:
             raise ConfigurationError("CLOUD_EVIDENCE_MODE must be METADATA_ONLY or ENCRYPTED.")
         evidence_policy = values.get("CLOUD_EVIDENCE_POLICY") or None
         evidence_kek_version = values.get("CLOUD_EVIDENCE_KEK_VERSION") or None
+        evidence_backend = values.get("CLOUD_EVIDENCE_STORE_BACKEND") or None
         evidence_store = values.get("CLOUD_EVIDENCE_STORE_PATH") or None
-        encoded_kek = values.get("CLOUD_EVIDENCE_KEK") or None
-        evidence_kek = None
-        if encoded_kek:
+        r2_account = values.get("CLOUD_R2_ACCOUNT_ID") or None
+        r2_jurisdiction = values.get("CLOUD_R2_JURISDICTION") or None
+        r2_bucket = values.get("CLOUD_R2_BUCKET") or None
+        r2_access = values.get("CLOUD_R2_ACCESS_KEY_ID") or None
+        r2_secret = values.get("CLOUD_R2_SECRET_ACCESS_KEY") or None
+        r2_prefix = values.get("CLOUD_R2_PREFIX", "")
+        if values.get("CLOUD_EVIDENCE_KEK"):
+            raise ConfigurationError("CLOUD_EVIDENCE_KEK is obsolete; configure the versioned CLOUD_EVIDENCE_KEKS keyring.")
+        encoded_keks = values.get("CLOUD_EVIDENCE_KEKS") or None
+        evidence_keks: tuple[tuple[str, bytes], ...] = ()
+        if encoded_keks:
             try:
-                evidence_kek = base64.urlsafe_b64decode(encoded_kek)
-                if len(evidence_kek) != 32 or base64.urlsafe_b64encode(evidence_kek).decode() != encoded_kek:
+                def unique_object(pairs):
+                    result = {}
+                    for name, value in pairs:
+                        if name in result:
+                            raise ValueError
+                        result[name] = value
+                    return result
+
+                keyring = json.loads(encoded_keks, object_pairs_hook=unique_object)
+                if type(keyring) is not dict or not 1 <= len(keyring) <= 8:
                     raise ValueError
-            except (ValueError, TypeError):
-                raise ConfigurationError("CLOUD_EVIDENCE_KEK must be a canonical base64url-encoded 32-byte secret.") from None
+                decoded = []
+                for version, encoded in keyring.items():
+                    if (type(version) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", version)
+                            or type(encoded) is not str):
+                        raise ValueError
+                    key = base64.urlsafe_b64decode(encoded)
+                    if len(key) != 32 or base64.urlsafe_b64encode(key).decode() != encoded:
+                        raise ValueError
+                    decoded.append((version, key))
+                evidence_keks = tuple(sorted(decoded))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                raise ConfigurationError("CLOUD_EVIDENCE_KEKS must be a JSON object of unique versions and canonical 32-byte base64url keys.") from None
         if evidence_mode == "ENCRYPTED":
-            if (evidence_policy != "SHORT_LIVED_V1" or evidence_kek is None
+            if (evidence_policy != "SHORT_LIVED_V1" or not evidence_keks
                     or not evidence_kek_version or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", evidence_kek_version)
-                    or not evidence_store or not Path(evidence_store).is_absolute()):
-                raise ConfigurationError("Encrypted cloud evidence requires policy, key version, KEK and an absolute store path.")
-        elif any((evidence_policy, evidence_kek, evidence_kek_version, evidence_store)):
-            raise ConfigurationError("Evidence policy, KEK and store require CLOUD_EVIDENCE_MODE=ENCRYPTED.")
+                    or evidence_kek_version not in dict(evidence_keks)
+                    or evidence_backend not in {"FILESYSTEM", "R2"}):
+                raise ConfigurationError("Encrypted cloud evidence requires policy, a current key present in the keyring, and an explicit store backend.")
+            if evidence_backend == "FILESYSTEM":
+                if on_render or not evidence_store or not Path(evidence_store).is_absolute() or any(
+                        (r2_account, r2_jurisdiction, r2_bucket, r2_access, r2_secret, r2_prefix)):
+                    raise ConfigurationError("Filesystem evidence requires an absolute development path and is unavailable on Render.")
+            elif (evidence_store or not re.fullmatch(r"[0-9a-f]{32}", r2_account or "")
+                    or r2_jurisdiction != "eu"
+                    or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?", r2_bucket or "")
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", r2_access or "")
+                    or not r2_secret or not 32 <= len(r2_secret) <= 256
+                    or any(ord(character) < 33 or ord(character) > 126 for character in r2_secret)
+                    or (r2_prefix and not re.fullmatch(r"[a-z0-9](?:[a-z0-9/_-]{0,126}[a-z0-9])?", r2_prefix))):
+                raise ConfigurationError("R2 evidence requires a private EU bucket and valid scoped S3 credentials.")
+        elif any((evidence_policy, evidence_keks, evidence_kek_version, evidence_backend, evidence_store,
+                  r2_account, r2_jurisdiction, r2_bucket, r2_access, r2_secret, r2_prefix)):
+            raise ConfigurationError("Evidence configuration requires CLOUD_EVIDENCE_MODE=ENCRYPTED.")
         return cls(
             environment=environment,
             allowed_hosts=allowed_hosts,
@@ -136,7 +185,14 @@ class CloudSettings:
             bootstrap_token=bootstrap_token,
             evidence_mode=evidence_mode,
             evidence_policy=evidence_policy,
-            evidence_kek=evidence_kek,
+            evidence_keks=evidence_keks,
             evidence_kek_version=evidence_kek_version,
+            evidence_store_backend=evidence_backend,
             evidence_store_path=Path(evidence_store) if evidence_store else None,
+            r2_account_id=r2_account,
+            r2_jurisdiction=r2_jurisdiction,
+            r2_bucket=r2_bucket,
+            r2_access_key_id=r2_access,
+            r2_secret_access_key=r2_secret,
+            r2_prefix=r2_prefix,
         )

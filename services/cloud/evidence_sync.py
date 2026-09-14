@@ -67,10 +67,23 @@ class EvidenceService:
     def __init__(self, settings, store: EvidenceBlobStore | None = None):
         self.settings = settings
         self.enabled = settings.evidence_mode == "ENCRYPTED"
+        self._keks = dict(settings.evidence_keks)
         if self.enabled:
-            if not settings.evidence_policy or not settings.evidence_kek or not settings.evidence_kek_version:
+            if (not settings.evidence_policy or not settings.evidence_kek_version
+                    or settings.evidence_kek_version not in self._keks):
                 raise EvidenceStoreError("Cloud evidence policy is incomplete.")
-            self.store = store or FilesystemEvidenceBlobStore(settings.evidence_store_path)
+            if store is not None:
+                self.store = store
+            elif settings.evidence_store_backend == "FILESYSTEM":
+                self.store = FilesystemEvidenceBlobStore(settings.evidence_store_path)
+            elif settings.evidence_store_backend == "R2":
+                from .evidence_r2 import R2EvidenceBlobStore
+                self.store = R2EvidenceBlobStore(
+                    account_id=settings.r2_account_id, jurisdiction=settings.r2_jurisdiction,
+                    bucket=settings.r2_bucket, access_key_id=settings.r2_access_key_id,
+                    secret_access_key=settings.r2_secret_access_key, prefix=settings.r2_prefix)
+            else:
+                raise EvidenceStoreError("Cloud evidence storage is not configured.")
         else:
             self.store = None
 
@@ -79,11 +92,20 @@ class EvidenceService:
             fail(503, "EVIDENCE_DISABLED", "Cloud evidence is not enabled for this service.")
 
     def encrypt(self, row, content: bytes) -> bytes:
-        return seal(content, kek=self.settings.evidence_kek, kek_version=row["kek_version"], aad=_aad(row))
+        kek = self._keks.get(row["kek_version"])
+        if kek is None:
+            raise EvidenceCryptoError("Evidence write key is unavailable.")
+        return seal(content, kek=kek, kek_version=row["kek_version"], aad=_aad(row))
 
     def decrypt(self, row, envelope: bytes) -> bytes:
-        return open_envelope(envelope, kek=self.settings.evidence_kek,
+        kek = self._keks.get(row["kek_version"])
+        if kek is None:
+            raise EvidenceCryptoError("Evidence read key is unavailable.")
+        return open_envelope(envelope, kek=kek,
                              expected_version=row["kek_version"], aad=_aad(row))
+
+    def probe(self) -> bool:
+        return not self.enabled or (self.store is not None and self.store.probe() is True)
 
 
 def mark_due_evidence(conn, device, *, limit=100):
@@ -110,20 +132,6 @@ def revoke_source_evidence(conn, device, source_event_id):
     return len(rows)
 
 
-def delete_revoked_blobs(conn, device, service: EvidenceService, *, limit=25):
-    if not service.enabled:
-        return 0
-    rows = conn.execute(f"""SELECT * FROM {SCHEMA}.evidence_objects WHERE device_id=%s AND state='REVOKED'
-        ORDER BY revoked_at,id LIMIT %s FOR UPDATE""", (device["id"], limit)).fetchall()
-    for row in rows:
-        service.store.delete(row["object_key"])
-        conn.execute(f"UPDATE {SCHEMA}.evidence_objects SET state='DELETED',deleted_at=clock_timestamp() WHERE id=%s", (row["id"],))
-        conn.execute(f"""INSERT INTO {SCHEMA}.audit_entries(id,organisation_id,actor_user_id,action,subject_id,pharmacy_id)
-            VALUES(%s,%s,NULL,'EVIDENCE_BLOB_DELETED',%s,%s)""",
-            (str(uuid4()), device["organisation_id"], row["id"], row["pharmacy_id"]))
-    return len(rows)
-
-
 def create_evidence_router(service: EvidenceService):
     router = APIRouter()
 
@@ -133,7 +141,6 @@ def create_evidence_router(service: EvidenceService):
         manifest_digest = sha256(canonical_manifest(body)).hexdigest()
         with device_transaction(request) as (conn, device):
             mark_due_evidence(conn, device)
-            delete_revoked_blobs(conn, device, service)
             receipt = conn.execute(f"""SELECT r.*,a.id AS alert_id FROM {SCHEMA}.device_sync_receipts r
                 JOIN {SCHEMA}.alerts a ON a.device_id=r.device_id AND a.source_event_id=r.source_event_id
                 WHERE r.device_id=%s AND r.source_event_id=%s FOR UPDATE OF r,a""", (device["id"], source_event_id)).fetchone()
@@ -163,12 +170,11 @@ def create_evidence_router(service: EvidenceService):
             return device_evidence_receipt(row)
 
     @router.put("/device-api/sync/v1/evidence/{evidence_id}")
-    async def upload(evidence_id: UUID, request: Request, content: bytes = Body()):
+    def upload(evidence_id: UUID, request: Request, content: bytes = Body()):
         service.require()
         content_type = request.headers.get("content-type", "")
         with device_transaction(request) as (conn, device):
             mark_due_evidence(conn, device)
-            delete_revoked_blobs(conn, device, service)
             row = conn.execute(f"SELECT * FROM {SCHEMA}.evidence_objects WHERE id=%s AND device_id=%s FOR UPDATE",
                                (evidence_id, device["id"])).fetchone()
             if row is None:
@@ -177,26 +183,45 @@ def create_evidence_router(service: EvidenceService):
                 fail(409, "EVIDENCE_UNAVAILABLE", "This evidence upload is no longer available.")
             if content_type != row["content_type"] or len(content) != row["expected_bytes"] or sha256(content).hexdigest() != row["sha256"]:
                 fail(409, "EVIDENCE_CONFLICT", "Evidence bytes do not match the accepted manifest.")
-            if row["state"] == "AVAILABLE":
-                try:
-                    if service.decrypt(row, service.store.get(row["object_key"])) != content:
-                        fail(409, "EVIDENCE_CONFLICT", "Stored evidence differs from this retry.")
-                except (EvidenceStoreError, EvidenceCryptoError):
-                    fail(503, "EVIDENCE_UNAVAILABLE", "Stored evidence cannot be authenticated.")
-                return {"evidence_id": str(row["id"]), "state": "READY"}
-            envelope = service.encrypt(row, content)
-            try:
-                created = service.store.put_if_absent(row["object_key"], envelope)
-                if not created and service.decrypt(row, service.store.get(row["object_key"])) != content:
+            original = dict(row)
+
+        try:
+            if original["state"] == "AVAILABLE":
+                if service.decrypt(original, service.store.get(original["object_key"])) != content:
+                    fail(409, "EVIDENCE_CONFLICT", "Stored evidence differs from this retry.")
+            else:
+                envelope = service.encrypt(original, content)
+                created = service.store.put_if_absent(original["object_key"], envelope)
+                if not created and service.decrypt(original, service.store.get(original["object_key"])) != content:
                     fail(409, "EVIDENCE_CONFLICT", "Stored evidence differs from this upload.")
-            except (EvidenceStoreError, EvidenceCryptoError):
-                fail(503, "EVIDENCE_UNAVAILABLE", "Evidence storage is unavailable.")
-            row = conn.execute(f"""UPDATE {SCHEMA}.evidence_objects SET state='AVAILABLE',uploaded_at=clock_timestamp()
-                WHERE id=%s RETURNING *""", (evidence_id,)).fetchone()
-            conn.execute(f"""INSERT INTO {SCHEMA}.audit_entries(id,organisation_id,actor_user_id,action,subject_id,pharmacy_id)
-                VALUES(%s,%s,NULL,'EVIDENCE_UPLOADED',%s,%s)""",
-                (str(uuid4()), device["organisation_id"], evidence_id, device["pharmacy_id"]))
-            return {"evidence_id": str(row["id"]), "state": "READY"}
+        except (EvidenceStoreError, EvidenceCryptoError):
+            fail(503, "EVIDENCE_UNAVAILABLE", "Evidence storage is unavailable.")
+
+        unavailable = False
+        with device_transaction(request) as (conn, device):
+            current = conn.execute(f"SELECT * FROM {SCHEMA}.evidence_objects WHERE id=%s AND device_id=%s FOR UPDATE",
+                                   (evidence_id, device["id"])).fetchone()
+            if current is None:
+                fail(404, "NOT_FOUND", "This evidence upload is not available.")
+            immutable = ("organisation_id", "pharmacy_id", "device_id", "alert_id", "source_event_id",
+                         "kind", "content_type", "expected_bytes", "sha256", "manifest_hash", "object_key",
+                         "kek_version", "expires_at")
+            if any(current[key] != original[key] for key in immutable):
+                fail(409, "EVIDENCE_CONFLICT", "The evidence manifest changed during upload.")
+            unavailable = current["state"] in {"REVOKED", "DELETED"} or current["expires_at"] <= now()
+            if not unavailable and current["state"] == "PENDING":
+                current = conn.execute(f"""UPDATE {SCHEMA}.evidence_objects SET state='AVAILABLE',uploaded_at=clock_timestamp()
+                    WHERE id=%s AND state='PENDING' RETURNING *""", (evidence_id,)).fetchone()
+                conn.execute(f"""INSERT INTO {SCHEMA}.audit_entries(id,organisation_id,actor_user_id,action,subject_id,pharmacy_id)
+                    VALUES(%s,%s,NULL,'EVIDENCE_UPLOADED',%s,%s)""",
+                    (str(uuid4()), device["organisation_id"], evidence_id, device["pharmacy_id"]))
+        if unavailable:
+            try:
+                service.store.delete(original["object_key"])
+            except EvidenceStoreError:
+                pass
+            fail(409, "EVIDENCE_UNAVAILABLE", "This evidence upload is no longer available.")
+        return {"evidence_id": str(evidence_id), "state": "READY"}
 
     @router.get("/control-api/alerts/{alert_id}/evidence/{evidence_id}")
     def download(alert_id: UUID, evidence_id: UUID, request: Request, principal=Depends(require_principal)):
@@ -208,14 +233,22 @@ def create_evidence_router(service: EvidenceService):
                 (evidence_id, alert_id, current.organisation_id, permitted)).fetchone()
             if row is None:
                 fail(404, "NOT_FOUND", "This evidence is not available.")
-            try:
-                content = service.decrypt(row, service.store.get(row["object_key"]))
-            except (EvidenceStoreError, EvidenceCryptoError):
-                fail(503, "EVIDENCE_UNAVAILABLE", "Evidence cannot be authenticated.")
-            if len(content) != row["expected_bytes"] or sha256(content).hexdigest() != row["sha256"]:
-                fail(503, "EVIDENCE_UNAVAILABLE", "Evidence cannot be authenticated.")
-            audit(conn, current, "EVIDENCE_VIEWED", str(evidence_id), str(row["pharmacy_id"]))
-        return Response(content, media_type=row["content_type"], headers={
+            original = dict(row)
+        try:
+            content = service.decrypt(original, service.store.get(original["object_key"]))
+        except (EvidenceStoreError, EvidenceCryptoError):
+            fail(503, "EVIDENCE_UNAVAILABLE", "Evidence cannot be authenticated.")
+        if len(content) != original["expected_bytes"] or sha256(content).hexdigest() != original["sha256"]:
+            fail(503, "EVIDENCE_UNAVAILABLE", "Evidence cannot be authenticated.")
+        with transaction(request, principal) as (conn, current):
+            permitted = pharmacy_ids(conn, current)
+            refreshed = conn.execute(f"""SELECT * FROM {SCHEMA}.evidence_objects WHERE id=%s AND alert_id=%s AND organisation_id=%s
+                AND pharmacy_id=ANY(%s::uuid[]) AND state='AVAILABLE' AND expires_at>clock_timestamp() FOR SHARE""",
+                (evidence_id, alert_id, current.organisation_id, permitted)).fetchone()
+            if refreshed is None or refreshed["manifest_hash"] != original["manifest_hash"] or refreshed["object_key"] != original["object_key"]:
+                fail(404, "NOT_FOUND", "This evidence is not available.")
+            audit(conn, current, "EVIDENCE_VIEWED", str(evidence_id), str(refreshed["pharmacy_id"]))
+        return Response(content, media_type=original["content_type"], headers={
             "Cache-Control": "private, no-store", "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
         })

@@ -15,10 +15,15 @@ class EvidenceStoreError(RuntimeError):
     pass
 
 
+class EvidenceObjectMissing(EvidenceStoreError):
+    """The requested private object does not exist."""
+
+
 class EvidenceBlobStore(Protocol):
     def put_if_absent(self, key: str, value: bytes) -> bool: ...
     def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
+    def probe(self) -> bool: ...
 
 
 def _key(key: str) -> str:
@@ -48,12 +53,15 @@ class MemoryEvidenceBlobStore:
             try:
                 return self._objects[key]
             except KeyError:
-                raise EvidenceStoreError("Evidence object is unavailable.") from None
+                raise EvidenceObjectMissing("Evidence object is unavailable.") from None
 
     def delete(self, key: str) -> None:
         _key(key)
         with self._lock:
             self._objects.pop(key, None)
+
+    def probe(self) -> bool:
+        return True
 
 
 class FilesystemEvidenceBlobStore:
@@ -89,7 +97,7 @@ class FilesystemEvidenceBlobStore:
     def get(self, key: str) -> bytes:
         path = self._path(key)
         if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_ENVELOPE_BYTES:
-            raise EvidenceStoreError("Evidence object is unavailable.")
+            raise EvidenceObjectMissing("Evidence object is unavailable.")
         return path.read_bytes()
 
     def delete(self, key: str) -> None:
@@ -97,3 +105,6 @@ class FilesystemEvidenceBlobStore:
         if path.is_symlink():
             raise EvidenceStoreError("Evidence store path is unsafe.")
         path.unlink(missing_ok=True)
+
+    def probe(self) -> bool:
+        return self.root.is_dir() and not self.root.is_symlink()
