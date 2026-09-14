@@ -24,6 +24,8 @@ The approved next desktop-to-cloud programme is [Plan U](docs/release/plan-u.md)
 
 The approved central operations programme is [Plan B](docs/release/plan-b.md): a role-scoped multi-pharmacy dashboard, administrator-controlled team membership and branch access, secure profile/password/MFA/session management, administrator-triggered team password resets, freshness-aware four/six-camera branch views, privacy-first metadata alerts, optional encrypted snapshots/clips under controller-approved evidence mode, temporary audited live access, central review and bounded remote diagnostics. Plan B is planned work; it is not implemented or commissioned yet.
 
+The [AisleSignals master production plan](docs/release/master-production-plan.md) is the consolidated execution baseline. It combines Plans U, B, X and Z with notification escalation, compliance, security, operations, commercial onboarding, training, evaluation and six-branch release gates. The master plan is approved planning documentation; its workstreams remain subject to their recorded implementation and commissioning evidence.
+
 This is a candidate for supervised local evaluation. Signed distribution, exact laptop/camera qualification, normal-shopping and staged-interaction evaluation, physical alarm acceptance and operator handover remain necessary before operational reliance. No facial watchlists, person-level criminality prediction, simultaneous all-camera product analysis, direct RTSP ingestion or monitoring while a laptop sleeps. The full handover design remains a roadmap.
 
 ## Historical prototype record
