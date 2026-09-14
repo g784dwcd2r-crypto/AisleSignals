@@ -13,12 +13,20 @@ const names: Record<CameraGridLayout, string> = {
   "3x2": "6 cameras · 3 × 2",
   "2x3": "6 cameras · 2 × 3",
 };
+export type ConfirmedCameraLayout = {
+  sourceKey: string;
+  layout: CameraGridLayout;
+  tiles: CameraTile[];
+};
+
 type Props = {
   videoRef: RefObject<HTMLVideoElement | null>;
   sourceKey: string;
   customArea: boolean;
   onInvalidate: () => void;
   onSelect: (crop: CameraArea, label: string) => void;
+  onConfirmedLayout?: (layout: ConfirmedCameraLayout | null) => void;
+  allCameras?: boolean;
 };
 
 export default function CameraLayoutPicker({
@@ -27,6 +35,8 @@ export default function CameraLayoutPicker({
   customArea,
   onInvalidate,
   onSelect,
+  onConfirmedLayout,
+  allCameras = false,
 }: Props) {
   const [boardFields, setBoardFields] = useState({
     x: "0",
@@ -50,8 +60,8 @@ export default function CameraLayoutPicker({
   );
   const [dimensions, setDimensions] = useState({ width: 16, height: 9 });
   const canvas = useRef<HTMLCanvasElement>(null);
-  const callbacks = useRef({ onInvalidate, onSelect });
-  callbacks.current = { onInvalidate, onSelect };
+  const callbacks = useRef({ onInvalidate, onSelect, onConfirmedLayout });
+  callbacks.current = { onInvalidate, onSelect, onConfirmedLayout };
   const board = useRef<CameraArea>(fullBoard);
   const boardValid = useRef(true);
   const scan = useRef({
@@ -67,6 +77,7 @@ export default function CameraLayoutPicker({
   const currentConfirmed = useRef(false);
 
   function invalidate() {
+    callbacks.current.onConfirmedLayout?.(null);
     callbacks.current.onInvalidate(); // Cancel old camera work before any render or asynchronous operation.
     currentConfirmed.current = false;
     setConfirmed(false);
@@ -86,6 +97,10 @@ export default function CameraLayoutPicker({
       (!explicitLayout && (!currentConfirmed.current || customArea))
     )
       return;
+    if (allCameras && currentConfirmed.current && !explicitLayout) {
+      setSelected(index);
+      return;
+    }
     callbacks.current.onInvalidate();
     currentConfirmed.current = true;
     setConfirmed(true);
@@ -93,6 +108,14 @@ export default function CameraLayoutPicker({
     scan.current.done = true;
     const label = `${tile.label} · ${chosenLayout.current === "single" ? "single camera" : `${chosenLayout.current} grid`}`;
     callbacks.current.onSelect(tile.crop, label);
+    callbacks.current.onConfirmedLayout?.({
+      sourceKey,
+      layout: chosenLayout.current,
+      tiles: currentTiles.current.map((item) => ({
+        ...item,
+        crop: { ...item.crop },
+      })),
+    });
     setMessage(
       `${label} selected. Only this camera is product-analysed; the other tiles are not.`,
     );
@@ -268,6 +291,7 @@ export default function CameraLayoutPicker({
       callback: number | null = null;
     let knownSize = "";
     function reset() {
+      callbacks.current.onConfirmedLayout?.(null);
       callbacks.current.onInvalidate();
       board.current = fullBoard;
       boardValid.current = true;
@@ -413,9 +437,9 @@ export default function CameraLayoutPicker({
     >
       <h3 id="camera-layout-heading">Choose the camera to analyse</h3>
       <p>
-        Body tracking and product sampling use the confirmed camera area.
-        Product analysis covers one camera at a time; other tiles are not
-        analysed.
+        {allCameras
+          ? "All confirmed tiles are active. Each camera keeps separate pose histories and product samples; inference rotates through the set. Inspect samples using the camera cards below."
+          : "Body tracking and product sampling use the selected camera area; other tiles are not analysed. After confirming a grid, choose All confirmed cameras above the monitor controls to process the complete set."}
       </p>
       <p className="camera-layout-status" role="status">
         {customArea
@@ -507,7 +531,7 @@ export default function CameraLayoutPicker({
           <button
             type="button"
             key={tile.id}
-            className={`camera-layout-tile ${confirmed && !customArea && selected === tile.index ? "camera-layout-tile-selected" : ""}`}
+            className={`camera-layout-tile ${confirmed && !customArea && (allCameras || selected === tile.index) ? "camera-layout-tile-selected" : ""}`}
             style={{
               left: `${tile.crop.x * 100}%`,
               top: `${tile.crop.y * 100}%`,
@@ -515,7 +539,11 @@ export default function CameraLayoutPicker({
               height: `${tile.crop.height * 100}%`,
             }}
             aria-label={`Select ${tile.label}`}
-            aria-pressed={confirmed && !customArea && selected === tile.index}
+            aria-pressed={
+              confirmed &&
+              !customArea &&
+              (allCameras || selected === tile.index)
+            }
             disabled={!confirmed || customArea}
             onClick={() => selectTile(tile.index)}
           >
@@ -547,7 +575,9 @@ export default function CameraLayoutPicker({
           {customArea
             ? "Custom area"
             : confirmed
-              ? `${tiles[selected]?.label ?? "Camera"} · ${layout === "single" ? "single camera" : `${layout} grid`} confirmed`
+              ? allCameras
+                ? `All ${tiles.length} cameras confirmed`
+                : `${tiles[selected]?.label ?? "Camera"} · ${layout === "single" ? "single camera" : `${layout} grid`} confirmed`
               : "Awaiting camera selection"}
         </span>
       </div>

@@ -69,6 +69,7 @@ import {
 } from "./api";
 import { date, getAlertCount, label, money } from "./format";
 import { safeInteractionFrameUrl } from "./interactionCapture";
+import CameraContextDetails from "./CameraContextDetails";
 
 import { buildCasePatch, caseFields } from "./caseForm";
 import type { CaseForm } from "./caseForm";
@@ -1160,6 +1161,12 @@ export default function App() {
                   <LiveDetection
                     key={`${user.id}:${data.site.id}`}
                     branchName={data.site.name}
+                    branchId={data.site.id}
+                    organisationId={
+                      session?.allowed_sites.find(
+                        (site) => site.id === data.site.id,
+                      )?.organisation_id
+                    }
                     onOpenInteractionCase={openInteractionCase}
                   />
                 )}
@@ -2131,6 +2138,7 @@ function CaseInteractionSource({ incident }: { incident: Incident }) {
           : "Browser-provided CCTV source"}{" "}
         · {source.source_label}
       </p>
+      <CameraContextDetails context={source.camera_context} />
       <p>
         <strong>Unverified model context:</strong>{" "}
         {label(source.observation.action)}. {source.observation.reason}

@@ -1,4 +1,5 @@
 import type { DetectionRect, LiveSourceKind } from "./liveDetectionTypes";
+import type { CameraContext } from "./cameraContext";
 
 export type InteractionAction =
   | "TAKE_PRODUCT"
@@ -14,6 +15,9 @@ export type SavedInteraction = {
   run_id: string;
   source_kind: LiveSourceKind;
   source_label: string;
+  camera_context?: CameraContext | null;
+  camera_id?: string;
+  camera_label?: string;
   created_at: string;
   expires_at: string;
   model: string;

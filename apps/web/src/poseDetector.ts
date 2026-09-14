@@ -4,6 +4,7 @@ import { poseFrameRegion } from "./poseFrame";
 /** A dedicated worker owns the model. Only one bounded frame is in flight. */
 export async function createPoseDetector(
   signal?: AbortSignal,
+  mode: "VIDEO" | "IMAGE" = "VIDEO",
 ): Promise<PoseDetector> {
   if (signal?.aborted) throw new Error("Model loading stopped.");
   if (typeof Worker === "undefined" || typeof createImageBitmap === "undefined")
@@ -81,7 +82,11 @@ export async function createPoseDetector(
           failed("The local model took too long to load. Stop and try again."),
         30000,
       );
-      worker.postMessage({ type: "init", baseUrl: `${location.origin}/` });
+      worker.postMessage({
+        type: "init",
+        baseUrl: `${location.origin}/`,
+        mode,
+      });
     });
   } catch (error) {
     close();

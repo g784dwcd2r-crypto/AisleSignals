@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Literal
+import math
 import unicodedata
 from uuid import UUID
 from pydantic import (
@@ -18,6 +19,73 @@ from pydantic import (
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class CameraCrop(Input):
+    x: float = Field(strict=True, ge=0, le=1, allow_inf_nan=False)
+    y: float = Field(strict=True, ge=0, le=1, allow_inf_nan=False)
+    width: float = Field(strict=True, ge=0.05, le=1, allow_inf_nan=False)
+    height: float = Field(strict=True, ge=0.05, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def within_source(self):
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError("Camera crop must stay within the reported source.")
+        return self
+
+
+class CameraContext(Input):
+    """Declared mosaic provenance; never authority or a physical-camera identity."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    source_id: str = Field(strict=True, min_length=36, max_length=36)
+    epoch: StrictInt = Field(ge=1, le=2147483647)
+    layout: Literal["2x2", "3x2", "2x3"]
+    camera_index: StrictInt = Field(ge=0, le=5)
+    source_width: StrictInt = Field(ge=48, le=16384)
+    source_height: StrictInt = Field(ge=48, le=16384)
+    crop: CameraCrop
+
+    @field_validator("source_id")
+    @classmethod
+    def source_uuid(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError("Use a canonical lower-case source UUID.")
+        return value
+
+    def pixel_size(self):
+        # Match interactionCropPixels/JavaScript Math.round, including .5 ties.
+        width = min(self.source_width - math.floor(self.crop.x * self.source_width),
+                    math.floor(self.crop.width * self.source_width + 0.5))
+        height = min(self.source_height - math.floor(self.crop.y * self.source_height),
+                     math.floor(self.crop.height * self.source_height + 0.5))
+        return width, height
+
+    def jpeg_size(self):
+        width, height = self.pixel_size()
+        scale = min(1, 768 / max(width, height))
+        return math.floor(width * scale + 0.5), math.floor(height * scale + 0.5)
+
+    @model_validator(mode="after")
+    def viable_camera(self):
+        count = 4 if self.layout == "2x2" else 6
+        if self.camera_index >= count:
+            raise ValueError("Camera index must belong to the declared layout.")
+        if min(self.pixel_size()) < 48:
+            raise ValueError("Each camera crop requires at least 48 source pixels per edge.")
+        return self
+
+
+def camera_provenance(item: dict) -> dict:
+    context = item.get("camera_context")
+    if context is None:
+        return {}
+    return {
+        "camera_context": context,
+        "camera_id": f"{context['source_id']}:{context['epoch']}:{context['layout']}:{context['camera_index']}",
+        "camera_label": f"Camera {context['camera_index'] + 1} · {context['layout']}",
+    }
 
 
 class Login(Input):
@@ -145,6 +213,7 @@ class LiveEventInput(Input):
     event_id: str = Field(strict=True, min_length=36, max_length=36)
     source_kind: Literal["SCREEN_CAPTURE", "CAMERA", "RECORDED_VIDEO"]
     source_label: str = Field(strict=True, min_length=1, max_length=120)
+    camera_context: CameraContext | None = None
     event_code: Literal["REPEATED_HAND_TO_WAIST", "RESTRICTED_ZONE_ENTRY"]
     track_id: StrictInt = Field(ge=1, le=1_000_000)
     source_time_seconds: float = Field(

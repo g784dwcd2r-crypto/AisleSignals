@@ -1,3 +1,7 @@
+import CameraContextDetails from "./CameraContextDetails";
+import AllCameraAnalysis from "./AllCameraAnalysis";
+import type { AllCameraRun } from "./multiCameraInteractions";
+import type { ConfirmedCameraLayout } from "./CameraLayoutPicker";
 import { runtimeHealth } from "./runtimeHealth";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RefObject } from "react";
@@ -73,6 +77,10 @@ type Props = {
   onMonitorStatus: (status: InteractionMonitorStatus) => void;
   onCameraSelection?: (selection: SelectedCamera | null) => void;
   onOpenInteractionCase?: (id: string) => Promise<void>;
+  allMode?: boolean;
+  allRun?: AllCameraRun | null;
+  allCameraCount?: number;
+  onConfirmedLayout?: (layout: ConfirmedCameraLayout | null) => void;
 };
 export type SelectedCamera = {
   sourceKey: string;
@@ -158,11 +166,21 @@ export default function InteractionAnalysis({
   onMonitorStatus,
   onCameraSelection,
   onOpenInteractionCase,
+  allMode = false,
+  allRun = null,
+  allCameraCount = 0,
+  onConfirmedLayout,
 }: Props) {
   const health = useSyncExternalStore(
     runtimeHealth.subscribe,
     runtimeHealth.snapshot,
   );
+  const allCancel = useRef<(() => void) | null>(null);
+  const allSilence = useRef<(() => void) | null>(null);
+  const allModeRef = useRef(allMode);
+  allModeRef.current = allMode;
+  const layoutCallback = useRef(onConfirmedLayout);
+  layoutCallback.current = onConfirmedLayout;
   const [enabled, setEnabled] = useState(false);
   const [automatic, setAutomatic] = useState(false);
   const [alarmEnabled, setAlarmEnabled] = useState(false);
@@ -376,6 +394,7 @@ export default function InteractionAnalysis({
   }
 
   function silence() {
+    allSilence.current?.();
     if (!options.current.alarmEnabled) {
       disarmAlarm(
         "Product sound stopped. Run the sound check again before arming.",
@@ -386,6 +405,7 @@ export default function InteractionAnalysis({
     if (mounted.current) setSoundStatus("Product interaction alarm silenced.");
   }
   function cancel() {
+    allCancel.current?.();
     generation.current++;
     buffer.current.reset();
     samplingRun.current = "";
@@ -427,6 +447,7 @@ export default function InteractionAnalysis({
   );
 
   function invalidateCameraLayout() {
+    layoutCallback.current?.(null);
     selectionCallback.current?.(null);
     cancel();
     options.current.cameraReady = false;
@@ -447,6 +468,7 @@ export default function InteractionAnalysis({
     nextCrop: DetectionRect,
     tileLabel?: string,
   ) {
+    if (!tileLabel) layoutCallback.current?.(null);
     selectionCallback.current?.(null);
     cancel();
     let invalid = "";
@@ -543,6 +565,7 @@ export default function InteractionAnalysis({
     const current = options.current.readSession();
     const video = videoRef.current;
     if (
+      allModeRef.current ||
       job.current ||
       !options.current.enabled ||
       !options.current.cameraReady ||
@@ -879,6 +902,7 @@ export default function InteractionAnalysis({
     document.addEventListener("visibilitychange", hidden);
     window.addEventListener("pagehide", pageHide);
     const timer = setInterval(() => {
+      if (allModeRef.current) return;
       const configuration = options.current;
       if (
         submittedPreview.current?.expiresAt &&
@@ -1051,12 +1075,20 @@ export default function InteractionAnalysis({
                   ? `Automatic product analysis has fresh frames. ${nextSubmissionIn ? `Next submission in ${nextSubmissionIn}s.` : "Waiting for the next submission slot."} Only one model job runs at a time.`
                   : "Four fresh frames are ready. Select Analyse recent sequence, or enable Analyse automatically. Sound requires its separate staff sound check.";
   useEffect(() => {
+    if (allMode) return;
     onMonitorStatus({
       state: monitorState,
       label: monitorLabel,
       guidance: monitorGuidance,
     });
-  }, [onMonitorStatus, monitorState, monitorLabel, monitorGuidance]);
+  }, [onMonitorStatus, monitorState, monitorLabel, monitorGuidance, allMode]);
+
+  useEffect(() => {
+    options.current.enabled = options.current.automatic = false;
+    setEnabled(false);
+    setAutomatic(false);
+    cancel();
+  }, [allMode]);
 
   return (
     <section
@@ -1090,332 +1122,372 @@ export default function InteractionAnalysis({
           ? `${model.model} · ${model.message}`
           : "Checking the local interaction service…"}
       </p>
-      <p className="interaction-readiness" role="status">
-        {monitorGuidance}
-      </p>
-      <div className="interaction-controls">
-        <label className="ld-inline-check">
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={!model?.ready || !health.ready}
-            onChange={(event) => {
-              const next = event.target.checked;
-              if (
-                next &&
-                (!options.current.modelReady || !runtimeHealth.canMonitor())
-              )
-                return;
-              options.current.enabled = next;
-              setEnabled(next);
-              if (!next) {
-                cancel();
-                setAutomatic(false);
-                options.current.automatic = false;
-              } else
-                setStatus(
-                  "Enabled. Start detection and keep the selected source playing to collect four frames.",
-                );
-            }}
-          />
-          Enable product interaction analysis
-        </label>
-        <label className="ld-inline-check">
-          <input
-            type="checkbox"
-            checked={automatic}
-            disabled={!enabled || !model?.ready}
-            onChange={(event) => {
-              options.current.automatic = event.target.checked;
-              setAutomatic(event.target.checked);
-            }}
-          />
-          Analyse automatically
-        </label>
-        <label className="ld-inline-check">
-          <input
-            type="checkbox"
-            checked={alarmEnabled}
-            disabled={
-              !enabled ||
-              !model?.ready ||
-              !sourceReady ||
-              commissionStage !== "confirmed" ||
-              (recordedSource && !recordedAlarmAllowed)
-            }
-            onChange={(event) => {
-              const next = event.target.checked;
-              if (!next) {
-                disarmAlarm();
-                return;
-              }
-              const armed = commission.current.arm(
-                contextKey(),
-                recordedAlarmAllowed,
-              );
-              options.current.alarmEnabled = armed;
-              setAlarmEnabled(armed);
-              setSoundStatus(
-                armed
-                  ? recordedSource
-                    ? "RECORDED TEST alarm armed for this run. Fresh test observations may request an eight-second tone."
-                    : "Product attention alarm armed for this run. Fresh eligible observations may request an eight-second tone."
-                  : "The source changed. Test the sound again before arming.",
-              );
-            }}
-          />
-          Experimental product attention alarm
-        </label>
-      </div>
-      <fieldset className="interaction-commission">
-        <legend>Product alarm · staff sound check</legend>
-        <p>
-          Start detection, test the laptop speakers, then confirm that you heard
-          the tone. This check applies to the current source, area, run and
-          volume. Physical audibility is confirmed by staff; browser audio
-          activation alone cannot verify it.
-        </p>
-        <div className="interaction-commission-actions">
-          <button
-            type="button"
-            disabled={
-              !enabled ||
-              !cameraReady ||
-              !model?.ready ||
-              !sourceReady ||
-              muted ||
-              volume <= 0 ||
-              commissionStage === "testing"
-            }
-            onClick={() => void testSound()}
-          >
-            Test product alarm sound
-          </button>
-          <button
-            type="button"
-            disabled={commissionStage !== "confirm" || !sourceReady}
-            onClick={confirmSound}
-          >
-            I heard the test tone
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              disarmAlarm("Sound check cancelled. Product alarm is off.")
-            }
-          >
-            Stop sound & disarm product alarm
-          </button>
-        </div>
-        {recordedSource && (
-          <label className="ld-inline-check">
-            <input
-              type="checkbox"
-              checked={recordedAlarmAllowed}
-              disabled={commissionStage !== "confirmed" || alarmEnabled}
-              onChange={(event) =>
-                setRecordedAlarmAllowed(event.target.checked)
-              }
-            />
-            Allow alarm during this recorded-video test
-          </label>
-        )}
-        <p className="interaction-sound-status" role="status">
-          {soundStatus}
-        </p>
-      </fieldset>
+      {!allMode && (
+        <>
+          <p className="interaction-readiness" role="status">
+            {monitorGuidance}
+          </p>
+          <div className="interaction-controls">
+            <label className="ld-inline-check">
+              <input
+                type="checkbox"
+                checked={enabled}
+                disabled={!model?.ready || !health.ready}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  if (
+                    next &&
+                    (!options.current.modelReady || !runtimeHealth.canMonitor())
+                  )
+                    return;
+                  options.current.enabled = next;
+                  setEnabled(next);
+                  if (!next) {
+                    cancel();
+                    setAutomatic(false);
+                    options.current.automatic = false;
+                  } else
+                    setStatus(
+                      "Enabled. Start detection and keep the selected source playing to collect four frames.",
+                    );
+                }}
+              />
+              Enable product interaction analysis
+            </label>
+            <label className="ld-inline-check">
+              <input
+                type="checkbox"
+                checked={automatic}
+                disabled={!enabled || !model?.ready}
+                onChange={(event) => {
+                  options.current.automatic = event.target.checked;
+                  setAutomatic(event.target.checked);
+                }}
+              />
+              Analyse automatically
+            </label>
+            <label className="ld-inline-check">
+              <input
+                type="checkbox"
+                checked={alarmEnabled}
+                disabled={
+                  !enabled ||
+                  !model?.ready ||
+                  !sourceReady ||
+                  commissionStage !== "confirmed" ||
+                  (recordedSource && !recordedAlarmAllowed)
+                }
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  if (!next) {
+                    disarmAlarm();
+                    return;
+                  }
+                  const armed = commission.current.arm(
+                    contextKey(),
+                    recordedAlarmAllowed,
+                  );
+                  options.current.alarmEnabled = armed;
+                  setAlarmEnabled(armed);
+                  setSoundStatus(
+                    armed
+                      ? recordedSource
+                        ? "RECORDED TEST alarm armed for this run. Fresh test observations may request an eight-second tone."
+                        : "Product attention alarm armed for this run. Fresh eligible observations may request an eight-second tone."
+                      : "The source changed. Test the sound again before arming.",
+                  );
+                }}
+              />
+              Experimental product attention alarm
+            </label>
+          </div>
+          <fieldset className="interaction-commission">
+            <legend>Product alarm · staff sound check</legend>
+            <p>
+              Start detection, test the laptop speakers, then confirm that you
+              heard the tone. This check applies to the current source, area,
+              run and volume. Physical audibility is confirmed by staff; browser
+              audio activation alone cannot verify it.
+            </p>
+            <div className="interaction-commission-actions">
+              <button
+                type="button"
+                disabled={
+                  !enabled ||
+                  !cameraReady ||
+                  !model?.ready ||
+                  !sourceReady ||
+                  muted ||
+                  volume <= 0 ||
+                  commissionStage === "testing"
+                }
+                onClick={() => void testSound()}
+              >
+                Test product alarm sound
+              </button>
+              <button
+                type="button"
+                disabled={commissionStage !== "confirm" || !sourceReady}
+                onClick={confirmSound}
+              >
+                I heard the test tone
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  disarmAlarm("Sound check cancelled. Product alarm is off.")
+                }
+              >
+                Stop sound & disarm product alarm
+              </button>
+            </div>
+            {recordedSource && (
+              <label className="ld-inline-check">
+                <input
+                  type="checkbox"
+                  checked={recordedAlarmAllowed}
+                  disabled={commissionStage !== "confirmed" || alarmEnabled}
+                  onChange={(event) =>
+                    setRecordedAlarmAllowed(event.target.checked)
+                  }
+                />
+                Allow alarm during this recorded-video test
+              </label>
+            )}
+            <p className="interaction-sound-status" role="status">
+              {soundStatus}
+            </p>
+          </fieldset>
+        </>
+      )}
       <CameraLayoutPicker
         videoRef={videoRef}
+        allCameras={allMode}
+        onConfirmedLayout={onConfirmedLayout}
         sourceKey={sourceKey}
         customArea={cameraReady && cameraChoice.custom}
         onInvalidate={invalidateCameraLayout}
         onSelect={(area, tileLabel) => changeCrop(true, area, tileLabel)}
       />
-      <div className="interaction-crop">
-        <h3>Custom area controls</h3>
-        <label className="ld-inline-check">
-          <input
-            type="checkbox"
-            checked={cropEnabled}
-            onChange={(event) => changeCrop(event.target.checked, crop)}
-          />
-          Analyse this camera/aisle area
-        </label>
-        <p className="ld-hint">
-          {cameraReady && cameraChoice.custom
-            ? "Custom selected area. Percentages refer to the full source above; include one camera tile or shelf area with hands and products visible."
-            : cameraReady
-              ? `${cameraChoice.label} is selected. Editing these percentages switches to a custom area.`
-              : "Choose a layout above, or explicitly enable and set a custom area here. No product frames are sampled until an area is selected."}
-        </p>
-        {cropEnabled && (
-          <div className="interaction-crop-content">
-            <div className="ld-zone-fields">
-              {(["x", "y", "width", "height"] as const).map((key) => (
-                <label key={key}>
-                  {key === "x"
-                    ? "Analysis left"
-                    : key === "y"
-                      ? "Analysis top"
-                      : key === "width"
-                        ? "Analysis width"
-                        : "Analysis height"}{" "}
-                  %
-                  <input
-                    type="number"
-                    min={key === "x" || key === "y" ? 0 : 5}
-                    max={key === "x" || key === "y" ? 95 : 100}
-                    step={1}
-                    value={Math.round(crop[key] * 100)}
-                    onChange={(event) => adjustCrop(key, event.target.value)}
+      {!allMode && (
+        <>
+          <div className="interaction-crop">
+            <h3>Custom area controls</h3>
+            <label className="ld-inline-check">
+              <input
+                type="checkbox"
+                checked={cropEnabled}
+                onChange={(event) => changeCrop(event.target.checked, crop)}
+              />
+              Analyse this camera/aisle area
+            </label>
+            <p className="ld-hint">
+              {cameraReady && cameraChoice.custom
+                ? "Custom selected area. Percentages refer to the full source above; include one camera tile or shelf area with hands and products visible."
+                : cameraReady
+                  ? `${cameraChoice.label} is selected. Editing these percentages switches to a custom area.`
+                  : "Choose a layout above, or explicitly enable and set a custom area here. No product frames are sampled until an area is selected."}
+            </p>
+            {cropEnabled && (
+              <div className="interaction-crop-content">
+                <div className="ld-zone-fields">
+                  {(["x", "y", "width", "height"] as const).map((key) => (
+                    <label key={key}>
+                      {key === "x"
+                        ? "Analysis left"
+                        : key === "y"
+                          ? "Analysis top"
+                          : key === "width"
+                            ? "Analysis width"
+                            : "Analysis height"}{" "}
+                      %
+                      <input
+                        type="number"
+                        min={key === "x" || key === "y" ? 0 : 5}
+                        max={key === "x" || key === "y" ? 95 : 100}
+                        step={1}
+                        value={Math.round(crop[key] * 100)}
+                        onChange={(event) =>
+                          adjustCrop(key, event.target.value)
+                        }
+                      />
+                    </label>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      changeCrop(true, { x: 0, y: 0, width: 1, height: 1 })
+                    }
+                  >
+                    Reset area
+                  </button>
+                </div>
+                <figure className="interaction-crop-preview">
+                  <canvas
+                    ref={cropPreview}
+                    width={320}
+                    height={180}
+                    aria-label="Selected camera area preview"
                   />
-                </label>
-              ))}
+                  <figcaption>
+                    {enabled
+                      ? "Selected area · updates when fresh frames are sampled"
+                      : "Enable analysis and start detection to preview this area"}
+                  </figcaption>
+                </figure>
+              </div>
+            )}
+            {cropError && (
+              <p className="ld-error" role="alert">
+                {cropError}
+              </p>
+            )}
+          </div>
+          <div className="interaction-action-row">
+            <button
+              className="ld-primary"
+              type="button"
+              disabled={
+                !enabled ||
+                !model?.ready ||
+                !cameraReady ||
+                !!cropError ||
+                count < 4 ||
+                busy
+              }
+              onClick={() => void submit()}
+            >
+              <ScanEye size={17} />
+              {busy ? "Analysing…" : "Analyse recent sequence"}
+            </button>
+            {busy && (
               <button
                 type="button"
-                onClick={() =>
-                  changeCrop(true, { x: 0, y: 0, width: 1, height: 1 })
-                }
+                onClick={() => {
+                  setAutomatic(false);
+                  options.current.automatic = false;
+                  cancel();
+                }}
               >
-                Reset area
+                <Square size={16} />
+                Cancel analysis
               </button>
-            </div>
-            <figure className="interaction-crop-preview">
-              <canvas
-                ref={cropPreview}
-                width={320}
-                height={180}
-                aria-label="Selected camera area preview"
-              />
-              <figcaption>
-                {enabled
-                  ? "Selected area · updates when fresh frames are sampled"
-                  : "Enable analysis and start detection to preview this area"}
-              </figcaption>
-            </figure>
-          </div>
-        )}
-        {cropError && (
-          <p className="ld-error" role="alert">
-            {cropError}
-          </p>
-        )}
-      </div>
-      <div className="interaction-action-row">
-        <button
-          className="ld-primary"
-          type="button"
-          disabled={
-            !enabled ||
-            !model?.ready ||
-            !cameraReady ||
-            !!cropError ||
-            count < 4 ||
-            busy
-          }
-          onClick={() => void submit()}
-        >
-          <ScanEye size={17} />
-          {busy ? "Analysing…" : "Analyse recent sequence"}
-        </button>
-        {busy && (
-          <button
-            type="button"
-            onClick={() => {
-              setAutomatic(false);
-              options.current.automatic = false;
-              cancel();
-            }}
-          >
-            <Square size={16} />
-            Cancel analysis
-          </button>
-        )}
-        <span>
-          {count}/4 fresh sampled frames
-          {busy ? ` · ${Math.round(elapsed / 1000)}s elapsed` : ""}
-        </span>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={() => void refresh()}
-        >
-          <RefreshCw size={15} />
-          {refreshing ? "Checking…" : "Refresh model & history"}
-        </button>
-      </div>
-      <section
-        className="interaction-sampling"
-        aria-label="Current sampled frames"
-      >
-        <div className="interaction-sampling-heading">
-          <h3>Current sampled frames</h3>
-          <span>{automatic ? "Automatic monitoring" : "Manual test"}</span>
-        </div>
-        <p>
-          {cameraReady
-            ? `${cameraChoice.label}. `
-            : "Choose a camera area to begin. "}
-          {samples.length
-            ? "These local previews update as fresh frames arrive. They are not a continuous recording."
-            : "No fresh samples yet. Enable analysis, confirm a camera and start detection."}
-        </p>
-        <FrameStrip frames={samples} kind="Buffered" />
-        <p className="interaction-schedule" role="status">
-          {!automatic
-            ? "Manual test: select Analyse recent sequence when four fresh frames are ready."
-            : busy
-              ? "One sequence is being analysed. New samples continue locally; no other model job is queued."
-              : !enabled || !cameraReady || !sourceReady || !!cropError
-                ? "Automatic monitoring is waiting for enabled analysis, a confirmed camera and fresh playing video."
-                : nextSubmissionIn
-                  ? `Next automatic submission in ${nextSubmissionIn}s, once four fresh frames are ready.`
-                  : count < 4
-                    ? "Automatic monitoring is collecting four fresh frames for its next submission."
-                    : "Automatic monitoring is ready for its next submission slot."}
-        </p>
-        <p className="interaction-last-interval">
-          {lastAnalysed
-            ? `Last analysed interval: ${lastAnalysed.start.toFixed(2)}–${lastAnalysed.end.toFixed(2)}s of source video · ${lastAnalysed.action}. Only the sampled moments were analysed.`
-            : "No completed analysis in this camera session yet."}
-        </p>
-      </section>
-      {submittedWindow && (
-        <section
-          className="interaction-sampling interaction-submitted"
-          aria-label="Submitted sequence"
-        >
-          <div className="interaction-sampling-heading">
-            <h3>Submitted sequence</h3>
+            )}
             <span>
-              {submittedWindow.state === "analysing"
-                ? "Analysing these four frames"
-                : submittedWindow.state === "completed"
-                  ? "Analysis completed"
-                  : "Analysis failed"}
+              {count}/4 fresh sampled frames
+              {busy ? ` · ${Math.round(elapsed / 1000)}s elapsed` : ""}
             </span>
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={() => void refresh()}
+            >
+              <RefreshCw size={15} />
+              {refreshing ? "Checking…" : "Refresh model & history"}
+            </button>
           </div>
-          <p>
-            {submittedWindow.label} ·{" "}
-            {submittedWindow.frames[0].at_seconds.toFixed(2)}–
-            {submittedWindow.frames.at(-1)!.at_seconds.toFixed(2)}s of source
-            video. These exact submitted JPEGs stay fixed while the current
-            samples above advance.
+          <section
+            className="interaction-sampling"
+            aria-label="Current sampled frames"
+          >
+            <div className="interaction-sampling-heading">
+              <h3>Current sampled frames</h3>
+              <span>{automatic ? "Automatic monitoring" : "Manual test"}</span>
+            </div>
+            <p>
+              {cameraReady
+                ? `${cameraChoice.label}. `
+                : "Choose a camera area to begin. "}
+              {samples.length
+                ? "These local previews update as fresh frames arrive. They are not a continuous recording."
+                : "No fresh samples yet. Enable analysis, confirm a camera and start detection."}
+            </p>
+            <FrameStrip frames={samples} kind="Buffered" />
+            <p className="interaction-schedule" role="status">
+              {!automatic
+                ? "Manual test: select Analyse recent sequence when four fresh frames are ready."
+                : busy
+                  ? "One sequence is being analysed. New samples continue locally; no other model job is queued."
+                  : !enabled || !cameraReady || !sourceReady || !!cropError
+                    ? "Automatic monitoring is waiting for enabled analysis, a confirmed camera and fresh playing video."
+                    : nextSubmissionIn
+                      ? `Next automatic submission in ${nextSubmissionIn}s, once four fresh frames are ready.`
+                      : count < 4
+                        ? "Automatic monitoring is collecting four fresh frames for its next submission."
+                        : "Automatic monitoring is ready for its next submission slot."}
+            </p>
+            <p className="interaction-last-interval">
+              {lastAnalysed
+                ? `Last analysed interval: ${lastAnalysed.start.toFixed(2)}–${lastAnalysed.end.toFixed(2)}s of source video · ${lastAnalysed.action}. Only the sampled moments were analysed.`
+                : "No completed analysis in this camera session yet."}
+            </p>
+          </section>
+          {submittedWindow && (
+            <section
+              className="interaction-sampling interaction-submitted"
+              aria-label="Submitted sequence"
+            >
+              <div className="interaction-sampling-heading">
+                <h3>Submitted sequence</h3>
+                <span>
+                  {submittedWindow.state === "analysing"
+                    ? "Analysing these four frames"
+                    : submittedWindow.state === "completed"
+                      ? "Analysis completed"
+                      : "Analysis failed"}
+                </span>
+              </div>
+              <p>
+                {submittedWindow.label} ·{" "}
+                {submittedWindow.frames[0].at_seconds.toFixed(2)}–
+                {submittedWindow.frames.at(-1)!.at_seconds.toFixed(2)}s of
+                source video. These exact submitted JPEGs stay fixed while the
+                current samples above advance.
+              </p>
+              <FrameStrip frames={submittedWindow.frames} kind="Submitted" />
+            </section>
+          )}
+          <p className="interaction-status" role="status">
+            {status}
           </p>
-          <FrameStrip frames={submittedWindow.frames} kind="Submitted" />
-        </section>
+          <p className="ld-hint">
+            Four frames cover about four seconds. They are sent to the local
+            service and saved with the result under the retention policy below;
+            you can delete them here. No continuous clip is saved. Automatic
+            analysis keeps one job in flight, with no queue; events between
+            sampled frames or jobs can be missed. This model has not been
+            validated for pharmacy theft detection.
+          </p>
+        </>
       )}
-      <p className="interaction-status" role="status">
-        {status}
-      </p>
-      <p className="ld-hint">
-        Four frames cover about four seconds. They are sent to the local service
-        and saved with the result under the retention policy below; you can
-        delete them here. No continuous clip is saved. Automatic analysis keeps
-        one job in flight, with no queue; events between sampled frames or jobs
-        can be missed. This model has not been validated for pharmacy theft
-        detection.
-      </p>
+      {allMode && (
+        <>
+          <button disabled={refreshing} onClick={() => void refresh()}>
+            Refresh model & history
+          </button>
+          <AllCameraAnalysis
+            run={allRun}
+            count={allCameraCount}
+            videoRef={videoRef}
+            readRunning={() => options.current.readSession().running}
+            modelReady={model?.ready === true}
+            muted={muted}
+            volume={volume}
+            cancelRef={allCancel}
+            silenceRef={allSilence}
+            onMonitorStatus={onMonitorStatus}
+            onResult={(result) => {
+              historyRevision.current++;
+              setHistory((previous) =>
+                [
+                  result,
+                  ...previous.filter((item) => item.id !== result.id),
+                ].slice(0, 50),
+              );
+            }}
+          />
+        </>
+      )}
       <div className="interaction-evidence-policy">
         <strong>Sampled evidence storage</strong>
         {model?.evidence_policy ? (
@@ -1497,6 +1569,7 @@ export default function InteractionAnalysis({
           key={item.id}
           className={`interaction-result ${highlight === item.id ? "interaction-result-highlight" : ""}`}
         >
+          <CameraContextDetails context={item.camera_context} />
           <div className="interaction-result-heading">
             <div>
               <span
@@ -1508,6 +1581,8 @@ export default function InteractionAnalysis({
               <small>
                 {new Date(item.created_at).toLocaleString()} ·{" "}
                 {item.source_label}
+                {item.camera_context &&
+                  ` · Camera ${item.camera_context.camera_index + 1} · ${item.camera_context.layout}`}
               </small>
             </div>
             <span className="interaction-latency">

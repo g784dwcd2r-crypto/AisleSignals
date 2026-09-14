@@ -1,0 +1,117 @@
+.all-camera-analysis {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--border, #cfd8d1);
+  border-radius: 12px;
+  background: #f6f8f5;
+  color: #263b33;
+  overflow-wrap: anywhere;
+}
+.all-camera-controls,
+.all-camera-analysis fieldset {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.all-camera-analysis fieldset {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid #bdc9c0;
+  border-radius: 8px;
+}
+.all-camera-analysis label {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.all-camera-analysis button {
+  min-height: 40px;
+  border: 1px solid #819889;
+  border-radius: 6px;
+  background: white;
+  color: #263b33;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.all-camera-analysis button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.all-camera-analysis button:focus-visible {
+  outline: 3px solid #375e9c;
+  outline-offset: 2px;
+}
+.all-camera-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+.all-camera-cards article {
+  border: 1px solid #b7c5bb;
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+  font-size: 13px;
+}
+.all-camera-cards button[aria-pressed="true"] {
+  background: #e0ecdf;
+  border-color: #375d44;
+}
+.all-camera-frames {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.all-camera-frames figure {
+  min-width: 0;
+  margin: 0;
+}
+.all-camera-frames img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.all-camera-frames figcaption {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.ld-all-camera-coverage {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
+  padding: 10px 0;
+}
+.ld-all-camera-coverage > div {
+  padding: 10px;
+  background: #f0f4ed;
+  border-radius: 6px;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .all-camera-analysis {
+    padding: 12px;
+  }
+  .all-camera-frames {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.ld-camera-mode {
+  border: 1px solid #bdc9c0;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 14px 0;
+}
+.ld-camera-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 20px;
+  min-height: 40px;
+}
+.ld-camera-mode p {
+  font-size: 13px;
+  margin-bottom: 0;
+}

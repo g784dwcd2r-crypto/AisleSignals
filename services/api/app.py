@@ -44,6 +44,7 @@ from .models import (
     AssistanceTransition,
     PlaybackEvent,
     LiveEventInput,
+    camera_provenance,
 )
 from .store import Store, now, ident, encode, digest, password_hash
 from .interactions import install_interactions, interaction_lifespan
@@ -888,7 +889,7 @@ def create_app(db_path=None, web_dist=None, mode=None):
     def record_live_event(
         body: LiveEventInput, request: Request, ctx: Context = Depends(context)
     ):
-        payload = body.model_dump(mode="json")
+        payload = body.model_dump(mode="json", exclude_none=True)
         scope = {
             "organisation_id": ctx.user["organisation_id"],
             "site_id": ctx.user["site_id"],
@@ -909,7 +910,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
             )
             previous = ctx.store.get(ctx.conn, ctx.user, "live_event", event_id)
             if previous is not None:
-                if any(previous.get(key) != value for key, value in payload.items()):
+                if (
+                    previous.get("camera_context") != payload.get("camera_context")
+                    or any(previous.get(key) != value for key, value in payload.items())
+                ):
                     problem(
                         409,
                         "LIVE_EVENT_CONFLICT",
@@ -936,6 +940,7 @@ def create_app(db_path=None, web_dist=None, mode=None):
                 acknowledged_at=None,
                 acknowledged_by=None,
             )
+            item.update(camera_provenance(payload))
             ctx.put("live_event", item)
             ctx.audit(
                 "LIVE_POSE_EVENT_LOGGED",

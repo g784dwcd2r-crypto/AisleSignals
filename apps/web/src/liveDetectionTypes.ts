@@ -1,4 +1,5 @@
 /** Local pose observations; no cross-visit identity or finding of theft. */
+import type { CameraContext } from "./cameraContext";
 export type PosePoint = {
   x: number;
   y: number;
@@ -54,6 +55,7 @@ export type LiveEventInput = {
   event_id: string;
   source_kind: LiveSourceKind;
   source_label: string;
+  camera_context?: CameraContext | null;
   event_code: LiveEventCode;
   track_id: number;
   source_time_seconds: number;
@@ -63,6 +65,8 @@ export type LiveEventInput = {
   sound_requested: boolean;
 };
 export type SavedLiveEvent = Omit<LiveEventInput, "rule_version"> & {
+  camera_id?: string;
+  camera_label?: string;
   rule_version: "pose-rules-v1" | typeof LIVE_RULE_VERSION;
   id: string;
   label: string;

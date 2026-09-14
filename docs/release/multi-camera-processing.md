@@ -1,6 +1,6 @@
 # Multi-camera scheduling and processing contract
 
-Status: implemented pure scheduler and deterministic unit tests in the production-readiness worktree. **Not connected to the capture interface, inference workers, dashboard, evidence API or alarms yet.** These tests do not establish simultaneous four/six-camera operation or pharmacy detection accuracy. The release lead identifies the integrated source and final verification separately.
+Status: the scheduler is now connected to the local all-camera pose path in this candidate. Product analysis uses its own bounded per-camera sequence controller. See [all-camera-monitoring.md](all-camera-monitoring.md) for the operator flow, measured cadence, separate camera histories, evidence and sound controls. The release report distinguishes synthetic verification, source publication and pharmacy acceptance; no detection-accuracy claim follows from these tests.
 
 This component contributes to the split-screen monitoring workstream in `background-workplan.md`. It schedules work on one, four or six explicitly confirmed, non-overlapping camera areas from one captured source, within one branch. Camera geometry comes from the existing `cameraGridTiles` or `mapCameraGridToArea` helpers. Selecting another source, branch, camera layout, crop or source resolution requires explicit rearming and a new epoch. It does not discover cameras, prove the supplied branch is authorised or create an inference result.
 
@@ -64,14 +64,11 @@ The target opportunity for each camera occurs once per `sampleIntervalMs` slot, 
 
 A default concurrency limit of one controls resource use. It does not promise each camera can reach the configured target rate. Select operating rates from actual device measurements and visibly report delayed/missed processing. There is no growing frame queue; retained scheduler state is at most six current cameras plus six in-flight tickets.
 
-## Required next integration wave
+## Integrated adapters and remaining validation
 
-1. Add an explicit all-camera mode after confirming all grid areas. Create a new context on branch/source/layout/crop/resolution changes and clear every old camera's frame buffers, tracks, reviews-in-flight and alarm commission state.
-2. Drive the scheduler using presented-frame callbacks and the continuity watchdog. Own a bounded worker pool, close each bitmap in all success/failure/cancellation paths, and terminate unresponsive owned workers before acknowledging their slots. No silent fallback to another camera.
-3. Keep pose tracker and product-frame history **separate per camera**. A MediaPipe VIDEO tracker must not alternate unrelated tiles through one persistent tracking state. Either maintain bounded per-camera state or reset explicitly; measure the resulting cost. For multi-frame product jobs, apply a separate bounded job stage so collecting samples does not falsely count as completed inference.
-4. Propagate epoch, branch, source, camera and exact crop through results, review items and evidence. Existing server DTOs do not yet provide this complete multi-camera contract; extend them with server-resolved branch authority and negative tests. Preserve stale-session cancellation before model work and publication. Do not repurpose anonymous person IDs across cameras.
-5. Gate alarms with the matching camera's fresh accepted observation, explicit arming, cooldown/duplicate protection and audible commissioning. A ticket settlement cannot directly sound an alarm. Recheck context after awaits. Display which camera requested attention and each camera's measured processing coverage.
-6. Exercise four/six-tile browser flows with simultaneous activity, asymmetric workload, cancellation and crop changes, worker hangs, source loss/resize, branch switching, disk/model failures and stale responses. Follow with authorised per-camera footage and physical deployment-device tests. Until then, all-camera operation remains unintegrated and unvalidated.
+The candidate's `LiveDetection.tsx` drives this scheduler from confirmed camera crops and presented frames, sends cropped bitmaps through one IMAGE-mode pose worker and retains separate behaviour engines for each camera. `multiCameraInteractions.ts` owns independent product buffers and one global model-job slot; `AllCameraAnalysis.tsx` presents per-camera cadence, review and explicitly commissioned product attention sound. Camera context is validated by the API and retained in observations and cases. Source, geometry, branch or runtime changes invalidate the old run.
+
+Synthetic browser checks cover four/six layouts, mode and source changes, stale results, worker delays, fresh geometry, real protected API evidence/review/case flow and bounded sound commissioning. These are software checks with deterministic vision/provider boundaries. Actual pharmacy footage, camera positioning, laptop workload, model false-alarm rates and physical speakers remain unaccepted. Background/hidden-page capture and simultaneous six-camera inference are not provided.
 
 ## Verification
 

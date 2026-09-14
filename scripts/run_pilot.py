@@ -16,10 +16,10 @@ import time
 import webbrowser
 
 try:
-    from pilot_preflight import (ConfigurationError, PilotConfig, default_data_dir, load_config,
+    from pilot_preflight import (ConfigurationError, PilotConfig, add_storage_arguments, load_config, resolve_config,
         local_json, model_module, port_available, preflight, private_path_safe, source_root, write_report)
 except ModuleNotFoundError:
-    from scripts.pilot_preflight import (ConfigurationError, PilotConfig, default_data_dir, load_config,
+    from scripts.pilot_preflight import (ConfigurationError, PilotConfig, add_storage_arguments, load_config, resolve_config,
         local_json, model_module, port_available, preflight, private_path_safe, source_root, write_report)
 
 try:
@@ -404,27 +404,30 @@ def main() -> int:
         return accounts_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "model-setup":
         setup_parser = argparse.ArgumentParser(description="Download and verify the optional local model/runtime into private external storage.")
-        setup_parser.add_argument("--runtime-dir", type=Path)
-        setup_parser.add_argument("--runtime-only", action="store_true")
+        add_storage_arguments(setup_parser)
+        setup_parser.add_argument("--runtime-only", action="store_true", help="Prepare the pinned native runtime only; skip model downloads")
         setup_args = setup_parser.parse_args(sys.argv[2:])
         try:
-            config = load_config(None, root=source_root())
-            runtime_dir = setup_args.runtime_dir or config.runtime_dir
-            prepare_private_directory(runtime_dir)
+            config = resolve_config(setup_args.config, root=source_root(), data_dir=setup_args.data_dir,
+                                    runtime_dir=setup_args.runtime_dir)
             pins = model_module(source_root())
-            pins.RUNTIME = runtime_dir.resolve()
+            pins.RUNTIME = config.runtime_dir
+            print(f"Model storage: {config.runtime_dir}", flush=True)
+            print("Use the same --config, --data-dir and --runtime-dir selections when starting the launcher. Configuration and credentials are not changed.")
             pins.setup(runtime_only=setup_args.runtime_only)
             return 0
-        except (OSError, ValueError, ConfigurationError):
-            print("Model setup failed. Check disk space, download connectivity and the selected private runtime directory.", file=sys.stderr)
+        except ConfigurationError as error:
+            print(str(error), file=sys.stderr)
+            return 1
+        except (OSError, ValueError):
+            print("Model setup failed. Check disk space, connectivity and the selected private runtime directory. Existing mismatched files are preserved; review them or choose an empty runtime directory.", file=sys.stderr)
             return 1
     parser = argparse.ArgumentParser(description=__doc__, epilog="Account management: accounts --help. Optional model download: model-setup --help. Offline recovery: backup --help. Six-branch readiness: rollout --help.")
-    parser.add_argument("--config", type=Path)
+    add_storage_arguments(parser)
     parser.add_argument("--check", action="store_true", help="Read-only readiness report; do not start services")
     parser.add_argument("--report", type=Path, help="Write privacy-minimised readiness JSON")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int)
-    parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--casework-only", action="store_true", help="Disable product interaction analysis for this launch")
     parser.add_argument("--api-child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -433,14 +436,11 @@ def main() -> int:
     supervisor = None
     try:
         root = source_root()
-        default = default_data_dir(root) / "config.json"
-        config = load_config(args.config or (default if default.is_file() else None), root=root)
+        config = resolve_config(args.config, root=root, data_dir=args.data_dir, runtime_dir=args.runtime_dir)
         if args.port is not None:
             if not 1024 <= args.port <= 65535 or args.port == config.vision_port:
                 raise ConfigurationError("Choose distinct local ports between 1024 and 65535.")
             config = replace(config, api_port=args.port)
-        if args.data_dir:
-            config = replace(config, data_dir=Path(os.path.abspath(args.data_dir.expanduser())))
         if args.casework_only:
             config = replace(config, vision_enabled=False)
         report = preflight(config)
