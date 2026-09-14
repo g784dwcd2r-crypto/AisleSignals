@@ -55,6 +55,9 @@ def build_app(source: Path, destination: Path, version: str) -> Path:
     launcher.write_text(
         "#!/bin/sh\n"
         'contents="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"\n'
+        'if [ "$#" -eq 0 ]; then\n'
+        '  set -- --casework-only\n'
+        'fi\n'
         'exec "$contents/Resources/AisleSignalsPilot/AisleSignalsPilot" "$@"\n',
         encoding="utf-8",
     )
