@@ -24,6 +24,7 @@ PTR = C.c_void_p
 MAX_SEQUENCE = 9_007_199_254_740_991
 SYSTEM = "S-1-5-18"
 ADMINISTRATORS = "S-1-5-32-544"
+OWNER_RIGHTS = "S-1-3-4"
 TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 READ_CONTROL = 0x00020000
 GENERIC_READ = 0x80000000
@@ -127,7 +128,11 @@ def _check_acl(owner, aces, user, *, directory=False, private_parent=False):
             raise UnsafeWindowsPath("Unsupported effective Windows permission entry.")
         if ace.kind == 1:  # Conservative: a deny never adds access.
             continue
-        if ace.sid in trusted or (directory and not private_parent and ace.sid == TRUSTED_INSTALLER):
+        # OWNER RIGHTS represents this object's actual owner, not a separate
+        # trustee. Resolve only after the opened object's owner passed the
+        # above policy; this must never make a foreign owner acceptable.
+        trustee = owner if ace.sid == OWNER_RIGHTS else ace.sid
+        if trustee in trusted or (directory and not private_parent and trustee == TRUSTED_INSTALLER):
             continue
         allowed = (ANCESTOR_READ | (0 if private_parent else 0x04)) if directory else 0
         if ace.mask & ~allowed:

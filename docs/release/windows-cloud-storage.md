@@ -63,6 +63,12 @@ every subsequently opened component must still pass the owner and ACL checks.
 The final parent must be current-user-owned and must not permit other principals
 to add files. Effective unsupported ACE types and null DACLs fail closed.
 
+An `OWNER RIGHTS` ACE (`S-1-3-4`) refers to the object's actual owner. The adapter
+resolves it only after validating that owner under the same rules above. It does
+not grant trust to arbitrary trustees or permit a foreign-owned credential or
+final parent. This accommodates Windows' owner-relative ACLs, including the
+administrator-owned ancestor observed in native CI, without rewriting any ACL.
+
 New objects get a protected DACL allowing only the current user, SYSTEM and
 administrators. Existing owners and ACLs are never changed to make a path pass.
 This boundary does not resist administrator access, malware executing as the
@@ -106,7 +112,7 @@ The macOS authoring run used the existing isolated Python 3.12 environment:
 ../AisleSignals-camera-release/.venv/bin/python -m pytest tests/cloud/test_cloud_private_windows.py -q
 ```
 
-Result: **91 passed, 18 skipped**. The skipped cases need actual Windows NTFS:
+Result: **103 passed, 19 skipped**. The skipped cases need actual Windows NTFS:
 private creation, preservation of occupied files and ACLs, unsafe ACL refusal,
 hard links, junctions, held-directory rename prevention, refusal of an empty
 ancestor granting another principal reparse-capable write access before creating
@@ -121,6 +127,7 @@ browser or API test cannot replace them.
 
 - [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew): exclusive creation, explicit security attributes, reparse-point opening and handle sharing.
 - [GetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo) and [file access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights): handle-based ownership and DACL inspection.
+- [Windows security identifiers](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers): `OWNER RIGHTS` (`S-1-3-4`) represents the current object owner; it is resolved only after ownership validation.
 - [FSCTL_SET_REPARSE_POINT](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4aeefef8-92c3-4abc-af7a-a610caf8a165): why ancestor `FILE_WRITE_DATA` and `FILE_WRITE_ATTRIBUTES` grants are rejected even with delete sharing disabled.
 - [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle) and [GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew): opened-object identity, link count and final path.
 - [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex): exclusive bounded lock acquisition and process/handle lifetime.

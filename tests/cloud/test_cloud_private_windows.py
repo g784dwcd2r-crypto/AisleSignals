@@ -77,6 +77,34 @@ def test_private_acl_allows_only_current_user_and_os_administrators():
     storage._check_acl(USER, [allow(), allow(storage.SYSTEM), allow(storage.ADMINISTRATORS)], USER)
 
 
+@pytest.mark.parametrize("owner", [USER, storage.SYSTEM, storage.ADMINISTRATORS, storage.TRUSTED_INSTALLER])
+def test_owner_rights_resolves_only_to_validated_trusted_ancestor_owner(owner):
+    # Matches the native CI ACL: inheritable OWNER RIGHTS full control plus
+    # explicit SYSTEM/Administrators. Flags 3 apply to this object as well.
+    entries = [allow(storage.SYSTEM), allow(storage.ADMINISTRATORS), allow(storage.OWNER_RIGHTS, flags=3)]
+    storage._check_acl(owner, entries, USER, directory=True)
+
+
+def test_owner_rights_for_current_owner_is_private_but_other_grants_still_reject():
+    storage._check_acl(USER, [allow(storage.OWNER_RIGHTS)], USER)
+    storage._check_acl(USER, [allow(storage.OWNER_RIGHTS)], USER, directory=True, private_parent=True)
+    with pytest.raises(storage.UnsafeWindowsPath):
+        storage._check_acl(USER, [allow(storage.OWNER_RIGHTS), allow(EVERYONE, storage.GENERIC_READ)], USER)
+    with pytest.raises(storage.UnsafeWindowsPath):
+        storage._check_acl(USER, [allow(storage.OWNER_RIGHTS), allow("S-1-3-5")], USER)
+
+
+@pytest.mark.parametrize("owner,directory,private_parent", [
+    (OTHER, False, False), (OTHER, True, False), (OTHER, True, True),
+    (EVERYONE, True, False), (storage.OWNER_RIGHTS, True, False),
+    (storage.ADMINISTRATORS, False, False), (storage.SYSTEM, True, True),
+])
+def test_owner_rights_cannot_bypass_actual_owner_requirement(owner, directory, private_parent):
+    with pytest.raises(storage.UnsafeWindowsPath):
+        storage._check_acl(owner, [allow(storage.OWNER_RIGHTS)], USER,
+                           directory=directory, private_parent=private_parent)
+
+
 @pytest.mark.parametrize("owner", [OTHER, EVERYONE, storage.SYSTEM, storage.ADMINISTRATORS])
 def test_existing_leaf_must_be_owned_by_current_user(owner):
     with pytest.raises(storage.UnsafeWindowsPath):
@@ -189,13 +217,13 @@ def security_bytes(path):
         native.close(handle)
 
 
-def set_synthetic_acl(path, *, public_mask="FR"):
+def set_synthetic_acl(path, *, public_mask="FR", trustee="WD"):
     """Change only the explicit disposable path supplied by the native fixture."""
     native = storage._Native()
     setter = native.advapi.SetFileSecurityW
     setter.argtypes, setter.restype = [C.c_wchar_p, storage.DWORD, storage.PTR], storage.BOOL
     descriptor, length = storage.PTR(), storage.DWORD()
-    sddl = f"O:{native.user}D:P(A;;FA;;;{native.user})(A;;FA;;;SY)(A;;FA;;;BA)(A;;{public_mask};;;WD)"
+    sddl = f"O:{native.user}D:P(A;;FA;;;{native.user})(A;;FA;;;SY)(A;;FA;;;BA)(A;;{public_mask};;;{trustee})"
     native.ok(native.ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1, C.byref(descriptor), C.byref(length)))
     try:
         native.ok(setter(native.name(path), 0x80000004, descriptor))
@@ -229,6 +257,19 @@ def test_native_public_leaf_is_rejected_without_repair(native_target):
             operation()
     assert native_target.read_bytes() == b"synthetic original"
     assert security_bytes(native_target) == previous_acl
+
+
+@NATIVE
+def test_native_owner_rights_acl_is_accepted_without_rewriting_it(native_target):
+    storage.write_new(native_target, b"synthetic owner-rights credential")
+    set_synthetic_acl(native_target, public_mask="FA", trustee=storage.OWNER_RIGHTS)
+    before = security_bytes(native_target)
+    assert storage.validate_path(native_target) == native_target
+    assert storage.read_bytes(native_target, 4096) == b"synthetic owner-rights credential"
+    with pytest.raises(FileExistsError):
+        storage.write_new(native_target, b"must not replace")
+    assert security_bytes(native_target) == before
+    assert native_target.read_bytes() == b"synthetic owner-rights credential"
 
 
 @NATIVE
