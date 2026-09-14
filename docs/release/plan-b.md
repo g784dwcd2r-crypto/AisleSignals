@@ -29,36 +29,54 @@ Every API, background job, stream, clip, export and remote command must derive o
 | B1 | Multi-pharmacy operations dashboard | Administrators can filter permitted branches and see laptop, source, camera, detector, alarm and delivery status independently, including last healthy time and actionable faults |
 | B2 | Branch camera wall | A branch view renders confirmed four-camera or six-camera layouts, preserves camera names and never presents stale images as live |
 | B3 | Secure temporary live view | An authorised user requests a short-lived session; the branch laptop consents according to policy; encrypted media is relayed with strict scope, expiry, concurrency and audit controls |
-| B4 | Alert and incident clips | A qualifying local observation uploads an encrypted bounded clip, including configurable pre-event and post-event context, and links it to one alert and its review history |
+| B4 | Alert snapshots and incident clips | A qualifying local observation produces an overview snapshot, interaction crop and optional bounded clip; authorised evidence is encrypted, retained by policy and linked to one alert and its review history |
 | B5 | Central alert operations | New alerts appear in real time with severity, camera, observable action and confidence; staff can acknowledge, classify, escalate, mute according to role and create or dismiss an incident |
 | B6 | Remote diagnostics and controls | Authorised commands can request health refresh, restart an owned AisleSignals process, reconnect a source or run an alarm test; commands are signed, expiring, idempotent and fully audited |
 | B7 | Reliability and observability | Stream loss, frozen frames, laptop sleep, queue delay, storage failure and notification failure produce separate health states and recovery records |
-| B8 | Privacy, retention and audit | Access purpose, viewer, branch, timestamps and actions are recorded; clip retention, deletion, export and legal hold follow configured policy and branch authority |
+| B8 | Privacy, retention and audit | Controller/processor responsibilities are recorded; access purpose, viewer, branch, timestamps and actions are audited; snapshot and clip retention, deletion, export and legal hold follow configured policy and branch authority |
 
 ## Operating flow
 
 1. The branch laptop maintains a secure outbound connection to the cloud and reports separate laptop, camera, detector and alarm health.
 2. Local analysis creates an observation from visible product interactions. It does not make a criminality or identity finding.
 3. A fresh qualifying observation triggers the commissioned local attention alarm and creates one cloud alert with duplicate suppression.
-4. The laptop encrypts and queues the bounded incident clip. Offline items remain local and retry after reconnection.
-5. The authorised dashboard receives the alert and displays the clip when available. A staff member acknowledges and reviews it.
+4. According to the branch's configured evidence mode, the laptop either sends metadata only or encrypts and queues an overview snapshot, interaction crop and optional bounded incident clip. Offline items remain local and retry after reconnection.
+5. The authorised dashboard receives the alert and displays permitted evidence when available. A staff member acknowledges and reviews it.
 6. The review records an observable outcome such as benign, unclear or incident opened. Every change remains in the audit history.
 7. When troubleshooting requires live video, an authorised administrator starts a temporary, audited session for selected cameras. The session ends automatically at expiry.
 
 ## Privacy and bandwidth design
 
 - Continuous cloud streaming is disabled by default. Camera feeds and ordinary footage remain on the pharmacy laptop.
-- Alerts upload only bounded encrypted clips under the configured retention policy.
+- Each pharmacy confirms that its existing CCTV capture and retention are lawful for the documented security purpose before AisleSignals evidence mode is enabled. Existing CCTV operation is useful evidence of a security purpose, but does not itself approve a new cloud recipient or automated use.
+- The pharmacy company remains the data controller. AisleSignals acts on documented instructions as its data processor under a signed data-processing agreement unless a reviewed deployment establishes a different legal relationship.
+- The pharmacy records the automated analysis and cloud evidence use in its legitimate-interest assessment, DPIA where required, CCTV policy, staff procedure, signage and privacy notice before activation.
+- Evidence-mode alerts upload only the necessary encrypted snapshots and optional bounded clip under the branch's configured retention policy.
+- A metadata-only mode keeps images and clips on the pharmacy laptop and sends only the branch, camera, time, observable interaction category, confidence and review state to the cloud.
+- Dismissed-alert evidence expires quickly according to the agreed policy. Confirmed incident evidence follows a separately justified retention or legal-hold rule; no evidence is kept indefinitely or just in case.
+- Snapshot display, download, export, deletion and live viewing require branch-scoped authority and create immutable audit events.
 - Temporary live view uses short-lived credentials, selected cameras, visible session status, bandwidth limits and automatic expiry.
 - Platform support access requires a customer-scoped grant with a reason and expiry.
 - The product does not use facial recognition, cross-visit watchlists, body-language criminality scores or automated theft findings.
 - Failed authorisation, stale health or lost source freshness fails closed and removes the live indicator.
 
+## Alert evidence modes
+
+### Privacy-first mode
+
+Local detection triggers the commissioned laptop alarm and sends non-image alert metadata to the cloud. Staff use the pharmacy's existing CCTV system when visual review is required. This is the fallback whenever evidence-mode prerequisites, encryption, retention configuration or branch acceptance are incomplete.
+
+### Evidence mode
+
+The cloud alert may contain one scene overview, one interaction crop and an optional short clip with configured pre-event and post-event context. The interface labels the event as an observable interaction requiring staff review, never as a theft finding. Evidence mode is enabled per branch only after the controller records the purpose and legal basis, completes the required assessment and notices, signs the processing agreement, assigns authorised reviewers and configures retention.
+
 ## Implementation sequence
 
 ### B0 — Confirm policy and network constraints
 
-Record the company hierarchy, branch administrators, support-access policy, clip duration and retention, permitted live-view purposes, available upload bandwidth and recorder restrictions. Confirm the first Harbour Pharmacy camera route and reviewer.
+Record the company hierarchy, branch administrators, support-access policy, snapshot and clip retention, permitted live-view purposes, available upload bandwidth and recorder restrictions. Confirm the first Harbour Pharmacy camera route and reviewer. For evidence mode, also record the controller identity, security purpose, existing CCTV policy, lawful-basis assessment, DPIA decision, processing agreement, updated notice/signage and data-subject request procedure.
+
+**Gate B0:** metadata-only mode remains available. Evidence mode stays disabled until the branch compliance record, authorised reviewers and retention settings are complete and approved by the pharmacy controller.
 
 ### B1 — Separate health and central inventory
 
@@ -68,9 +86,9 @@ Extend the cloud contract so every registered laptop reports application, camera
 
 ### B2 — Deliver alerts and incident evidence
 
-Connect the Plan U local detector outbox to cloud alert creation. Add bounded encrypted clips, retry, duplicate protection, expiry, review actions and incident linkage.
+Connect the Plan U local detector outbox to cloud alert creation. Add the branch-selectable metadata-only and evidence modes, encrypted overview/crop snapshots, optional bounded clips, retry, duplicate protection, expiry, review actions and incident linkage.
 
-**Gate B2:** the tested sequence is detection → local alarm → cloud alert → clip → acknowledgement → benign dismissal or incident creation, including an offline retry.
+**Gate B2:** both journeys pass: detection → local alarm → metadata alert → acknowledgement, and detection → local alarm → encrypted snapshots/optional clip → cloud alert → acknowledgement → benign dismissal or incident creation. Tests include offline retry, expiry, access denial, deletion and duplicate suppression.
 
 ### B3 — Add the camera wall
 
@@ -92,7 +110,7 @@ Add signed commands for health refresh, reconnection, application restart and al
 
 ### B6 — Commission branch by branch
 
-Run privacy, access, camera mapping, clip, live-view, alarm and recovery acceptance at each branch. Activate only accepted cameras and roles, then monitor alert load and service health during the supervised pilot.
+Run controller approval, privacy, access, camera mapping, snapshot, clip, live-view, alarm and recovery acceptance at each branch. Activate only the accepted evidence mode, cameras and roles, then monitor alert load and service health during the supervised pilot.
 
 ## Relationship to Plan U
 
@@ -100,4 +118,4 @@ Run privacy, access, camera mapping, clip, live-view, alarm and recovery accepta
 
 ## Completion rule
 
-Plan B is complete only when at least one real branch has passed the central alert, encrypted clip, staff review, temporary live-view and recovery journeys, tenant-isolation tests pass, and each production-enabled branch has its own signed acceptance record. A dashboard mock-up, connected laptop or successful cloud deployment does not complete Plan B.
+Plan B is complete only when at least one real branch has passed the central alert, encrypted snapshot, optional clip, staff review, temporary live-view and recovery journeys, tenant-isolation tests pass, and each production-enabled branch has its own signed technical and controller acceptance record. A dashboard mock-up, connected laptop or successful cloud deployment does not complete Plan B.
