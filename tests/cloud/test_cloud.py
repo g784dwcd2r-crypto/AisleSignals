@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import os
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -26,18 +27,19 @@ def settings(**overrides):
 
 
 def client_for(config=None, probe=None):
-    return TestClient(create_app(config or settings(), probe), base_url="https://synthetic-cloud.onrender.com")
+    return TestClient(create_app(config or settings(), probe, web_dist=Path(__file__).parent / "absent-synthetic-web"), base_url="https://synthetic-cloud.onrender.com")
 
 
 def test_no_database_is_live_but_not_ready_and_does_not_connect():
     checker = AsyncMock(side_effect=AssertionError("must not connect"))
     client = client_for(probe=ReadinessProbe(settings(), checker))
-    assert client.get("/health/live").json() == {"status": "alive", "stage": "infrastructure-only"}
+    assert client.get("/health/live").json() == {"status": "alive", "stage": "management-console"}
     ready = client.get("/health/ready")
     assert ready.status_code == 503
     assert ready.json() == {"status": "unavailable", "code": "DATABASE_NOT_CONFIGURED", "scope": "database-schema-only"}
     checker.assert_not_awaited()
-    assert client.get("/").json()["event_sync"] is False
+    assert client.get("/").json()["error"]["code"] == "INTERFACE_NOT_BUILT"
+    assert client.get("/control-api/setup/status").json() == {"configured": False, "needs_setup": False}
 
 
 @pytest.mark.parametrize("path", ["/api/runtime", "/api/setup", "/api/admin/users", "/api/auth/login", "/api/events", "/api/evidence", "/api/sync", "/docs", "/redoc", "/openapi.json"])
@@ -190,7 +192,7 @@ def test_unhandled_error_is_opaque(caplog):
         raise RuntimeError("synthetic-private-password")
     response = TestClient(app, base_url="https://synthetic-cloud.onrender.com").get("/synthetic-failure")
     assert response.status_code == 500
-    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"
     assert "synthetic-private-password" not in response.text + caplog.text
 
 

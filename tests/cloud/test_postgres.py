@@ -73,7 +73,8 @@ def test_actual_missing_schema_then_idempotent_migration_and_readiness(empty_dat
         rows = connection.execute("SELECT version, checksum FROM aislesignals_control.schema_version").fetchall()
         assert rows == [(SCHEMA_VERSION, SCHEMA_CHECKSUM)]
         tables = connection.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'aislesignals_control'").fetchall()
-        assert tables == [("schema_version",)]
+        assert {row[0] for row in tables} == {"schema_version", "organisations", "pharmacies", "users", "user_pharmacies", "sessions", "invitations", "auth_challenges", "auth_attempts", "audit_entries", "device_enrolments", "devices", "alerts", "incidents"}
+        assert connection.execute("SELECT count(*) FROM aislesignals_control.users").fetchone() == (0,)
 
 
 def test_actual_concurrent_migrations_are_serialized(empty_database):
@@ -83,7 +84,7 @@ def test_actual_concurrent_migrations_are_serialized(empty_database):
     assert asyncio.run(check_schema(empty_database)) is True
 
 
-@pytest.mark.parametrize("field,value", [("version", 2), ("checksum", "f" * 64)])
+@pytest.mark.parametrize("field,value", [("version", 999), ("checksum", "f" * 64)])
 def test_incompatible_schema_does_not_get_rewritten(empty_database, field, value):
     migrate(empty_database)
     with psycopg.connect(empty_database.database_url) as connection:

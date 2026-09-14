@@ -11,9 +11,26 @@ import psycopg
 
 from .config import CloudSettings
 
-SCHEMA_VERSION = 1
-MIGRATION_SQL = (Path(__file__).parent / "migrations" / "001_control_plane.sql").read_text(encoding="utf-8")
-SCHEMA_CHECKSUM = sha256(MIGRATION_SQL.encode("utf-8")).hexdigest()
+def migration_sources(directory: Path | None = None) -> tuple[tuple[int, str, str], ...]:
+    """Immutable ordered SQL files; checksums preserve deployed version-one identity."""
+    files = sorted((directory or Path(__file__).parent / "migrations").glob("[0-9][0-9][0-9]_*.sql"))
+    migrations = []
+    for expected, path in enumerate(files, 1):
+        if int(path.name[:3]) != expected:
+            raise RuntimeError("Cloud migrations must be unique and contiguous.")
+        sql = path.read_text(encoding="utf-8")
+        # Keep deployed v1 unchanged. Later digests bind every predecessor so
+        # editing an older migration cannot be hidden behind the latest version.
+        content = sql.encode("utf-8") if expected == 1 else migrations[-1][2].encode("ascii") + b"\n" + sql.encode("utf-8")
+        migrations.append((expected, sql, sha256(content).hexdigest()))
+    if not migrations:
+        raise RuntimeError("Cloud migrations are missing.")
+    return tuple(migrations)
+
+
+MIGRATIONS = migration_sources()
+SCHEMA_VERSION, _, SCHEMA_CHECKSUM = MIGRATIONS[-1]
+MIGRATION_SQL = MIGRATIONS[0][1]
 PROBE_TIMEOUT_SECONDS = 2.5
 CACHE_SECONDS = 1.0
 

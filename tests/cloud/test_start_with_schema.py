@@ -43,7 +43,7 @@ def test_explicit_staging_start_migrates_then_verifies_then_serves(dependencies,
     assert steps == [("migrate", settings), ("verify", settings), ("serve", settings)]
     probe.assert_called_once_with(settings)
     output = capsys.readouterr()
-    assert "synchronisation remain unavailable" in output.out
+    assert "Management access requires configured credentials and verified MFA" in output.out
     assert "synthetic-password" not in output.out + output.err
 
 
