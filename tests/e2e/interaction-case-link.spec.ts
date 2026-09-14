@@ -236,12 +236,30 @@ test("staff review creates one unassessed linked case, opens its real evidence a
     (await (await page.request.get(`${installation.url}/api/bootstrap`)).json())
       .incidents,
   ).toHaveLength(1);
+  let releaseActionRefresh!: () => void;
+  const heldActionRefresh = new Promise<void>((resolve) => {
+    releaseActionRefresh = resolve;
+  });
+  let actionRefreshHeld = false;
+  await page.route("**/api/bootstrap", async (route) => {
+    if (!actionRefreshHeld) {
+      actionRefreshHeld = true;
+      await heldActionRefresh;
+    }
+    await route.continue();
+  });
   await result
     .getByRole("button", { name: "Open linked case", exact: true })
     .click();
+  await expect.poll(() => actionRefreshHeld).toBe(true);
+  await page
+    .getByRole("button", { name: "Refresh workspace", exact: true })
+    .click();
+  releaseActionRefresh();
   await expect(page.getByLabel("Case title", { exact: true })).toHaveValue(
     "Synthetic source follow-up",
   );
+  await page.unrouteAll({ behavior: "wait" });
   const source = page.getByRole("region", {
     name: "Linked product observation",
     exact: true,

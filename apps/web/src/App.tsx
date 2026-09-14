@@ -476,52 +476,59 @@ export default function App() {
     setPage("overview");
     clearSession();
   }, []);
-  const refresh = useCallback(async () => {
-    const generation = authGeneration.current;
-    const epoch = ++requestEpoch.current;
-    try {
-      const result = await api<Bootstrap>("/bootstrap");
-      if (
-        !mounted.current ||
-        generation !== authGeneration.current ||
-        epoch !== requestEpoch.current ||
-        !userRef.current
-      )
-        return;
-      if (siteRef.current && result.site.id !== siteRef.current) {
-        endSession();
-        setError({
-          message:
-            "The active branch changed in another tab. Sign in again to continue in the correct branch.",
-          conflict: false,
-        });
-        return;
+  const refresh = useCallback(
+    async (authoritative = false) => {
+      const generation = authGeneration.current;
+      const epoch = ++requestEpoch.current;
+      try {
+        const result = await api<Bootstrap>("/bootstrap");
+        if (
+          !mounted.current ||
+          generation !== authGeneration.current ||
+          (!authoritative && epoch !== requestEpoch.current) ||
+          !userRef.current
+        )
+          return;
+        if (siteRef.current && result.site.id !== siteRef.current) {
+          endSession();
+          setError({
+            message:
+              "The active branch changed in another tab. Sign in again to continue in the correct branch.",
+            conflict: false,
+          });
+          return;
+        }
+        // An explicit action must not be discarded when the periodic refresh
+        // starts while its request is in flight. Make its response the newest
+        // accepted epoch so any older background response cannot overwrite it.
+        if (authoritative) requestEpoch.current++;
+        setData(result);
+        setOffline(false);
+        return true;
+      } catch (err) {
+        if (
+          !mounted.current ||
+          generation !== authGeneration.current ||
+          (!authoritative && epoch !== requestEpoch.current)
+        )
+          return;
+        if (err instanceof ApiError && err.status === 401) {
+          endSession();
+          setError({
+            message: "Your session ended. Sign in again to continue.",
+            conflict: false,
+          });
+        } else {
+          setOffline(true);
+          setError({
+            message: err instanceof Error ? err.message : "Unable to connect.",
+            conflict: false,
+          });
+        }
       }
-      setData(result);
-      setOffline(false);
-      return true;
-    } catch (err) {
-      if (
-        !mounted.current ||
-        generation !== authGeneration.current ||
-        epoch !== requestEpoch.current
-      )
-        return;
-      if (err instanceof ApiError && err.status === 401) {
-        endSession();
-        setError({
-          message: "Your session ended. Sign in again to continue.",
-          conflict: false,
-        });
-      } else {
-        setOffline(true);
-        setError({
-          message: err instanceof Error ? err.message : "Unable to connect.",
-          conflict: false,
-        });
-      }
-    }
-  }, [endSession]);
+    },
+    [endSession],
+  );
   const acceptSession = useCallback((result: Session) => {
     runtimeHealth.begin(result.current_site_id);
     authGeneration.current++;
@@ -738,12 +745,12 @@ export default function App() {
   }
   async function openInteractionCase(id: string) {
     const generation = authGeneration.current;
-    if (
-      (await refresh()) &&
-      mounted.current &&
-      generation === authGeneration.current
-    )
-      openIncident(id);
+    // Preserve the user's navigation even when a periodic workspace refresh
+    // starts at the same time. The authoritative refresh below either loads
+    // the new case or applies the normal session/offline failure handling.
+    openIncident(id);
+    await refresh(true);
+    if (!mounted.current || generation !== authGeneration.current) return;
   }
   const closeModal = useCallback(() => setModal(null), []);
   if (starting)
