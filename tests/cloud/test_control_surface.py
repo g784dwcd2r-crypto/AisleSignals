@@ -22,7 +22,7 @@ def surface(tmp_path):
         yield client,app,web
 
 
-@pytest.mark.parametrize("path", ["/", "/assets/app.js", "/health/live", "/health/ready", "/control-api/setup/status", "/downloads/cloud_companion.py", "/downloads/cloud-companion.zip", "/missing"])
+@pytest.mark.parametrize("path", ["/", "/assets/app.js", "/health/live", "/health/ready", "/health/release", "/control-api/setup/status", "/downloads/cloud_companion.py", "/downloads/cloud-companion.zip", "/missing"])
 def test_public_responses_apply_security_headers(surface, path):
     client,_,_ = surface
     response = client.get(path)
@@ -44,6 +44,9 @@ def test_static_shell_has_no_account_or_database_dependency(surface):
     assert response.status_code == 200 and "Synthetic Console" in response.text
     assert client.get("/assets/app.js").status_code == 200
     assert client.get("/health/ready").status_code == 503
+    assert client.get("/health/release").json() == {
+        "error": {"code": "RELEASE_IDENTITY_UNAVAILABLE", "message": "Release identity is unavailable."}
+    }
     assert client.get("/control-api/setup/status").json() == {"configured":False,"needs_setup":False}
     assert not client.cookies
 

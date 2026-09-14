@@ -1,5 +1,14 @@
 # Supervised local pharmacy pilot
 
+Cloud release operators should use the read-only
+[cloud deployment audit](../docs/release/cloud-deployment-audit.md) to verify the
+public health/authentication contract and exact built management-console files.
+With `--expected-sha`, it also verifies Render's validated runtime commit
+identity. It does not inspect Render billing, backups or secrets, and performs no
+deployment.
+The separate [production operations runbook](../docs/release/production-operations.md)
+covers the manual paid Render release path, pre-deploy migration and rollback.
+
 This launcher coordinates the API and optional local model on an existing laptop. It does not activate a camera, register an unattended service, enrol a branch, create an account, download models, or qualify theft detection. Staff must remain present with the browser open and the laptop awake. Each of the six branches needs its own physical acceptance record; successful checks here do not activate the other branches.
 
 ## Prepare a source installation

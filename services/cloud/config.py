@@ -33,6 +33,7 @@ class CloudSettings:
     port: int
     auth_key: str | None = field(default=None, repr=False)
     bootstrap_token: str | None = field(default=None, repr=False)
+    release_sha: str | None = None
     evidence_mode: str = "METADATA_ONLY"
     evidence_policy: str | None = None
     evidence_keks: tuple[tuple[str, bytes], ...] = field(default=(), repr=False)
@@ -50,11 +51,11 @@ class CloudSettings:
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
         values = os.environ if env is None else env
         environment = values.get("CLOUD_ENV", "staging")
-        if environment not in {"staging", "development"}:
-            raise ConfigurationError("CLOUD_ENV must be staging or development.")
+        if environment not in {"production", "staging", "development"}:
+            raise ConfigurationError("CLOUD_ENV must be production, staging or development.")
         on_render = values.get("RENDER") == "true"
-        if on_render and environment != "staging":
-            raise ConfigurationError("Render requires CLOUD_ENV=staging.")
+        if on_render and environment == "development":
+            raise ConfigurationError("Render requires CLOUD_ENV=production or staging.")
         hosts = [v.strip() for v in values.get("CLOUD_ALLOWED_HOSTS", "").split(",") if v.strip()]
         if hostname := values.get("RENDER_EXTERNAL_HOSTNAME"):
             hosts.append(hostname)
@@ -75,7 +76,7 @@ class CloudSettings:
         if sslmode not in {"require", "disable"}:
             raise ConfigurationError("CLOUD_DATABASE_SSLMODE must be require or development-only disable.")
         if sslmode == "disable" and environment != "development":
-            raise ConfigurationError("Database TLS is required in staging.")
+            raise ConfigurationError("Database TLS is required outside development.")
         if database_url:
             try:
                 parsed = urlsplit(database_url)
@@ -93,7 +94,7 @@ class CloudSettings:
                     or parsed.fragment
                     or (query and query != [("sslmode", sslmode)])
                     or (parsed.port is not None and not 1 <= parsed.port <= 65535)
-                    or (environment == "staging" and not parsed.password)
+                    or (environment != "development" and not parsed.password)
                     or (sslmode == "disable" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})
                 ):
                     raise ValueError
@@ -111,6 +112,17 @@ class CloudSettings:
                 raise ConfigurationError("CLOUD_AUTH_KEY must be a canonical base64url-encoded 32-byte secret.") from None
         if bootstrap_token and (not re.fullmatch(r"[A-Za-z0-9_-]{43,128}", bootstrap_token) or not auth_key):
             raise ConfigurationError("CLOUD_BOOTSTRAP_TOKEN requires a random URL-safe secret and CLOUD_AUTH_KEY.")
+        render_release_sha = values.get("RENDER_GIT_COMMIT") or None
+        explicit_release_sha = values.get("CLOUD_RELEASE_SHA") or None
+        if render_release_sha and not re.fullmatch(r"[0-9a-f]{40}", render_release_sha):
+            raise ConfigurationError("RENDER_GIT_COMMIT must be a lowercase 40-hex commit SHA.")
+        if explicit_release_sha and not re.fullmatch(r"[0-9a-f]{40}", explicit_release_sha):
+            raise ConfigurationError("CLOUD_RELEASE_SHA must be a lowercase 40-hex commit SHA.")
+        if on_render and explicit_release_sha:
+            raise ConfigurationError("Render release identity must use RENDER_GIT_COMMIT.")
+        release_sha = render_release_sha if on_render else explicit_release_sha
+        if environment == "production" and (not database_url or not auth_key or not release_sha):
+            raise ConfigurationError("Production requires DATABASE_URL, CLOUD_AUTH_KEY and a release commit SHA.")
         evidence_mode = values.get("CLOUD_EVIDENCE_MODE", "METADATA_ONLY")
         if evidence_mode not in {"METADATA_ONLY", "ENCRYPTED"}:
             raise ConfigurationError("CLOUD_EVIDENCE_MODE must be METADATA_ONLY or ENCRYPTED.")
@@ -183,6 +195,7 @@ class CloudSettings:
             port=port,
             auth_key=auth_key,
             bootstrap_token=bootstrap_token,
+            release_sha=release_sha,
             evidence_mode=evidence_mode,
             evidence_policy=evidence_policy,
             evidence_keks=evidence_keks,

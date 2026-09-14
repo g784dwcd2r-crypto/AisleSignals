@@ -1,0 +1,49 @@
+# Production template. Match existing paid resources in Render; do not create duplicates.
+# Secrets remain operator-managed and never belong in this repository.
+previews:
+  generation: "off"
+projects:
+  - name: AisleSignals
+    environments:
+      - name: Production
+        services:
+          - type: web
+            name: aislesignals-control-production
+            runtime: python
+            plan: starter
+            region: frankfurt
+            repo: https://github.com/g784dwcd2r-crypto/AisleSignals
+            branch: main
+            autoDeployTrigger: "off"
+            buildCommand: python scripts/build_control.py
+            preDeployCommand: python -m services.cloud.prepare_release
+            startCommand: python -m services.cloud.start_checked
+            healthCheckPath: /health/ready
+            maxShutdownDelaySeconds: 30
+            envVars:
+              - key: PYTHON_VERSION
+                value: "3.12.14"
+              - key: NODE_VERSION
+                value: "24.14.1"
+              - key: CLOUD_ENV
+                value: production
+              - key: CLOUD_DATABASE_SSLMODE
+                value: require
+              - key: CLOUD_EVIDENCE_MODE
+                value: METADATA_ONLY
+              - key: CLOUD_AUTH_KEY
+                sync: false
+              - key: CLOUD_BOOTSTRAP_TOKEN
+                sync: false
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: aislesignals-postgres-production
+                  property: connectionString
+        databases:
+          - name: aislesignals-postgres-production
+            databaseName: aislesignals_production
+            plan: basic-256mb
+            region: frankfurt
+            postgresMajorVersion: "16"
+            ipAllowList: []
+            storageAutoscalingEnabled: true

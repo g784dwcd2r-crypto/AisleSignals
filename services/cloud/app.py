@@ -25,8 +25,8 @@ MAX_EVIDENCE_BODY = 8 * 1024 * 1024
 class SafeResponses:
     """Bounded bodies and private responses, without request/secret tracebacks."""
 
-    def __init__(self, app: ASGIApp, staging: bool = False):
-        self.app, self.staging = app, staging
+    def __init__(self, app: ASGIApp, secure: bool = False):
+        self.app, self.secure = app, secure
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] != 'http':
@@ -47,7 +47,7 @@ class SafeResponses:
                     (b'x-frame-options', b'DENY'),
                     (b'permissions-policy', b'camera=(), microphone=(), geolocation=(), display-capture=()'),
                 ]
-                if self.staging:
+                if self.secure:
                     message['headers'].append((b'strict-transport-security', b'max-age=31536000'))
             await send(message)
 
@@ -151,6 +151,15 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
             headers={} if result.ready else {'Retry-After': '2'},
         )
 
+    @app.get('/health/release')
+    async def release():
+        if settings.release_sha is None:
+            return JSONResponse(
+                {'error': {'code': 'RELEASE_IDENTITY_UNAVAILABLE', 'message': 'Release identity is unavailable.'}},
+                status_code=503,
+            )
+        return {'environment': settings.environment, 'release_sha': settings.release_sha}
+
     directory = web_dist if web_dist is not None else WEB_DIST
 
     @app.get('/')
@@ -182,5 +191,5 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
 
     app.mount('/assets', StaticFiles(directory=directory / 'assets', check_dir=False), name='control-assets')
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts), www_redirect=False)
-    app.add_middleware(SafeResponses, staging=settings.environment == 'staging')
+    app.add_middleware(SafeResponses, secure=settings.environment in {'production', 'staging'})
     return app
