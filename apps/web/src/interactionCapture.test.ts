@@ -357,6 +357,17 @@ describe("product attention duplicate and acknowledgement policy", () => {
     expect(policy.decide("one", "camera-1", 3000)).toBe("ALREADY_DELIVERED");
     expect(policy.decide("two", "camera-1", 3000)).toBe("REQUEST_SOUND");
   });
+
+  it("keeps accepting new observations after the bounded duplicate history fills", () => {
+    const policy = new InteractionAttentionPolicy();
+    for (let index = 0; index < 1001; index++)
+      expect(policy.decide(`job-${index}`, "camera-1", index * 30001)).toBe(
+        "REQUEST_SOUND",
+      );
+    expect(policy.decide("job-1000", "camera-1", 1002 * 30001)).toBe(
+      "ALREADY_DELIVERED",
+    );
+  });
 });
 
 describe("authenticated sampled frame URLs", () => {

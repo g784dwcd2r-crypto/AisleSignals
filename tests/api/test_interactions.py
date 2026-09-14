@@ -443,7 +443,7 @@ def test_evidence_strength_is_explainable_rule_output_not_probability():
     assert insufficient["evidence_strength"] == "INSUFFICIENT_RULE_MATCH"
 
 
-@pytest.mark.parametrize("indices", [[-1, 2], [0, 3], [1, 1]])
+@pytest.mark.parametrize("indices", [[-1, 2], [0, 3], [1, 1], [2, 0]])
 def test_model_invalid_evidence_indices_rejected(indices):
     with pytest.raises(VisionError):
         public_observation(

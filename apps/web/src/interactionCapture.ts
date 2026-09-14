@@ -67,6 +67,7 @@ export type AttentionDecision =
 
 /** Sound suppression never discards the saved observation staff can review. */
 export class InteractionAttentionPolicy {
+  private static readonly MAX_DELIVERED_IDS = 1000;
   private lastSoundAt = -Infinity;
   private delivered = new Set<string>();
   private quietUntil = new Map<string, number>();
@@ -78,7 +79,10 @@ export class InteractionAttentionPolicy {
       return "ACKNOWLEDGED_CAMERA_QUIET";
     if (now - this.lastSoundAt < INTERACTION_ALARM_COOLDOWN_MS)
       return "GLOBAL_COOLDOWN";
-    if (this.delivered.size >= 1000) return "INVALID";
+    if (this.delivered.size >= InteractionAttentionPolicy.MAX_DELIVERED_IDS) {
+      const oldest = this.delivered.values().next().value;
+      if (oldest !== undefined) this.delivered.delete(oldest);
+    }
     this.delivered.add(id);
     this.lastSoundAt = now;
     return "REQUEST_SOUND";
@@ -93,7 +97,7 @@ export class InteractionAttentionPolicy {
   resetRun() {
     this.lastSoundAt = -Infinity;
     this.quietUntil.clear();
-    // Keep delivered IDs so a late result cannot replay after restart.
+    // Keep the bounded recent ID history so a late result cannot replay after restart.
   }
 }
 

@@ -31,6 +31,8 @@ class DelayedReviewProvider(MockProvider):
     def analyze(self, frames):
         # Exercise real async completion beyond the short scanner fixture's end.
         time.sleep(float((Path(sys.argv[1])/'delay').read_text()) if (Path(sys.argv[1])/'delay').exists() else 0.15)
+        if (Path(sys.argv[1])/'fail').exists():
+            raise RuntimeError('synthetic provider unavailable')
         return super().analyze(frames)
 app.state.interactions.provider=DelayedReviewProvider()
 import uvicorn
@@ -666,6 +668,41 @@ test("a held model job never queues another camera; layout invalidation cancels 
     page.getByLabel("Enable all-camera product analysis", { exact: true }),
   ).not.toBeChecked();
   await expect(armed).not.toBeChecked();
+});
+
+test("a failed model job pauses automatic all-camera analysis", async ({
+  page,
+  installation,
+}) => {
+  test.setTimeout(25000);
+  await writeFile(join(installation.directory, "fail"), "1");
+  const posts: any[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/interactions/jobs")
+    )
+      posts.push(request.postDataJSON());
+  });
+  await openGrid(page, installation, "2x2");
+  await begin(page);
+  const automatic = page.getByLabel("Analyse all cameras automatically", {
+    exact: true,
+  });
+  await expect(automatic).not.toBeChecked({ timeout: 12000 });
+  const status = page
+    .getByRole("region", { name: "All-camera product analysis" })
+    .locator(":scope > p[role=status]")
+    .last();
+  await expect(status).toContainText("Automatic submissions are paused");
+  expect(posts).toHaveLength(1);
+  await page.waitForTimeout(3000);
+  expect(posts).toHaveLength(1);
+  await expect(
+    page.getByLabel("Experimental attention alarm for all confirmed cameras", {
+      exact: true,
+    }),
+  ).not.toBeChecked();
 });
 
 for (const change of [

@@ -297,7 +297,9 @@ export default function AllCameraAnalysis(props: Props) {
           return;
         }
         if (job.status === "failed" || job.status === "cancelled") {
-          outcome = job.status === "failed" ? "failed" : "cancelled";
+          // A locally requested cancellation marks the ticket and exits above.
+          // A server-side cancellation here is therefore an unexpected failure.
+          outcome = "failed";
           failure = job.error ?? "Analysis ended.";
           return;
         }
@@ -307,6 +309,7 @@ export default function AllCameraAnalysis(props: Props) {
             "POST",
             {},
           ).catch(() => undefined);
+          outcome = "failed";
           failure = "Analysis exceeded its time limit. No new job was queued.";
           return;
         }
@@ -316,12 +319,17 @@ export default function AllCameraAnalysis(props: Props) {
       outcome = "failed";
       failure = error instanceof Error ? error.message : "Analysis failed.";
       if (error instanceof ApiError && error.code === "EVIDENCE_LIMIT") {
-        options.current.automatic = false;
-        setAutomatic(false);
-        failure +=
-          " Automatic submissions are paused. Review storage before enabling them again.";
+        failure += " Review storage before enabling automatic analysis again.";
       }
     } finally {
+      if (outcome === "failed" && current(ticket.run)) {
+        options.current.automatic = false;
+        if (mounted.current) setAutomatic(false);
+        disarm(
+          "Analysis failed. Automatic submissions and attention sound are paused until staff review the model status.",
+        );
+        failure = `${failure ?? "Analysis failed."} Automatic submissions are paused.`;
+      }
       forgetAction("/interactions/jobs", "POST", payload, key);
       controller.current.settle(ticket, outcome, performance.now(), failure);
       if (active.current === pending) active.current = null;

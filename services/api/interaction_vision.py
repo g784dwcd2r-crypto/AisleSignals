@@ -156,7 +156,11 @@ def validate_frames(frames: list[tuple[float, bytes]]) -> list[tuple[float, byte
 
 def public_observation(observation: ModelObservation, count: int) -> dict:
     indices = observation.evidence_frame_indices
-    if len(set(indices)) != len(indices) or any(i < 0 or i >= count for i in indices):
+    if (
+        len(set(indices)) != len(indices)
+        or any(i < 0 or i >= count for i in indices)
+        or any(right <= left for left, right in zip(indices, indices[1:]))
+    ):
         raise VisionError(
             "The model returned invalid evidence references. No classification was saved."
         )

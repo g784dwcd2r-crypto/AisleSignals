@@ -103,10 +103,11 @@ Each branch also has its own confusion matrix, per-class precision/recall, abste
 
 The overall and per-branch `alarm_eligibility` metrics distinguish a predicted action from the application's routing rule. A correct possible-concealment label with insufficient visible evidence does not count as an eligible alert. Recall uses all concealment-labelled windows, including errors and abstentions. Eligible results on normal labels count against resolved precision; eligible results on `UNCLEAR` ground truth are listed separately because their truth is unresolved. These are replay eligibility counts, not proof that a speaker sounded.
 
-`simulated_alarm_delivery` replays the configured source-time cooldown and
+`simulated_alarm_delivery` first applies a 15-second measured evaluation
+processing-time proxy for the browser freshness gate, then replays the configured source-time cooldown and
 separates eligible windows, new sound requests, cooldown suppression, missing
 eligible signals and concealment windows without a new sound. It does not test
-browser freshness, the operating-system speaker, network delivery or staff
+live queue and polling delay, the operating-system speaker, network delivery or staff
 response. `routing_rule_strength` summarizes deterministic evidence gates when
 the provider supplies them; it is not calibrated model confidence.
 
