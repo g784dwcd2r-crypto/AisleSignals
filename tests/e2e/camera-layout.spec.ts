@@ -71,8 +71,15 @@ async function fixture(
         canvas.width = 600;
         canvas.height = 400;
         const context = canvas.getContext("2d")!;
-        const draw = () => {
-          const scene = state.initiallyBlank ? "blank" : state.layout;
+        // The texture is static within a scene. Rebuilding 240,000 pixels and
+        // their temporary arrays ten times a second needlessly competes with
+        // actual media presentation and the real API heartbeat on CI hosts.
+        // Keep each putImageData below: identical pictures still need fresh
+        // presented frames, including after the initially-blank scene changes.
+        const textures = new Map<Layout, ImageData>();
+        const texture = (scene: Layout) => {
+          const cached = textures.get(scene);
+          if (cached) return cached;
           const data = context.createImageData(600, 400);
           const columns = scene === "3x2" ? 3 : 2,
             rows = scene === "2x3" ? 3 : 2;
@@ -112,7 +119,12 @@ async function fixture(
                     : colour.map((channel) => Math.min(245, v + channel));
               data.data.set([...rgb, 255], at);
             }
-          context.putImageData(data, 0, 0);
+          textures.set(scene, data);
+          return data;
+        };
+        const draw = () => {
+          const scene = state.initiallyBlank ? "blank" : state.layout;
+          context.putImageData(texture(scene), 0, 0);
           state.draws++;
         };
         draw();
