@@ -332,3 +332,125 @@ def test_disabled_account_cannot_publish_model_result(pilot_evidence):
         time.sleep(.01)
     assert item["status"] == "cancelled" and item["frames"] == []
     assert client.get("/api/interactions").status_code == 401
+
+
+def test_released_v2_backup_restores_as_v3_without_pairing_and_preserves_evidence(pilot_evidence, tmp_path):
+    from test_cloud_store_migration import database, make_v2
+    from services.api.store import Store
+    app, initial = pilot_evidence
+    client = client_for(app)
+    item = complete(client)
+    expected_frame = client.get(item["frames"][0]["url"]).content
+    app.state.interactions.close()
+    make_v2(app.state.store.path)
+    archive = tmp_path / "v2.asbackup"
+    create_backup(app.state.store.path, archive, BACKUP_PASSWORD)
+    target = tmp_path / "v2-restored"
+    report = restore_backup(archive, target, BACKUP_PASSWORD)
+    assert not report["cloud_sync_resumed"]
+    assert report["cloud_recovery"] == {"bindings_restored": 0, "blocked_obligations": 0}
+    restored = Store(target / "aislesignals.db", mode="pilot")
+    with restored.transaction() as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("SELECT count(*) FROM cloud_sync_bindings").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT enabled FROM account_security").fetchone()[0] == 0
+        saved = restored.get(conn, initial["user"], "interaction", item["id"])
+    from services.api.evidence_crypto import read_frame
+    assert read_frame(Path(str(restored.path) + ".interaction-evidence"), saved, 0, EvidenceCipher(restored.path), 350 * 1024) == expected_frame
+    with database(app.state.store.path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2  # source not migrated
+
+
+def test_v3_backup_restore_clears_cloud_ciphertext_without_private_sync_key(pilot_evidence, tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from services.api.cloud_observation import MappedObservation, source_event_id
+    from services.api.cloud_outbox import BindingRef, Outbox, OutboxError, Scope, Target
+    from services.api.evidence_backup import decrypt_archive
+    from services.api.store import Store
+    app, initial = pilot_evidence
+    client = client_for(app)
+    evidence = complete(client)
+    expected_frame = client.get(evidence["frames"][0]["url"]).content
+    stamp = datetime.now(timezone.utc)
+    key = bytes(range(32))  # memory-only synthetic key, deliberately not recoverable
+    box = Outbox(key)
+    store = app.state.store
+    with store.transaction() as conn:
+        installation = conn.execute("SELECT value FROM runtime_settings WHERE key='installation_id'").fetchone()[0]
+        scope = Scope(installation, initial["user"]["organisation_id"], initial["user"]["site_id"])
+        binding = box.create_binding(conn, scope, binding_id=str(uuid4()), expected_generation=0,
+                                     target=Target("https://synthetic.example.test", *(str(uuid4()) for _ in range(4))), now=stamp)
+        binding = box.set_paused(conn, scope, binding.ref, paused=False, now=stamp)
+        ids = []
+        for index in range(2):
+            entity_id = str(uuid4())
+            source_id = source_event_id(installation_id=installation, binding_id=binding.ref.id,
+                                       organisation_id=scope.organisation_id, site_id=scope.site_id,
+                                       entity_kind="interaction", entity_id=entity_id)
+            payload = {"source_event_id": source_id, "event_code": "POSSIBLE_CONCEALMENT",
+                       "source_label": "Camera 2 of 6 · 3x2 screen grid · local observation", "historical": True,
+                       "occurred_at": stamp.isoformat().replace("+00:00", "Z")}
+            ids.append(box.enqueue(conn, scope, binding.ref,
+                                   MappedObservation("interaction", entity_id, payload, stamp, stamp + timedelta(hours=24)), now=stamp))
+        old_claim = box.claim(conn, scope, binding.ref, now=stamp)
+        before_routing = [tuple(row) for row in conn.execute("SELECT id,source_event_id,observation_hash FROM cloud_sync_items ORDER BY id")]
+        conn.execute("INSERT INTO runtime_settings VALUES('synthetic-staff-note','Retain independently authored notes')")
+    # Even adjacent private files cannot enter the strict archive entry allowlist.
+    private_sync = tmp_path / "pilot.db.synthetic-sync-credential"
+    private_sync.write_bytes(b"SYNTHETIC-PRIVATE-SYNC-KEY-NOT-EVIDENCE")
+    app.state.interactions.close()
+    archive = tmp_path / "v3.asbackup"
+    create_backup(store.path, archive, BACKUP_PASSWORD)
+    plain = tmp_path / "synthetic-inspection.zip"
+    decrypt_archive(archive, plain, BACKUP_PASSWORD)
+    with zipfile.ZipFile(plain) as zipped:
+        assert not any("sync" in name or "credential" in name for name in zipped.namelist())
+        assert b"SYNTHETIC-PRIVATE-SYNC-KEY-NOT-EVIDENCE" not in zipped.read("database.sqlite")
+    target = tmp_path / "v3-restored"
+    report = restore_backup(archive, target, BACKUP_PASSWORD)
+    assert b"ASOUTBOX1\x00" not in (target / "aislesignals.db").read_bytes()
+    assert report["cloud_recovery"] == {"bindings_restored": 1, "blocked_obligations": 1}
+    assert report["requires_cloud_management_review"] and not report["cloud_sync_resumed"]
+    restored = Store(target / "aislesignals.db", mode="pilot")
+    later = datetime.now(timezone.utc)
+    with restored.transaction() as conn:
+        assert conn.execute("SELECT value FROM runtime_settings WHERE key='installation_id'").fetchone()[0] == installation
+        assert conn.execute("SELECT value FROM runtime_settings WHERE key='synthetic-staff-note'").fetchone()[0] == "Retain independently authored notes"
+        assert [tuple(row) for row in conn.execute("SELECT id,source_event_id,observation_hash FROM cloud_sync_items ORDER BY id")] == before_routing
+        assert conn.execute("SELECT count(*) FROM cloud_sync_capacity").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM cloud_sync_items WHERE payload IS NOT NULL OR payload_hash!='' OR lease_token IS NOT NULL").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM cloud_sync_items WHERE state IN ('PENDING','LEASED','RECEIVED')").fetchone()[0] == 0
+        assert conn.execute("SELECT state,generation FROM cloud_sync_bindings").fetchone()[:] == ("RESTORED", binding.ref.generation + 1)
+        ref = BindingRef(binding.ref.id, binding.ref.generation + 1)
+        assert box.claim(conn, scope, ref, now=later) is None
+        with pytest.raises(OutboxError, match="STALE_GENERATION"):
+            box.acknowledge(conn, scope, binding.ref, old_claim, receipt_id=str(uuid4()), now=later)
+        saved = restored.get(conn, initial["user"], "interaction", evidence["id"])
+    from services.api.evidence_crypto import read_frame
+    assert read_frame(Path(str(restored.path) + ".interaction-evidence"), saved, 0, EvidenceCipher(restored.path), 350 * 1024) == expected_frame
+    assert not (target / private_sync.name).exists()
+    assert private_sync.read_bytes() == b"SYNTHETIC-PRIVATE-SYNC-KEY-NOT-EVIDENCE"
+
+
+def test_restore_cloud_fence_failure_never_publishes_destination(pilot_evidence, tmp_path, monkeypatch):
+    import services.api.evidence_backup as backup
+    app, _ = pilot_evidence
+    complete(client_for(app))
+    app.state.interactions.close()
+    archive = tmp_path / "safe-fence.asbackup"
+    create_backup(app.state.store.path, archive, BACKUP_PASSWORD)
+    archive_before = archive.read_bytes()
+
+    def fail(conn, *, now):
+        assert conn.in_transaction
+        conn.execute("DELETE FROM sessions")
+        raise RuntimeError("synthetic recovery interruption")
+
+    monkeypatch.setattr(backup, "mark_restored", fail)
+    target = tmp_path / "not-published"
+    with pytest.raises(RuntimeError, match="synthetic recovery"):
+        restore_backup(archive, target, BACKUP_PASSWORD)
+    assert not target.exists()
+    assert not list(tmp_path.glob(".aisle-restore-*"))
+    assert archive.read_bytes() == archive_before

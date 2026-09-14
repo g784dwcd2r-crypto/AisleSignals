@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from services.api.cloud_observation import MappedObservation, source_event_id
-from services.api.cloud_outbox import BindingRef, Limits, Outbox, OutboxError, Scope, Target, install_schema
+from services.api.cloud_outbox import BindingRef, Limits, Outbox, OutboxError, Scope, Target, install_schema, mark_restored
 
 
 NOW = datetime(2026, 9, 14, 12, tzinfo=timezone.utc)
@@ -464,3 +464,100 @@ def test_missing_or_invalid_key_has_no_plaintext_fallback(key):
 def test_target_cannot_embed_credentials_or_path(origin):
     with pytest.raises(OutboxError, match="INVALID_TARGET"):
         Target(origin, *(str(uuid4()) for _ in range(4)))
+
+
+def test_keyless_restore_purges_payloads_fences_senders_and_retains_uncertain_obligation(local):
+    pending = local.call("enqueue", local.observation())
+    claim = local.call("claim")
+    untouched = local.call("enqueue", local.observation())
+    original = local.row(pending)
+    untouched_original = local.row(untouched)
+    with transaction(local.conn):
+        result = mark_restored(local.conn, now=NOW)
+    assert result == {"bindings_restored": 1, "blocked_obligations": 1}
+    saved = local.row(pending)
+    assert saved["state"] == "BLOCKED" and saved["operation"] == "WITHDRAWAL"
+    assert saved["error_code"] == "RESTORED_REQUIRES_MANAGEMENT"
+    assert saved["terminal_ms"] is None
+    for name in ("id", "source_event_id", "observation_hash", "binding_id", "entity_id", "attempts", "ever_attempted"):
+        assert saved[name] == original[name]
+    assert saved["receipt_id"] is None  # never invent a deletion receipt
+    assert local.row(untouched)["state"] == "CANCELLED"
+    assert local.row(untouched)["source_event_id"] == untouched_original["source_event_id"]
+    for row in (saved, local.row(untouched)):
+        assert row["payload"] is None and row["payload_hash"] == ""
+        assert all(row[name] is None for name in ("lease_token", "lease_until_ms", "claim_generation", "settled_token"))
+    assert local.conn.execute("SELECT count(*) FROM cloud_sync_capacity").fetchone()[0] == 0
+    with pytest.raises(OutboxError, match="STALE_GENERATION"):
+        local.call("acknowledge", claim, receipt_id=str(uuid4()))
+    with pytest.raises(OutboxError, match="STALE_GENERATION"):
+        local.call("retry", claim, delay_seconds=1)
+    ref = BindingRef(local.binding.ref.id, local.binding.ref.generation + 1)
+    assert local.call("claim", ref=ref) is None
+    with pytest.raises(OutboxError):
+        local.call("set_paused", paused=False, ref=ref)
+    assert local.call("prune_terminal", ref=ref, now=NOW + timedelta(days=32)) == 1
+    assert local.row(pending)["state"] == "BLOCKED"  # uncertain is not terminal cleanup
+
+
+def test_keyless_restore_preserves_existing_receipts_without_reviving_settled_claim(local):
+    identifier = local.call("enqueue", local.observation())
+    observation = local.call("claim")
+    observation_receipt = str(uuid4())
+    local.call("acknowledge", observation, receipt_id=observation_receipt)
+    local.call("withdraw", identifier, reason="LOCAL_DELETED")
+    withdrawal = local.call("claim")
+    withdrawal_receipt = str(uuid4())
+    local.call("acknowledge", withdrawal, receipt_id=withdrawal_receipt)
+    with transaction(local.conn):
+        assert mark_restored(local.conn, now=NOW)["blocked_obligations"] == 0
+    saved = local.row(identifier)
+    assert saved["state"] == "WITHDRAWN"
+    assert saved["receipt_id"] == withdrawal_receipt
+    assert saved["observation_receipt_id"] == observation_receipt
+    assert saved["settled_token"] is None
+    with pytest.raises(OutboxError, match="STALE_GENERATION"):
+        local.call("acknowledge", withdrawal, receipt_id=withdrawal_receipt)
+    before = tuple(local.conn.iterdump())
+    with transaction(local.conn):
+        mark_restored(local.conn, now=NOW + timedelta(seconds=1))
+    assert tuple(local.conn.iterdump()) == before  # a repeat cannot inflate generation or claims
+
+
+def test_received_observation_becomes_blocked_recovery_with_existing_receipt(local):
+    identifier = local.call("enqueue", local.observation())
+    claim = local.call("claim")
+    receipt = str(uuid4())
+    local.call("acknowledge", claim, receipt_id=receipt)
+    with transaction(local.conn):
+        mark_restored(local.conn, now=NOW)
+    saved = local.row(identifier)
+    assert saved["state"] == "BLOCKED"
+    assert saved["receipt_id"] == saved["observation_receipt_id"] == receipt
+    assert saved["operation"] == "WITHDRAWAL" and saved["payload"] is None
+
+
+def test_keyless_restore_requires_caller_transaction_and_rolls_back_every_fence(local):
+    identifier = local.call("enqueue", local.observation())
+    local.call("claim")
+    before = tuple(local.conn.iterdump())
+    with pytest.raises(OutboxError, match="TRANSACTION_REQUIRED"):
+        mark_restored(local.conn, now=NOW)
+    with pytest.raises(RuntimeError, match="synthetic"):
+        with transaction(local.conn):
+            mark_restored(local.conn, now=NOW)
+            local.conn.execute("INSERT INTO local_observations VALUES('synthetic-related')")
+            raise RuntimeError("synthetic interrupted restore")
+    assert tuple(local.conn.iterdump()) == before
+    assert local.row(identifier)["payload"] is not None
+
+
+def test_restore_generation_exhaustion_is_atomic_and_preserves_source_archive_state(local):
+    identifier = local.call("enqueue", local.observation())
+    local.conn.execute("UPDATE cloud_sync_bindings SET generation=2147483647")
+    before = tuple(local.conn.iterdump())
+    with transaction(local.conn):
+        with pytest.raises(OutboxError, match="GENERATION_EXHAUSTED"):
+            mark_restored(local.conn, now=NOW)
+    assert tuple(local.conn.iterdump()) == before
+    assert local.row(identifier)["payload"] is not None

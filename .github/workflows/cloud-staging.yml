@@ -11,6 +11,8 @@ on:
       - 'control-playwright.config.ts'
       - 'tests/control-e2e/**'
       - '.node-version'
+      - 'services/api/**'
+      - 'tests/api/test_cloud_*.py'
       - 'services/cloud/**'
       - 'tests/cloud/**'
       - 'deployment/render-staging.yaml'
@@ -24,6 +26,8 @@ on:
       - 'control-playwright.config.ts'
       - 'tests/control-e2e/**'
       - '.node-version'
+      - 'services/api/**'
+      - 'tests/api/test_cloud_*.py'
       - 'services/cloud/**'
       - 'tests/cloud/**'
       - 'deployment/render-staging.yaml'
@@ -49,6 +53,7 @@ jobs:
           python-version: '3.12.14'
           cache: pip
           cache-dependency-path: |
+            services/api/requirements.txt
             services/cloud/requirements.txt
             services/cloud/requirements-test.txt
       - uses: actions/setup-node@v4
@@ -58,7 +63,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             apps/control/package-lock.json
-      - run: python -m pip install -r services/cloud/requirements-test.txt
+      - run: python -m pip install -r services/api/requirements.txt -r services/cloud/requirements-test.txt
       - run: npm ci
       - run: npm ci --prefix apps/control
       - run: npm --prefix apps/control run build
@@ -70,7 +75,7 @@ jobs:
           test -x "$cloud_postgres_bin/initdb"
           test -x "$cloud_postgres_bin/pg_ctl"
           echo "$cloud_postgres_bin" >> "$GITHUB_PATH"
-      - run: python -m pytest tests/cloud -q
+      - run: python -m pytest tests/cloud tests/api/test_cloud_delivery.py tests/api/test_cloud_hooks.py tests/api/test_cloud_interaction_flow.py -q
         env:
           CLOUD_RUN_POSTGRES_TESTS: '1'
 

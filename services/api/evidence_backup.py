@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +17,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from .evidence_crypto import EvidenceCipher, EvidenceError, PilotDatabaseLock, key_path, private_open, read_frame
+from .cloud_outbox import mark_restored
+from .store import LOCAL_SCHEMA_VERSION, Store
 
 MAGIC = b"AISLEBACKUP1\x00"
 HEADER_SIZE = len(MAGIC) + 16 + 12
@@ -103,11 +106,15 @@ def connect(db):
 def verify_database(conn, root, cipher):
     if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
         raise EvidenceError("Recovery database failed its integrity check.")
-    if conn.execute("PRAGMA user_version").fetchone()[0] != 2:
+    if conn.execute("PRAGMA user_version").fetchone()[0] not in (2, LOCAL_SCHEMA_VERSION):
         raise EvidenceError("Unsupported recovery database schema.")
     mode = conn.execute("SELECT value FROM runtime_settings WHERE key='mode'").fetchone()
     if not mode or mode[0] != "pilot":
         raise EvidenceError("Recovery archives support protected pilot workspaces only.")
+    try:
+        Store.validate_provenance(conn, "pilot")
+    except (RuntimeError, sqlite3.DatabaseError):
+        raise EvidenceError("Recovery database provenance is invalid or unsupported.") from None
     if conn.execute("PRAGMA foreign_key_check").fetchone():
         raise EvidenceError("Recovery database contains broken account references.")
     sites = {(r["organisation_id"], r["site_id"]) for r in conn.execute("SELECT * FROM entities WHERE kind='site' AND id=site_id")}
@@ -246,6 +253,14 @@ def restore_backup(archive, target_dir, passphrase):
             actual = {path.relative_to(root).as_posix() for path in root.glob("*/*")}
             if actual != {name.removeprefix("evidence/") for name, _ in expected}:
                 raise EvidenceError("Recovery archive includes unreferenced sampled evidence.")
+            # Migrate only the authenticated, privately staged copy. The original
+            # archive is unchanged and no destination is published until every
+            # recovery fence below succeeds. Store never starts a worker/network.
+            conn.close()
+            Store(db, mode="pilot")
+            conn = connect(db)
+            conn.execute("BEGIN IMMEDIATE")
+            cloud_recovery = mark_restored(conn, now=datetime.now(timezone.utc))
             from .interactions import expired
             # Restored cookies and in-flight model jobs must not regain authority.
             conn.execute("DELETE FROM session_scopes")
@@ -266,6 +281,10 @@ def restore_backup(archive, target_dir, passphrase):
                     item.update(status="cancelled", frames=[], error="Restored job cancelled. Sign in and submit a fresh sample.")
                     conn.execute("UPDATE entities SET body=? WHERE id=?", (json.dumps(item), item["id"]))
             conn.commit()
+            # Rebuild the bounded staged database so freed cells/pages from
+            # this or earlier payload removals do not enter the published copy.
+            # This is not a secure-erase claim about the original backup/disk.
+            conn.execute("VACUUM")
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             conn.close()
@@ -280,4 +299,6 @@ def restore_backup(archive, target_dir, passphrase):
             raise
     return {"restored": True, "database_name": "aislesignals.db", "sessions_revoked": True,
             "accounts_disabled": True, "requires_account_access_review": True,
-            "monitoring_resumed": False, "requires_sign_in_and_camera_checks": True}
+            "monitoring_resumed": False, "requires_sign_in_and_camera_checks": True,
+            "cloud_sync_resumed": False, "cloud_recovery": cloud_recovery,
+            "requires_cloud_management_review": cloud_recovery["blocked_obligations"] > 0}

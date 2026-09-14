@@ -231,6 +231,42 @@ def install_schema(conn):
             conn.execute("INSERT INTO cloud_sync_schema VALUES(?)", (SCHEMA_VERSION,))
 
 
+def mark_restored(conn, *, now):
+    """Keyless, offline recovery fence inside the caller's transaction.
+
+    A recovery archive deliberately excludes the sync key and private device
+    credential. Erase unusable payloads and fence every old sender. Potentially
+    delivered sources remain explicit, blocked management obligations; this is
+    never a cloud deletion receipt. Immutable routing/hash identity is retained.
+    """
+    with _operation(conn):
+        stamp = _stamp(now)
+        if conn.execute("""SELECT 1 FROM cloud_sync_bindings
+                WHERE state!='RESTORED' AND generation>=2147483647 LIMIT 1""").fetchone():
+            raise OutboxError("GENERATION_EXHAUSTED")
+        conn.execute("""UPDATE cloud_sync_bindings SET generation=generation+1,
+            state='RESTORED',clock_ms=max(clock_ms,?) WHERE state!='RESTORED'""", (stamp,))
+        # A saved acknowledgement stays an acknowledgement. All other attempted
+        # deliveries are uncertain even if the snapshot says cancelled/expired.
+        conn.execute("""UPDATE cloud_sync_items SET operation='WITHDRAWAL',state='BLOCKED',
+            withdrawal_reason=coalesce(withdrawal_reason,'LOCAL_EXPORT_REMOVED'),
+            error_code='RESTORED_REQUIRES_MANAGEMENT',terminal_ms=NULL
+            WHERE NOT (state='WITHDRAWN' AND receipt_id IS NOT NULL)
+            AND (ever_attempted!=0 OR attempts>0 OR receipt_id IS NOT NULL
+                OR observation_receipt_id IS NOT NULL OR state IN ('LEASED','RECEIVED'))""")
+        conn.execute("""UPDATE cloud_sync_items SET state='CANCELLED',error_code='RESTORED',
+            terminal_ms=coalesce(terminal_ms,?)
+            WHERE error_code IS NOT 'RESTORED_REQUIRES_MANAGEMENT'
+            AND NOT (state='WITHDRAWN' AND receipt_id IS NOT NULL)""", (stamp,))
+        conn.execute("""UPDATE cloud_sync_items SET payload=NULL,payload_hash='',
+            lease_token=NULL,lease_until_ms=NULL,claim_generation=NULL,settled_token=NULL""")
+        conn.execute("DELETE FROM cloud_sync_capacity")
+        return {
+            "bindings_restored": conn.execute("SELECT count(*) FROM cloud_sync_bindings").fetchone()[0],
+            "blocked_obligations": conn.execute("SELECT count(*) FROM cloud_sync_items WHERE error_code='RESTORED_REQUIRES_MANAGEMENT'").fetchone()[0],
+        }
+
+
 class Outbox:
     def __init__(self, key: bytes, limits: Limits = Limits()):
         if type(key) is not bytes or len(key) != 32:

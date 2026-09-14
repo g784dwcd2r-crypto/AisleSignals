@@ -93,6 +93,20 @@ def main() -> None:
         command = [str(executable), "--no-browser", "--port", str(port), "--data-dir", str(Path(data_dir).resolve())]
         if args.mode == "pilot":
             command.append("--casework-only")
+            # This exact executable must spawn its packaged sender module and
+            # reap the child at the authorization gate. No credentials, request
+            # or API process exists yet; this catches a missing freeze_support
+            # dispatch or a missing frozen sender dependency on both CI hosts.
+            sender = subprocess.run([str(executable), "--sender-spawn-smoke"],
+                                    cwd=Path(data_dir).resolve(), env=env,
+                                    capture_output=True, timeout=20)
+            assert sender.returncode == 0, "Packaged sender spawn/exit check failed"
+            assert len(sender.stdout) <= 1024 and not sender.stderr, "Unexpected sender smoke output"
+            assert json.loads(sender.stdout) == {
+                "check": "frozen-sender-spawn-v1", "ready": True,
+                "request_sent": False, "child_reaped": True,
+            }, "Packaged sender did not confirm its real READY and bounded child exit"
+            assert not list(Path(data_dir).iterdir()), "Sender smoke unexpectedly created local state"
             for subcommand in ("accounts", "model-setup", "backup", "rollout"):
                 check = subprocess.run([str(executable), subcommand, "--help"],
                                        capture_output=True, timeout=30)
@@ -198,7 +212,7 @@ def main() -> None:
                         time.sleep(0.1)
                     assert result["status"] == "failed" and "result" not in result
                     request("/api/logout", method="POST", body={}, csrf=session["csrf_token"], site=session["current_site_id"])
-                    print("PASS packaged pilot: startup, assets, account tools, private owner setup, administration, no demo identity, named login, supervised runtime fence, JPEG job and disabled provider; no physical camera/model acceptance")
+                    print("PASS packaged pilot: frozen sender spawn/READY/exit without a request, startup, assets, account tools, private owner setup, administration, no demo identity, named login, supervised runtime fence, JPEG job and disabled provider; no physical camera/model acceptance")
                     return
                 session = request("/api/login", method="POST", body={"email": "manager@harbour.demo", "password": "AisleDemo!2026"})
                 assert session["csrf_token"] and session["user"]["role"] == "MANAGER"

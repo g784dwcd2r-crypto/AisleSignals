@@ -175,4 +175,5 @@ export type Page =
   | "video-test"
   | "activity"
   | "administration"
+  | "cloud-connection"
   | "settings";

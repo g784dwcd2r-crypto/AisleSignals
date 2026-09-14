@@ -22,6 +22,7 @@ import {
   CheckCheck,
   ChevronRight,
   CircleHelp,
+  Cloud,
   ClipboardList,
   FileText,
   Film,
@@ -77,6 +78,7 @@ import VideoTest from "./VideoTest";
 import LiveDetection from "./LiveDetection";
 import PharmacyAdmin from "./PharmacyAdmin";
 import PharmacySetup from "./PharmacySetup";
+import CloudConnection from "./CloudConnection";
 
 type ActionOptions = {
   method?: string;
@@ -100,6 +102,7 @@ const navItems: { id: Page; name: string; icon: typeof Activity }[] = [
   { id: "activity", name: "Activity log", icon: Activity },
   { id: "settings", name: "Branch settings", icon: Settings2 },
   { id: "administration", name: "Administration", icon: ShieldCheck },
+  { id: "cloud-connection", name: "Cloud connection", icon: Cloud },
 ];
 
 function Mark() {
@@ -836,7 +839,9 @@ export default function App() {
           <nav aria-label="Main navigation">
             {navItems
               .filter(
-                (item) => item.id !== "administration" || (pilot && manager),
+                (item) =>
+                  !["administration", "cloud-connection"].includes(item.id) ||
+                  (pilot && manager),
               )
               .map(({ id, name, icon: Icon }) => (
                 <button
@@ -1052,6 +1057,8 @@ export default function App() {
                           : "Your branch, subscription terms and prototype boundaries.",
                         administration:
                           "Manage individual accounts and branch access on this installation.",
+                        "cloud-connection":
+                          "Review this branch’s online connection and control metadata sharing.",
                       }[page]
                     }
                   </p>
@@ -1172,6 +1179,14 @@ export default function App() {
                 )}
                 {page === "activity" && <ActivityPage data={data} />}
                 {page === "settings" && <Settings data={data} />}
+                {page === "cloud-connection" && pilot && manager && (
+                  <CloudConnection
+                    key={`${user.id}:${data.site.id}`}
+                    branchId={data.site.id}
+                    branchName={data.site.name}
+                    disabled={disabled}
+                  />
+                )}
                 {page === "administration" && pilot && manager && session && (
                   <PharmacyAdmin
                     key={`${user.id}:${data.site.id}`}
