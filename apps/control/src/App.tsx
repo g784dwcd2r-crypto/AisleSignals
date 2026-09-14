@@ -4,6 +4,7 @@ import {
   Building2,
   ChevronDown,
   ClipboardCheck,
+  Download,
   LayoutDashboard,
   Laptop,
   LogOut,
@@ -18,6 +19,7 @@ import {
 import Auth from "./Auth";
 import { Pharmacies, Users } from "./Admin";
 import { Alerts, Incidents, Laptops, Overview } from "./Operations";
+import Downloads from "./Downloads";
 import { ApiError, client, errorMessage, isCancelled } from "./api";
 import { Button, ErrorNotice, Loading, label, useResource } from "./ui";
 import type { Collection, Page, Pharmacy, Session } from "./types";
@@ -27,6 +29,7 @@ const navigation = [
   { page: "overview", text: "Overview", icon: LayoutDashboard },
   { page: "pharmacies", text: "Pharmacies", icon: Building2 },
   { page: "laptops", text: "Laptops", icon: Laptop },
+  { page: "downloads", text: "Downloads", icon: Download },
   { page: "alerts", text: "Alerts", icon: Bell },
   { page: "incidents", text: "Incidents", icon: ClipboardCheck },
   { page: "users", text: "Team & access", icon: UsersIcon },
@@ -277,6 +280,9 @@ function Console({
             {page === "overview" && <Overview {...props} navigate={navigate} />}
             {page === "pharmacies" && <Pharmacies {...props} />}
             {page === "laptops" && <Laptops {...props} />}
+            {page === "downloads" && (
+              <Downloads session={session} navigate={navigate} />
+            )}
             {page === "alerts" && <Alerts {...props} />}
             {page === "incidents" && <Incidents {...props} />}
             {page === "users" && session.user.role === "OWNER" && (

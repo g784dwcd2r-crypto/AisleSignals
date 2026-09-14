@@ -109,4 +109,10 @@ export type Dashboard = {
 export type Collection<T> = { items: T[] };
 export type OneTimeToken = { token: string; expires_at: string };
 export type Page =
-  "overview" | "pharmacies" | "laptops" | "alerts" | "incidents" | "users";
+  | "overview"
+  | "pharmacies"
+  | "laptops"
+  | "downloads"
+  | "alerts"
+  | "incidents"
+  | "users";

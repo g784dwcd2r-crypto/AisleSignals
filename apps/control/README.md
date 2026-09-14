@@ -18,7 +18,8 @@ The cloud application serves `apps/control/dist/index.html` at `/` and its gener
 
 - A deployment administrator supplies the private first-owner setup token. The owner creates a password and verifies an authenticator before a session is issued.
 - Owners create pharmacy records and private invitations. Invitations are shown once for manual sharing; the interface does not send email. Invitees create their own password and authenticator. Roles and pharmacy assignments are enforced by the API.
-- Owners/managers generate a short-lived laptop connection code. The downloadable Python3 source companion currently supports macOS/Linux; Windows pairing through that helper is unavailable pending verified native credential handling. The screen explains this limitation before issuing a code, the matching name/platform and the private code prompt. Windows browser access and the separate Windows local pilot are unaffected.
+- The Downloads tab provides the current Python 3 connection utility for macOS and Windows, platform-specific requirements and a direct route into secure pairing. It labels signed one-click desktop installers as pending until release approval.
+- Owners/managers generate a short-lived laptop connection code from Laptops. The screen shows the matching name/platform, private code prompt and exact platform command. Downloading the utility alone does not connect a laptop, select CCTV or activate monitoring.
 - Staff acknowledge observations, record factual review outcomes and optionally create an incident. Cases can be updated or closed. Changed versions require a refresh; no review overwrites a competing decision.
 - Lists show the newest200 available server records. Searches and the applicable status/role filters narrow those records. The pharmacy scope applies only to pharmacies the server permits.
 
