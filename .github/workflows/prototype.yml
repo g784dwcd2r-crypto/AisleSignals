@@ -121,6 +121,43 @@ jobs:
       - name: Build and verify macOS pilot DMG
         if: runner.os == 'macOS'
         run: python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke
+      - name: Build unsigned Windows pilot installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $compiler) { $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' }
+          if (-not (Test-Path $compiler)) { throw 'The pinned GitHub Windows image does not provide Inno Setup 6.' }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $source = (Resolve-Path dist/AisleSignalsPilot).Path
+          $output = (Resolve-Path dist).Path
+          & $compiler "/DMyAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" packaging/windows/AisleSignalsPilot.iss
+          $setup = Get-Item dist/AisleSignalsPilot-Windows-*-unsigned-pilot-setup.exe
+          $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+          "$hash  $($setup.Name)" | Set-Content -Encoding ascii "$($setup.FullName).sha256"
+      - name: Smoke-check unsigned Windows pilot install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-Item dist/AisleSignalsPilot-Windows-*-unsigned-pilot-setup.exe
+          if ((Get-AuthenticodeSignature $setup).Status -ne 'NotSigned') { throw 'Pilot installer signing state was not the expected unsigned state.' }
+          $install = Join-Path $env:RUNNER_TEMP 'AisleSignals Pilot install smoke'
+          $process = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=`"$install`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Unsigned pilot install failed with exit code $($process.ExitCode)." }
+          & "$install\AisleSignalsPilot.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed pilot executable smoke failed.' }
+          & "$install\AisleSignalsPilot.exe" startup enable
+          if ($LASTEXITCODE -ne 0) { throw 'Installed pilot could not enable per-user startup.' }
+          try {
+            $startup = & "$install\AisleSignalsPilot.exe" startup status
+            if ($LASTEXITCODE -ne 0 -or $startup.Trim() -ne 'enabled') { throw 'Installed pilot startup status is inconsistent.' }
+          } finally {
+            & "$install\AisleSignalsPilot.exe" startup disable
+            if ($LASTEXITCODE -ne 0) { throw 'Installed pilot could not remove its per-user startup entry.' }
+          }
+          $uninstall = Get-Item "$install\unins*.exe"
+          $process = Start-Process $uninstall.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Unsigned pilot uninstall failed with exit code $($process.ExitCode)." }
       - uses: actions/upload-artifact@v4
         with:
           name: AisleSignalsPrototype-${{ runner.os }}-${{ runner.arch }}-unsigned
@@ -136,6 +173,8 @@ jobs:
             dist/AisleSignalsPilot-*.zip
             dist/AisleSignalsPilot-*.tar.gz
             dist/AisleSignalsPilot-*.dmg
+            dist/AisleSignalsPilot-*-unsigned-pilot-setup.exe
+            dist/AisleSignalsPilot-*-unsigned-pilot-setup.exe.sha256
             dist/AisleSignalsPilot-*.sha256
           if-no-files-found: error
           retention-days: 14

@@ -104,7 +104,7 @@ def build_app(source: Path, destination: Path, version: str, *, sdk: Path | None
     subprocess.run(
         [
             "xcrun", "clang", "-isysroot", str(select_sdk(sdk)), "-fobjc-arc", str(desktop_source), "-o", str(launcher),
-            "-framework", "Cocoa", "-framework", "WebKit",
+            "-framework", "Cocoa", "-framework", "ServiceManagement", "-framework", "WebKit",
         ],
         check=True,
     )

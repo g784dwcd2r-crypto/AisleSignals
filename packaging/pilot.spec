@@ -10,7 +10,7 @@ a = Analysis(
     binaries=[],
     datas=[(str(repo / "apps/web/dist"), "apps/web/dist"),
            (str(repo / "scripts/local-vision.py"), "scripts")],
-    hiddenimports=["scripts.pilot_preflight", "scripts.desktop_owner", "tarfile", "PIL.JpegImagePlugin", "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl", "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on"],
+    hiddenimports=["scripts.pilot_preflight", "scripts.desktop_owner", "scripts.desktop_startup", "scripts.desktop_update", "tarfile", "PIL.JpegImagePlugin", "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl", "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on"],
     hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[], noarchive=False,
 )
 pyz = PYZ(a.pure)

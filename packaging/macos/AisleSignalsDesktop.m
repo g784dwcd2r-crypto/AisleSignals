@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <ServiceManagement/ServiceManagement.h>
 #import <WebKit/WebKit.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
@@ -19,6 +20,7 @@ static NSString *ASCloudURL(void) {
 @property(nonatomic, strong) NSSegmentedControl *modeControl;
 @property(nonatomic, strong) NSTask *backend;
 @property(nonatomic, strong) NSFileHandle *logHandle;
+@property(nonatomic, strong) NSMenuItem *startAtLoginItem;
 @property(nonatomic) NSInteger loadAttempts;
 @property(nonatomic) BOOL applicationLoaded;
 @property(nonatomic) BOOL terminating;
@@ -29,6 +31,7 @@ static NSString *ASCloudURL(void) {
 @implementation ASAppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    [self configureApplicationMenu];
     self.localPort = [self selectLocalPort];
     self.localURL = [NSString stringWithFormat:@"http://127.0.0.1:%ld/#live-detection", (long)self.localPort];
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
@@ -77,6 +80,50 @@ static NSString *ASCloudURL(void) {
     [self.webView loadHTMLString:starting baseURL:nil];
     [self startBackend];
     [self performSelector:@selector(loadCloudWorkspace) withObject:nil afterDelay:0.2];
+}
+
+- (void)configureApplicationMenu {
+    NSMenu *main = [[NSMenu alloc] initWithTitle:@""];
+    NSMenuItem *applicationItem = [[NSMenuItem alloc] initWithTitle:@"AisleSignals Pilot" action:nil keyEquivalent:@""];
+    NSMenu *applicationMenu = [[NSMenu alloc] initWithTitle:@"AisleSignals Pilot"];
+    self.startAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Start at Login"
+                                                      action:@selector(toggleStartAtLogin:)
+                                               keyEquivalent:@""];
+    self.startAtLoginItem.target = self;
+    [applicationMenu addItem:self.startAtLoginItem];
+    [applicationMenu addItem:NSMenuItem.separatorItem];
+    [applicationMenu addItemWithTitle:@"Quit AisleSignals" action:@selector(terminate:) keyEquivalent:@"q"];
+    applicationItem.submenu = applicationMenu;
+    [main addItem:applicationItem];
+    NSApp.mainMenu = main;
+    [self refreshStartAtLoginState];
+}
+
+- (void)refreshStartAtLoginState {
+    SMAppServiceStatus status = SMAppService.mainAppService.status;
+    self.startAtLoginItem.state = status == SMAppServiceStatusEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.startAtLoginItem.toolTip = status == SMAppServiceStatusRequiresApproval
+        ? @"macOS requires approval in System Settings > General > Login Items." : nil;
+}
+
+- (void)toggleStartAtLogin:(id)sender {
+    SMAppService *service = SMAppService.mainAppService;
+    NSError *error = nil;
+    BOOL succeeded = service.status == SMAppServiceStatusEnabled
+        ? [service unregisterAndReturnError:&error]
+        : [service registerAndReturnError:&error];
+    [self refreshStartAtLoginState];
+    if (succeeded && service.status != SMAppServiceStatusRequiresApproval) return;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleWarning;
+    alert.messageText = service.status == SMAppServiceStatusRequiresApproval
+        ? @"Approve AisleSignals in Login Items"
+        : @"Start at Login could not be changed";
+    alert.informativeText = service.status == SMAppServiceStatusRequiresApproval
+        ? @"Open System Settings > General > Login Items and allow AisleSignals. This setting starts the app; monitoring still requires staff to select the CCTV source and arm detection."
+        : (error.localizedDescription ?: @"The setting was left unchanged.");
+    [alert addButtonWithTitle:@"OK"];
+    [alert runModal];
 }
 
 - (void)modeChanged:(NSSegmentedControl *)sender {
