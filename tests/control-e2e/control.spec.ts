@@ -142,6 +142,13 @@ async function bootstrap(page: Page, installation: Installation) {
     .click();
   const challenge = await (await response).json();
   expect(challenge.totp_secret).toBeTruthy();
+  expect(challenge.totp_uri).toMatch(
+    /^otpauth:\/\/totp\/AisleSignals(?:%3A|:)/,
+  );
+  await expect(
+    page.getByRole("img", { name: "Authenticator setup QR code" }),
+  ).toBeVisible();
+  await expect(page.getByText("Scan with your authenticator app")).toBeVisible();
   expect(
     (
       await page.request.get(installation.url + "/control-api/session")
@@ -163,6 +170,9 @@ async function bootstrap(page: Page, installation: Installation) {
     ).status(),
   ).toBe(401);
   await verify(page, challenge.totp_secret);
+  await expect(
+    page.getByRole("img", { name: "Authenticator setup QR code" }),
+  ).toHaveCount(0);
   return challenge.totp_secret as string;
 }
 async function navigate(page: Page, name: string) {
@@ -332,6 +342,9 @@ test("real first-owner setup, MFA login and scoped invitation remain secret-free
     .getByRole("button", { name: "Set up authenticator", exact: true })
     .click();
   const challenge = await (await pending).json();
+  await expect(
+    invite.getByRole("img", { name: "Authenticator setup QR code" }),
+  ).toBeVisible();
   await verify(invite, challenge.totp_secret);
   await navigate(invite, "Pharmacies");
   await expect(invite.locator("main")).toContainText(north.name);
@@ -362,6 +375,9 @@ test("real first-owner setup, MFA login and scoped invitation remain secret-free
       await page.request.get(installation.url + "/control-api/session")
     ).status(),
   ).toBe(401);
+  await expect(
+    page.getByRole("img", { name: "Authenticator setup QR code" }),
+  ).toHaveCount(0);
   await verify(page, secret, 1);
   const state = await page.evaluate(() => ({
     local: Object.keys(localStorage),

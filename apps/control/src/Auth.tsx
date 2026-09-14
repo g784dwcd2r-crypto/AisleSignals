@@ -10,6 +10,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import { ApiError, client, isCancelled } from "./api";
+import AuthenticatorQrCode from "./AuthenticatorQrCode";
 import { Button, CopyValue, ErrorNotice, Field, Loading } from "./ui";
 import type { Challenge, Session } from "./types";
 
@@ -80,8 +81,18 @@ export default function Auth({
   useEffect(() => () => request.current?.abort(), []);
   useEffect(() => {
     if (!expiry) return;
-    const tick = () =>
-      setRemaining(Math.max(0, Math.ceil((expiry - Date.now()) / 1000)));
+    const tick = () => {
+      const seconds = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+      setRemaining(seconds);
+      if (seconds === 0) {
+        setChallenge(null);
+        setCode("");
+        setExpiry(0);
+        setError(
+          new Error("The security challenge expired. Please start again."),
+        );
+      }
+    };
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => clearInterval(timer);
@@ -98,6 +109,7 @@ export default function Auth({
     setError(null);
     setBusy(false);
     setExpiry(0);
+    setRemaining(0);
   }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -122,6 +134,8 @@ export default function Auth({
         if (!abort.signal.aborted) {
           setChallenge(null);
           setCode("");
+          setExpiry(0);
+          setRemaining(0);
           authenticated(session);
         }
       } else {
@@ -289,6 +303,9 @@ export default function Auth({
                   <div className="verification-icon">
                     <Smartphone size={26} />
                   </div>
+                  {challenge.totp_uri && (
+                    <AuthenticatorQrCode uri={challenge.totp_uri} />
+                  )}
                   {challenge.totp_secret && (
                     <CopyValue
                       value={challenge.totp_secret}
