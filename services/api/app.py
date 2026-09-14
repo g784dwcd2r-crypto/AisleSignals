@@ -830,6 +830,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
         ctx.audit("BRANCH_LEFT", "site", ctx.user["site_id"], "Session rotated before changing active branch.")
         user = {**ctx.user, "site_id": selected["id"], "role": selected["role"]}
         ctx.store.audit(ctx.conn, user, "BRANCH_SELECTED", "site", user["site_id"], "Authorised branch selected; previous capture session revoked.")
+        # The browser starts the new branch heartbeat as soon as this response
+        # arrives. Commit the rotated session before exposing its cookie; yield
+        # dependency cleanup may otherwise finish after a fast client request.
+        ctx.conn.commit()
         response = JSONResponse(session_payload(ctx.store, ctx.conn, user, csrf))
         response.set_cookie(COOKIE, token, max_age=max(1, int(current["created_at"] + 8 * 3600 - time.time())), httponly=True, samesite="strict", secure=False, path="/")
         return response
