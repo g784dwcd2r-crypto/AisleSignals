@@ -119,7 +119,8 @@ def test_server_identity_cannot_change_device_or_smuggle_extra_fields(change):
     assert TOKEN not in str(error.value)
 
 
-@pytest.mark.parametrize("raw", [b'[]', b'{"x":1,"x":2}', b'{"x":NaN}', b'\xff', b'x' * 65537, b'{' * 2048])
+@pytest.mark.parametrize("raw", [b'[]', b'{"x":1,"x":2}', b'{"x":NaN}', b'\xff', b'x' * 65537, b'{' * 2048],
+                         ids=["array", "duplicate-keys", "nonfinite", "invalid-utf8", "oversized-body", "malformed-json"])
 def test_malformed_or_oversized_success_is_not_accepted(raw):
     with endpoint(raw) as (origin, _):
         with pytest.raises(transport.CloudTransportError, match="^INVALID_RESPONSE$"):
