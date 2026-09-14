@@ -1,4 +1,5 @@
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
@@ -19,9 +20,54 @@ from services.cloud.evidence_cleanup import EvidenceCleanup
 from services.cloud.evidence_store import EvidenceStoreError, FilesystemEvidenceBlobStore, MemoryEvidenceBlobStore
 
 
+class LockCheckingStore(MemoryEvidenceBlobStore):
+    """A blob call fails if the corresponding PostgreSQL row is still locked."""
+
+    def __init__(self, database_url):
+        super().__init__()
+        self.database_url = database_url
+        self.on_put = None
+        self.on_get = None
+        self.fail_operation = None
+        self.lock_checks = 0
+
+    def _unlocked(self, key):
+        identifier = key.split("/")[-1].removesuffix(".bin")
+        with psycopg.connect(self.database_url, options="-c lock_timeout=100") as conn:
+            assert conn.execute("SELECT id FROM aislesignals_control.evidence_objects WHERE id=%s FOR UPDATE",
+                                (identifier,)).fetchone() is not None
+        self.lock_checks += 1
+
+    def put_if_absent(self, key, value):
+        self._unlocked(key)
+        if self.fail_operation == "put":
+            raise EvidenceStoreError("synthetic store failure")
+        result = super().put_if_absent(key, value)
+        if self.on_put:
+            self.on_put(key)
+        return result
+
+    def get(self, key):
+        self._unlocked(key)
+        if self.fail_operation == "get":
+            raise EvidenceStoreError("synthetic store failure")
+        result = super().get(key)
+        if self.on_get:
+            callback, self.on_get = self.on_get, None
+            callback(key)
+        return result
+
+    def delete(self, key):
+        self._unlocked(key)
+        if self.fail_operation == "delete":
+            raise EvidenceStoreError("synthetic store failure")
+        return super().delete(key)
+
+
 def evidence_settings(settings, path):
     return replace(settings, evidence_mode="ENCRYPTED", evidence_policy="SHORT_LIVED_V1",
-                   evidence_kek=b"k" * 32, evidence_kek_version="synthetic-v1", evidence_store_path=Path(path))
+                   evidence_kek=b"k" * 32, evidence_kek_version="synthetic-v1",
+                   evidence_store_backend="FILESYSTEM", evidence_store_path=Path(path))
 
 
 def observation():
@@ -67,13 +113,37 @@ def test_evidence_configuration_defaults_off_and_fails_closed(tmp_path):
     assert CloudSettings.from_env({"CLOUD_ENV": "development"}).evidence_mode == "METADATA_ONLY"
     base = {"CLOUD_ENV": "development", "CLOUD_EVIDENCE_MODE": "ENCRYPTED",
             "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(),
-            "CLOUD_EVIDENCE_KEK_VERSION": "v1", "CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)}
+            "CLOUD_EVIDENCE_KEK_VERSION": "v1", "CLOUD_EVIDENCE_STORE_BACKEND": "FILESYSTEM",
+            "CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)}
     assert CloudSettings.from_env(base).evidence_mode == "ENCRYPTED"
-    for key in ("CLOUD_EVIDENCE_POLICY", "CLOUD_EVIDENCE_KEK", "CLOUD_EVIDENCE_KEK_VERSION", "CLOUD_EVIDENCE_STORE_PATH"):
+    for key in ("CLOUD_EVIDENCE_POLICY", "CLOUD_EVIDENCE_KEK", "CLOUD_EVIDENCE_KEK_VERSION",
+                "CLOUD_EVIDENCE_STORE_BACKEND", "CLOUD_EVIDENCE_STORE_PATH"):
         with pytest.raises(ConfigurationError):
             CloudSettings.from_env({name: value for name, value in base.items() if name != key})
     with pytest.raises(ConfigurationError):
         CloudSettings.from_env({"CLOUD_ENV": "development", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode()})
+
+
+def test_r2_configuration_is_explicit_eu_scoped_and_render_rejects_filesystem(tmp_path):
+    shared = {"CLOUD_ENV": "staging", "CLOUD_ALLOWED_HOSTS": "control.example.test",
+              "CLOUD_EVIDENCE_MODE": "ENCRYPTED", "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1",
+              "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(), "CLOUD_EVIDENCE_KEK_VERSION": "v1",
+              "CLOUD_EVIDENCE_STORE_BACKEND": "R2", "CLOUD_R2_ACCOUNT_ID": "a" * 32,
+              "CLOUD_R2_JURISDICTION": "eu", "CLOUD_R2_BUCKET": "aislesignals-evidence-staging",
+              "CLOUD_R2_ACCESS_KEY_ID": "A" * 32, "CLOUD_R2_SECRET_ACCESS_KEY": "s" * 64}
+    settings = CloudSettings.from_env(shared)
+    assert settings.evidence_store_backend == "R2" and settings.r2_jurisdiction == "eu"
+    assert "s" * 64 not in repr(settings) and "A" * 32 not in repr(settings)
+    for change in ({"CLOUD_R2_JURISDICTION": "us"}, {"CLOUD_R2_ACCOUNT_ID": "not-an-account"},
+                   {"CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)}, {"CLOUD_R2_BUCKET": "PUBLIC_Bucket"}):
+        with pytest.raises(ConfigurationError):
+            CloudSettings.from_env({**shared, **change})
+    with pytest.raises(ConfigurationError):
+        CloudSettings.from_env({"CLOUD_ENV": "staging", "RENDER": "true",
+            "RENDER_EXTERNAL_HOSTNAME": "control.example.test", "CLOUD_EVIDENCE_MODE": "ENCRYPTED",
+            "CLOUD_EVIDENCE_POLICY": "SHORT_LIVED_V1", "CLOUD_EVIDENCE_KEK": Fernet.generate_key().decode(),
+            "CLOUD_EVIDENCE_KEK_VERSION": "v1", "CLOUD_EVIDENCE_STORE_BACKEND": "FILESYSTEM",
+            "CLOUD_EVIDENCE_STORE_PATH": str(tmp_path)})
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +158,7 @@ def cluster():
 def workspace(cluster, tmp_path):
     reset_database(cluster)
     settings = evidence_settings(cluster, tmp_path)
-    store = MemoryEvidenceBlobStore()
+    store = LockCheckingStore(settings.database_url)
     owner = TestClient(
         create_app(settings, maintenance_factory=NonRecurringMaintenance, evidence_store=store),
         base_url="https://testserver", headers={"Origin": "https://testserver"})
@@ -134,6 +204,7 @@ def test_full_manifest_upload_alert_download_retry_conflict_and_audit(workspace)
         assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action IN ('EVIDENCE_MANIFEST_RECEIVED','EVIDENCE_UPLOADED','EVIDENCE_VIEWED')").fetchone()[0] == 3
         assert conn.execute("SELECT pg_column_size(e.*) FROM aislesignals_control.evidence_objects e").fetchone()[0] < 4096
     assert len(store._objects) == 1
+    assert store.lock_checks >= 3
 
 
 def test_alert_evidence_aggregate_states_and_nested_route_binding(workspace):
@@ -200,6 +271,98 @@ def test_scheduled_cleanup_expires_metadata_deletes_blob_and_audits(workspace):
     assert store._objects == {}
     view = owner.get("/control-api/alerts/" + alert["id"]).json()
     assert view["evidence_state"] == "EXPIRED" and view["evidence"] == []
+
+
+def test_upload_revalidates_withdrawal_after_unlocked_blob_write(workspace):
+    settings, owner, store, north, _ = workspace
+    laptop, source, content = device(owner, north), observation(), b"race"
+    ingest(owner, laptop, source)
+    path = f"/device-api/sync/v1/observations/{source['source_event_id']}/evidence"
+    evidence = owner.post(path, headers=bearer(laptop), json=manifest(content)).json()
+
+    def withdraw(key):
+        with psycopg.connect(settings.database_url) as conn:
+            conn.execute("UPDATE aislesignals_control.evidence_objects SET state='REVOKED',revoked_at=clock_timestamp() WHERE id=%s",
+                         (evidence["evidence_id"],))
+
+    store.on_put = withdraw
+    response = owner.put("/device-api/sync/v1/evidence/" + evidence["evidence_id"],
+                         headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "EVIDENCE_UNAVAILABLE"
+    assert store._objects == {}
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT state FROM aislesignals_control.evidence_objects WHERE id=%s",
+                            (evidence["evidence_id"],)).fetchone()[0] == "REVOKED"
+        assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_UPLOADED'").fetchone()[0] == 0
+
+
+def test_download_reauthorizes_after_unlocked_blob_read(workspace):
+    settings, owner, store, north, _ = workspace
+    laptop, source, content = device(owner, north), observation(), b"review-race"
+    alert = ingest(owner, laptop, source)
+    path = f"/device-api/sync/v1/observations/{source['source_event_id']}/evidence"
+    evidence = owner.post(path, headers=bearer(laptop), json=manifest(content)).json()
+    owner.put("/device-api/sync/v1/evidence/" + evidence["evidence_id"],
+              headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content)
+
+    def expire(key):
+        with psycopg.connect(settings.database_url) as conn:
+            conn.execute("UPDATE aislesignals_control.evidence_objects SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=%s",
+                         (evidence["evidence_id"],))
+
+    store.on_get = expire
+    response = owner.get(f"/control-api/alerts/{alert['id']}/evidence/{evidence['evidence_id']}")
+    assert response.status_code == 404
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_VIEWED'").fetchone()[0] == 0
+
+
+def test_concurrent_exact_uploads_publish_once(workspace):
+    settings, owner, _, north, _ = workspace
+    laptop, source, content = device(owner, north), observation(), b"concurrent"
+    ingest(owner, laptop, source)
+    evidence = owner.post(f"/device-api/sync/v1/observations/{source['source_event_id']}/evidence",
+                          headers=bearer(laptop), json=manifest(content)).json()
+    target = "/device-api/sync/v1/evidence/" + evidence["evidence_id"]
+    send = lambda: owner.put(target, headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        responses = list(workers.map(lambda _: send(), range(2)))
+    assert [response.status_code for response in responses] == [200, 200]
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_UPLOADED'").fetchone()[0] == 1
+
+
+def test_blob_failures_do_not_publish_view_or_delete_metadata(workspace):
+    settings, owner, store, north, _ = workspace
+    laptop, source, content = device(owner, north), observation(), b"provider-failure"
+    alert = ingest(owner, laptop, source)
+    evidence = owner.post(f"/device-api/sync/v1/observations/{source['source_event_id']}/evidence",
+                          headers=bearer(laptop), json=manifest(content)).json()
+    upload_path = "/device-api/sync/v1/evidence/" + evidence["evidence_id"]
+    store.fail_operation = "put"
+    assert owner.put(upload_path, headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content).status_code == 503
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT state FROM aislesignals_control.evidence_objects WHERE id=%s",
+                            (evidence["evidence_id"],)).fetchone()[0] == "PENDING"
+
+    store.fail_operation = None
+    assert owner.put(upload_path, headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=content).status_code == 200
+    store.fail_operation = "get"
+    assert owner.get(f"/control-api/alerts/{alert['id']}/evidence/{evidence['evidence_id']}").status_code == 503
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_VIEWED' AND subject_id=%s",
+                            (evidence["evidence_id"],)).fetchone()[0] == 0
+        conn.execute("UPDATE aislesignals_control.evidence_objects SET expires_at=clock_timestamp()-INTERVAL '1 second' WHERE id=%s",
+                     (evidence["evidence_id"],))
+
+    store.fail_operation = "delete"
+    result = EvidenceCleanup(owner.app.state.control_store, owner.app.state.evidence_service).run_once()
+    assert (result.status, result.revoked, result.deleted) == ("COMPLETED", 1, 0)
+    with psycopg.connect(settings.database_url) as conn:
+        assert conn.execute("SELECT state FROM aislesignals_control.evidence_objects WHERE id=%s",
+                            (evidence["evidence_id"],)).fetchone()[0] == "REVOKED"
+        assert conn.execute("SELECT count(*) FROM aislesignals_control.audit_entries WHERE action='EVIDENCE_BLOB_DELETED' AND subject_id=%s",
+                            (evidence["evidence_id"],)).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("changes", [

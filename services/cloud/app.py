@@ -105,6 +105,8 @@ def create_app(settings: CloudSettings | None = None, probe: ReadinessProbe | No
         application.state.source_maintenance = worker
         application.state.evidence_cleanup = evidence_worker
         try:
+            if evidence.probe() is not True:
+                raise RuntimeError('EVIDENCE_STORAGE_UNAVAILABLE')
             if worker.start() is not True or evidence_worker.start() is not True:
                 raise RuntimeError('SOURCE_MAINTENANCE_START_FAILED')
             yield

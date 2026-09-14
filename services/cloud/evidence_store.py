@@ -19,6 +19,7 @@ class EvidenceBlobStore(Protocol):
     def put_if_absent(self, key: str, value: bytes) -> bool: ...
     def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
+    def probe(self) -> bool: ...
 
 
 def _key(key: str) -> str:
@@ -54,6 +55,9 @@ class MemoryEvidenceBlobStore:
         _key(key)
         with self._lock:
             self._objects.pop(key, None)
+
+    def probe(self) -> bool:
+        return True
 
 
 class FilesystemEvidenceBlobStore:
@@ -97,3 +101,6 @@ class FilesystemEvidenceBlobStore:
         if path.is_symlink():
             raise EvidenceStoreError("Evidence store path is unsafe.")
         path.unlink(missing_ok=True)
+
+    def probe(self) -> bool:
+        return self.root.is_dir() and not self.root.is_symlink()

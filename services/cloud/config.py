@@ -36,7 +36,14 @@ class CloudSettings:
     evidence_policy: str | None = None
     evidence_kek: bytes | None = field(default=None, repr=False)
     evidence_kek_version: str | None = None
+    evidence_store_backend: str | None = None
     evidence_store_path: Path | None = field(default=None, repr=False)
+    r2_account_id: str | None = None
+    r2_jurisdiction: str | None = None
+    r2_bucket: str | None = None
+    r2_access_key_id: str | None = field(default=None, repr=False)
+    r2_secret_access_key: str | None = field(default=None, repr=False)
+    r2_prefix: str = ""
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "CloudSettings":
@@ -108,7 +115,14 @@ class CloudSettings:
             raise ConfigurationError("CLOUD_EVIDENCE_MODE must be METADATA_ONLY or ENCRYPTED.")
         evidence_policy = values.get("CLOUD_EVIDENCE_POLICY") or None
         evidence_kek_version = values.get("CLOUD_EVIDENCE_KEK_VERSION") or None
+        evidence_backend = values.get("CLOUD_EVIDENCE_STORE_BACKEND") or None
         evidence_store = values.get("CLOUD_EVIDENCE_STORE_PATH") or None
+        r2_account = values.get("CLOUD_R2_ACCOUNT_ID") or None
+        r2_jurisdiction = values.get("CLOUD_R2_JURISDICTION") or None
+        r2_bucket = values.get("CLOUD_R2_BUCKET") or None
+        r2_access = values.get("CLOUD_R2_ACCESS_KEY_ID") or None
+        r2_secret = values.get("CLOUD_R2_SECRET_ACCESS_KEY") or None
+        r2_prefix = values.get("CLOUD_R2_PREFIX", "")
         encoded_kek = values.get("CLOUD_EVIDENCE_KEK") or None
         evidence_kek = None
         if encoded_kek:
@@ -121,10 +135,23 @@ class CloudSettings:
         if evidence_mode == "ENCRYPTED":
             if (evidence_policy != "SHORT_LIVED_V1" or evidence_kek is None
                     or not evidence_kek_version or not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", evidence_kek_version)
-                    or not evidence_store or not Path(evidence_store).is_absolute()):
-                raise ConfigurationError("Encrypted cloud evidence requires policy, key version, KEK and an absolute store path.")
-        elif any((evidence_policy, evidence_kek, evidence_kek_version, evidence_store)):
-            raise ConfigurationError("Evidence policy, KEK and store require CLOUD_EVIDENCE_MODE=ENCRYPTED.")
+                    or evidence_backend not in {"FILESYSTEM", "R2"}):
+                raise ConfigurationError("Encrypted cloud evidence requires policy, key version, KEK and an explicit store backend.")
+            if evidence_backend == "FILESYSTEM":
+                if on_render or not evidence_store or not Path(evidence_store).is_absolute() or any(
+                        (r2_account, r2_jurisdiction, r2_bucket, r2_access, r2_secret, r2_prefix)):
+                    raise ConfigurationError("Filesystem evidence requires an absolute development path and is unavailable on Render.")
+            elif (evidence_store or not re.fullmatch(r"[0-9a-f]{32}", r2_account or "")
+                    or r2_jurisdiction != "eu"
+                    or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?", r2_bucket or "")
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", r2_access or "")
+                    or not r2_secret or not 32 <= len(r2_secret) <= 256
+                    or any(ord(character) < 33 or ord(character) > 126 for character in r2_secret)
+                    or (r2_prefix and not re.fullmatch(r"[a-z0-9](?:[a-z0-9/_-]{0,126}[a-z0-9])?", r2_prefix))):
+                raise ConfigurationError("R2 evidence requires a private EU bucket and valid scoped S3 credentials.")
+        elif any((evidence_policy, evidence_kek, evidence_kek_version, evidence_backend, evidence_store,
+                  r2_account, r2_jurisdiction, r2_bucket, r2_access, r2_secret, r2_prefix)):
+            raise ConfigurationError("Evidence configuration requires CLOUD_EVIDENCE_MODE=ENCRYPTED.")
         return cls(
             environment=environment,
             allowed_hosts=allowed_hosts,
@@ -138,5 +165,12 @@ class CloudSettings:
             evidence_policy=evidence_policy,
             evidence_kek=evidence_kek,
             evidence_kek_version=evidence_kek_version,
+            evidence_store_backend=evidence_backend,
             evidence_store_path=Path(evidence_store) if evidence_store else None,
+            r2_account_id=r2_account,
+            r2_jurisdiction=r2_jurisdiction,
+            r2_bucket=r2_bucket,
+            r2_access_key_id=r2_access,
+            r2_secret_access_key=r2_secret,
+            r2_prefix=r2_prefix,
         )
