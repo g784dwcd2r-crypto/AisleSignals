@@ -10,6 +10,7 @@ import {
   InteractionAlarmCommission,
   InteractionAttentionPolicy,
   interactionLabels,
+  type CameraCalibration,
   type SavedInteraction,
 } from "./interactionCapture";
 import {
@@ -36,6 +37,7 @@ type Props = {
   modelReady: boolean;
   volume: number;
   muted: boolean;
+  cameraCalibration: CameraCalibration | null;
   cancelRef: RefObject<(() => void) | null>;
   silenceRef: RefObject<(() => void) | null>;
   onResult: (result: SavedInteraction) => void;
@@ -72,6 +74,7 @@ export default function AllCameraAnalysis(props: Props) {
     null,
   );
   const previousRun = useRef<AllCameraRun | null>(null);
+  const previousCalibration = useRef(props.cameraCalibration);
   const commission = useRef(new InteractionAlarmCommission());
   const speaker = useRef<BrowserAttentionSound | null>(null);
   const mounted = useRef(true);
@@ -105,6 +108,7 @@ export default function AllCameraAnalysis(props: Props) {
           run!.sourceKey,
           run!.runtime,
           run!.cameras.map(cameraKey),
+          options.current.cameraCalibration,
         ])
       : "";
   }
@@ -212,6 +216,9 @@ export default function AllCameraAnalysis(props: Props) {
         at_seconds,
         jpeg_base64,
       })),
+      ...(config.cameraCalibration
+        ? { camera_calibration: config.cameraCalibration }
+        : {}),
     };
     const key = idempotencyKey("/interactions/jobs", "POST", payload);
     let outcome: "completed" | "failed" | "cancelled" = "cancelled",
@@ -352,6 +359,14 @@ export default function AllCameraAnalysis(props: Props) {
   useEffect(() => {
     disarm("Volume or mute changed. Test this camera set again before arming.");
   }, [props.volume, props.muted]);
+  useEffect(() => {
+    const previous = previousCalibration.current;
+    previousCalibration.current = props.cameraCalibration;
+    if (previous && previous !== props.cameraCalibration)
+      disarm(
+        "Camera calibration changed. Confirm all zones and test this camera set again before arming.",
+      );
+  }, [props.cameraCalibration]);
   useEffect(() => {
     mounted.current = true;
     props.cancelRef.current = cancel;
@@ -522,6 +537,7 @@ export default function AllCameraAnalysis(props: Props) {
             disabled={
               !enabled ||
               !running ||
+              !props.cameraCalibration ||
               stage !== "confirmed" ||
               (props.run?.sourceKind === "RECORDED_VIDEO" && !recordedAllowed)
             }
@@ -539,6 +555,12 @@ export default function AllCameraAnalysis(props: Props) {
           />
           Experimental attention alarm for all confirmed cameras
         </label>
+        {!props.cameraCalibration && (
+          <p role="status">
+            Sound cannot be armed until entrance, exit, cashier and shelf zone
+            coverage is confirmed above.
+          </p>
+        )}
         <button onClick={() => disarm()}>
           Stop sound & disarm all cameras
         </button>

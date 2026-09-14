@@ -344,6 +344,13 @@ async function openGrid(
     .check();
 }
 async function begin(page: Page, automatic = true) {
+  for (const label of [
+    "Entrance zone is visible",
+    "Exit zone is visible",
+    "Cashier zone is visible",
+    "Relevant shelf zones are visible",
+  ])
+    await page.getByLabel(label, { exact: true }).check();
   await page
     .getByLabel("Enable all-camera product analysis", { exact: true })
     .check();

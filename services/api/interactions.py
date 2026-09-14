@@ -34,7 +34,7 @@ from .interaction_vision import (
     VisionProvider,
     validate_frames,
 )
-from .models import CameraContext, Input, InteractionCaseCreate, camera_provenance
+from .models import CameraCalibration, CameraContext, Input, InteractionCaseCreate, camera_provenance
 from .store import Store, digest, encode, ident, now
 from .evidence_crypto import EvidenceCipher, PilotDatabaseLock, read_frame
 
@@ -57,6 +57,7 @@ class InteractionInput(Input):
     source_kind: Literal["SCREEN_CAPTURE", "CAMERA", "RECORDED_VIDEO"]
     source_label: str = Field(min_length=1, max_length=120)
     camera_context: CameraContext | None = None
+    camera_calibration: CameraCalibration | None = None
     frames: list[InteractionFrame] = Field(min_length=3, max_length=6)
 
     @field_validator("source_label")
@@ -105,6 +106,7 @@ def saved_view(item):
         "expires_at": item["expires_at"],
         **result,
         **camera_provenance(item),
+        **({"camera_calibration": item["camera_calibration"]} if "camera_calibration" in item else {}),
         "frames": [
             {
                 "at_seconds": frame["at_seconds"],
@@ -409,6 +411,12 @@ class InteractionService:
                     self.remove_files(item_id)
                     current["frames"] = []
                 else:
+                    result = dict(result)
+                    calibrated = current.get("camera_calibration") is not None
+                    result["camera_calibration_status"] = "READY" if calibrated else "MISSING"
+                    if result.get("alarm_eligible") is True and not calibrated:
+                        result["alarm_eligible"] = False
+                        result["alarm_blocked_reason"] = "CAMERA_CALIBRATION_REQUIRED"
                     current["status"] = "completed"
                     current["result"] = result
                     self.store.audit(
@@ -613,6 +621,7 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                 "source_kind": body.source_kind,
                 "source_label": body.source_label,
                 **({"camera_context": body.camera_context.model_dump(mode="json")} if body.camera_context else {}),
+                **({"camera_calibration": body.camera_calibration.model_dump(mode="json")} if body.camera_calibration else {}),
                 "created_at": now(),
                 "expires_at": (
                     datetime.now(timezone.utc) + timedelta(seconds=RETENTION_SECONDS)

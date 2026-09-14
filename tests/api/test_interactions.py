@@ -16,6 +16,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from pydantic import ValidationError
 
 from services.api.app import create_app
 from services.api.interaction_vision import (
@@ -24,7 +25,7 @@ from services.api.interaction_vision import (
     VisionProvider,
     public_observation,
 )
-from services.api.interactions import ACTIVE_JOBS, ACTIVE_LOCK
+from services.api.interactions import ACTIVE_JOBS, ACTIVE_LOCK, InteractionInput
 from services.api.store import encode
 
 BASE = "http://127.0.0.1:8765"
@@ -41,6 +42,13 @@ def sample(**changes):
         "run_id": str(uuid4()),
         "source_kind": "RECORDED_VIDEO",
         "source_label": "Synthetic unit-test shapes",
+        "camera_calibration": {
+            "schema_version": "1.0",
+            "entrance_zone_confirmed": True,
+            "exit_zone_confirmed": True,
+            "cashier_zone_confirmed": True,
+            "shelf_zones_confirmed": True,
+        },
         "frames": [
             {
                 "at_seconds": at,
@@ -166,6 +174,8 @@ def test_real_scoped_store_evidence_review_delete_and_audit(app):
     before = client.get("/api/bootstrap").json()
     item = complete(client)
     assert item["alarm_eligible"] is True
+    assert item["camera_calibration_status"] == "READY"
+    assert item["camera_calibration"]["shelf_zones_confirmed"] is True
     assert item["validated"] is False and item["historical"] is True
     assert (
         item["review"] is None and item["evidence_kind"] == "sampled_jpeg_derivatives"
@@ -210,6 +220,36 @@ def test_real_scoped_store_evidence_review_delete_and_audit(app):
         event["action"] == "INTERACTION_DELETED"
         for event in client.get("/api/bootstrap").json()["audit"]
     )
+
+
+def test_missing_calibration_keeps_analysis_but_blocks_automatic_alarm(app):
+    client = sign_in(app)
+    payload = sample()
+    payload.pop("camera_calibration")
+    response = submit(client, payload)
+    assert response.status_code == 202
+    item = wait_job(client, response.json()["id"])["result"]
+    assert item["action"] == "POSSIBLE_CONCEALMENT"
+    assert item["alarm_eligible"] is False
+    assert item["camera_calibration_status"] == "MISSING"
+    assert item["alarm_blocked_reason"] == "CAMERA_CALIBRATION_REQUIRED"
+    assert "camera_calibration" not in item
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "entrance_zone_confirmed",
+        "exit_zone_confirmed",
+        "cashier_zone_confirmed",
+        "shelf_zones_confirmed",
+    ],
+)
+def test_partial_camera_calibration_is_rejected(field):
+    payload = sample()["camera_calibration"]
+    payload[field] = False
+    with pytest.raises(ValidationError):
+        InteractionInput.model_validate(sample(camera_calibration=payload))
 
 
 def test_auth_csrf_origin_and_cross_branch_boundaries(app):

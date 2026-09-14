@@ -21,6 +21,8 @@ This iteration follows the owner's instruction to relax the earlier EUR 60 devel
 
 The experimental interaction alarm is a separate opt-in control. A recorded video remains labelled as a test. Stopping, seeking, changing the source, losing visibility or leaving the tab cancels the current analysis session and disarms its sound. Late results are for review only. Speaker output still depends on browser activation, system volume and the laptop remaining awake.
 
+Before sound can be armed, staff must declare that the current camera selection covers the pharmacy entrance, exit, cashier and relevant shelf zones. The additive `camera_calibration` record is stored with new analysis jobs and surfaced in review history. Older clients and saved results without it remain readable and can still run analysis, but an otherwise alarm-eligible model observation is downgraded with `CAMERA_CALIBRATION_REQUIRED`. These confirmations are an operational gate, not an automated test of camera placement, image quality or model accuracy; each branch still needs a documented site acceptance exercise.
+
 Every result includes an explainable `evidence_strength` of
 `STRONG_RULE_MATCH`, `PARTIAL_RULE_MATCH` or `INSUFFICIENT_RULE_MATCH`. This is
 computed from the visible-person, visible-product, sequence, visibility and

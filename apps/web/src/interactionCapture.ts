@@ -9,6 +9,13 @@ export type InteractionAction =
   | "NORMAL_SHOPPING"
   | "UNCLEAR";
 export type InteractionReview = "USEFUL" | "NORMAL_SHOPPING" | "UNCLEAR";
+export type CameraCalibration = Readonly<{
+  schema_version: "1.0";
+  entrance_zone_confirmed: true;
+  exit_zone_confirmed: true;
+  cashier_zone_confirmed: true;
+  shelf_zones_confirmed: true;
+}>;
 export type SavedInteraction = {
   id: string;
   version: number;
@@ -18,6 +25,9 @@ export type SavedInteraction = {
   camera_context?: CameraContext | null;
   camera_id?: string;
   camera_label?: string;
+  camera_calibration?: CameraCalibration;
+  camera_calibration_status?: "READY" | "MISSING";
+  alarm_blocked_reason?: "CAMERA_CALIBRATION_REQUIRED";
   created_at: string;
   expires_at: string;
   model: string;
@@ -36,6 +46,15 @@ export type SavedInteraction = {
   frames: { at_seconds: number; url: string }[];
   review: null | { outcome: InteractionReview; note: string };
 };
+
+const COMPLETE_CAMERA_CALIBRATION: CameraCalibration = Object.freeze({
+  schema_version: "1.0",
+  entrance_zone_confirmed: true,
+  exit_zone_confirmed: true,
+  cashier_zone_confirmed: true,
+  shelf_zones_confirmed: true,
+});
+export const confirmedCameraCalibration = () => COMPLETE_CAMERA_CALIBRATION;
 
 export const interactionLabels: Record<InteractionAction, string> = {
   TAKE_PRODUCT: "Product picked up",
