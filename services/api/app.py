@@ -427,12 +427,10 @@ def create_app(db_path=None, web_dist=None, mode=None):
     vision_interlocked = os.environ.get("AISLESIGNALS_VISION_DISABLED") == "1"
     report_path = Path(application.state.store.path).parent / "runtime-status.json"
 
-    def runtime_snapshot():
-        value = dict(api_id=api_id, runtime_id=None, recovery_generation=0,
-                     supervised=supervised, state="API_ONLY", monitoring_allowed=not supervised,
-                     product_available=None, report_age_ms=None, context=None)
-        if supervised:
-            value["state"] = "UNAVAILABLE"
+    def read_runtime_report():
+        """Read an atomically replaced launcher report across Windows sharing races."""
+        last_error = None
+        for attempt in range(3):
             try:
                 if report_path.is_symlink():
                     raise ValueError("Report must be a regular private file")
@@ -440,7 +438,21 @@ def create_app(db_path=None, web_dist=None, mode=None):
                 with os.fdopen(fd, "rb") as stream:
                     if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                         raise ValueError("Invalid report file")
-                    raw = stream.read(32769)
+                    return stream.read(32769)
+            except OSError as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.005)
+        raise last_error
+
+    def runtime_snapshot():
+        value = dict(api_id=api_id, runtime_id=None, recovery_generation=0,
+                     supervised=supervised, state="API_ONLY", monitoring_allowed=not supervised,
+                     product_available=None, report_age_ms=None, context=None)
+        if supervised:
+            value["state"] = "UNAVAILABLE"
+            try:
+                raw = read_runtime_report()
                 if len(raw) > 32768:
                     raise ValueError("Report too large")
                 report = json.loads(raw)

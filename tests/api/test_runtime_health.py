@@ -8,6 +8,7 @@ from threading import Event
 from uuid import uuid4
 
 import pytest
+import services.api.app as app_module
 from fastapi.testclient import TestClient
 from services.api.app import create_app
 from services.api.pilot_identity import initialise, add_site, grant_user
@@ -57,6 +58,25 @@ def test_authenticated_projection_has_no_private_fields_and_does_not_refresh_idl
     assert "PRIVATE" not in response.text and "/secret/path" not in response.text
     with app.state.store.transaction() as conn:
         assert conn.execute("SELECT last_seen FROM sessions").fetchone()[0] == before
+
+
+def test_runtime_report_read_retries_a_transient_windows_sharing_error(installation, monkeypatch):
+    _, client, path = installation
+    real_open = app_module.os.open
+    attempts = 0
+
+    def transient_open(target, flags, *args, **kwargs):
+        nonlocal attempts
+        if Path(target) == path and attempts == 0:
+            attempts += 1
+            raise PermissionError("synthetic atomic replacement sharing race")
+        return real_open(target, flags, *args, **kwargs)
+
+    monkeypatch.setattr(app_module.os, "open", transient_open)
+    response = client.get("/api/runtime/health")
+    assert response.status_code == 200, response.text
+    assert response.json()["monitoring_allowed"] is True
+    assert attempts == 1
 
 
 def test_health_completes_while_real_interaction_admission_holds_writer_lock(installation, monkeypatch):

@@ -455,6 +455,7 @@ export default function App() {
   const tabId = useRef(crypto.randomUUID());
   const siteRef = useRef("");
   const userRef = useRef<User | null>(null);
+  const stopHealthWatch = useRef<() => void>(() => {});
   userRef.current = user;
   const endSession = useCallback(() => {
     runtimeHealth.end();
@@ -535,8 +536,11 @@ export default function App() {
     setOffline(false);
   }, []);
   useEffect(() => {
-    if (!session) return;
-    return watchRuntimeHealth(runtimeHealth, (signal) =>
+    if (!session) {
+      stopHealthWatch.current = () => {};
+      return;
+    }
+    const stop = watchRuntimeHealth(runtimeHealth, (signal) =>
       api<RuntimeHealthReport>(
         "/runtime/health",
         "GET",
@@ -545,6 +549,11 @@ export default function App() {
         signal,
       ),
     );
+    stopHealthWatch.current = stop;
+    return () => {
+      if (stopHealthWatch.current === stop) stopHealthWatch.current = () => {};
+      stop();
+    };
   }, [session]);
   useEffect(() => {
     onSessionInvalidated(() => {
@@ -615,6 +624,11 @@ export default function App() {
       return;
     const generation = ++authGeneration.current;
     requestEpoch.current++;
+    // Stop the old branch heartbeat before the server rotates the session
+    // cookie and CSRF token. Otherwise a late old-scope 401 can invalidate the
+    // newly returned branch session on a slower host.
+    stopHealthWatch.current();
+    runtimeHealth.end();
     // Tear down capture, pending review forms and media before changing server scope.
     flushSync(() => {
       setSwitching(true);

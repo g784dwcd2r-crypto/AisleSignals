@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { resolve } from "node:path";
+import { CONTINUITY_LIMITS } from "../../apps/web/src/monitoringContinuity";
 
 async function open(page: Page) {
   await page.addInitScript(() => {
@@ -9,6 +10,9 @@ async function open(page: Page) {
       frames: [] as (() => void)[],
       results: [] as (() => void)[],
       calls: 0,
+      lastInferenceAt: 0,
+      presentedFrames: 0,
+      lastPresentedAt: 0,
       audio: 0,
       tracks: [] as MediaStreamTrack[],
     });
@@ -27,6 +31,7 @@ async function open(page: Page) {
           });
         if (request.type === "frame") {
           probe.calls++;
+          probe.lastInferenceAt = performance.now();
           if (probe.holdInference) {
             probe.results.push(deliver);
             return;
@@ -40,7 +45,13 @@ async function open(page: Page) {
     const present = HTMLVideoElement.prototype.requestVideoFrameCallback;
     HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
       return present.call(this, (now, metadata) => {
-        const deliver = () => callback(now, metadata);
+        const deliver = () => {
+          if (metadata.presentedFrames > probe.presentedFrames) {
+            probe.presentedFrames = metadata.presentedFrames;
+            probe.lastPresentedAt = performance.now();
+          }
+          callback(now, metadata);
+        };
         if (probe.holdFrames) probe.frames.push(deliver);
         else deliver();
       });
@@ -101,7 +112,32 @@ test("fresh static camera frames remain monitored; track mute releases capture a
     .click();
   await expect
     .poll(() => page.evaluate(() => (window as any).__monitoring.calls))
-    .toBeGreaterThan(15);
+    .toBeGreaterThan(0);
+  const baseline = await page.evaluate(() => ({
+    startedAt: performance.now(),
+    presentedFrames: (window as any).__monitoring.presentedFrames,
+  }));
+  // Observe real fresh presentations and inference beyond the stall deadline.
+  // Counting 16 inferences within 5 seconds accidentally required near-maximum
+  // processing throughput, although a slower fresh static source is healthy.
+  const windowMs = CONTINUITY_LIMITS.frameGapMs + CONTINUITY_LIMITS.watchdogMs;
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ baseline, windowMs }) => {
+            const probe = (window as any).__monitoring;
+            return (
+              probe.presentedFrames > baseline.presentedFrames &&
+              probe.lastPresentedAt - baseline.startedAt >= windowMs &&
+              probe.lastInferenceAt - baseline.startedAt >= windowMs
+            );
+          },
+          { baseline, windowMs },
+        ),
+      { intervals: [100] },
+    )
+    .toBe(true);
   await expect(
     page.getByText("POSE TRACKING RUNNING", { exact: true }),
   ).toBeVisible();

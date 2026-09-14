@@ -202,7 +202,35 @@ test("named account switches only allowed branches and clears unsaved case data"
   await createCase(page, "Synthetic branch-isolated case");
   await page.getByLabel("Reviewed notes").fill("Unsaved north-only test note.");
   const old = await (await page.request.get(`${pilot.url}/api/session`)).json();
+  // Hold one old-branch heartbeat across the server-side session rotation.
+  // The branch transition must abort it before a late 401 can end the new
+  // session. This was observable on slower Windows runners.
+  let releaseHeartbeat!: () => void;
+  let heartbeatReached!: () => void;
+  const heartbeatGate = new Promise<void>((done) => {
+    releaseHeartbeat = done;
+  });
+  const heartbeatStarted = new Promise<void>((done) => {
+    heartbeatReached = done;
+  });
+  await page.route("**/api/runtime/health", async (route) => {
+    heartbeatReached();
+    await heartbeatGate;
+    try {
+      await route.continue();
+    } catch {
+      // Expected when branch switching aborts the old heartbeat.
+    }
+  });
+  await heartbeatStarted;
+  const switched = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/session/site") &&
+      response.request().method() === "POST",
+  );
   await picker.selectOption(pilot.south);
+  expect((await switched).status()).toBe(200);
+  releaseHeartbeat();
   await expect(picker).toHaveValue(pilot.south);
   await expect(
     page.getByRole("button", { name: "Open LIVE DETECTION", exact: true }),

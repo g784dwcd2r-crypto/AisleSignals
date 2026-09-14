@@ -10,6 +10,9 @@ import AxeBuilder from "@axe-core/playwright";
 const server = String.raw`
 import json, os, socket, sys
 from pathlib import Path
+def stage(name):
+    print('CONNECTION_STAGE '+name,flush=True)
+stage('configuring')
 for key in list(os.environ):
     if key.startswith('AISLESIGNALS_'): del os.environ[key]
 directory=Path(sys.argv[1]).resolve()
@@ -21,6 +24,7 @@ os.environ['AISLESIGNALS_PORT']=str(port)
 os.environ['AISLESIGNALS_DB_PATH']=str(directory/'pilot.db')
 os.environ['AISLESIGNALS_WEB_DIST']=str(Path.cwd()/'apps/web/dist')
 os.environ['AISLESIGNALS_VISION_URL']='http://127.0.0.1:'+str(unavailable.getsockname()[1])
+stage('importing_api')
 from services.api.app import app
 from services.api import cloud_delivery
 # This suite exercises actual pairing HTTP. Delivery has separate process/HTTPS
@@ -34,18 +38,34 @@ cloud_delivery.CloudDelivery=InertDelivery
 from services.api.pilot_identity import initialise, add_site, add_user, grant_user
 from services.api.cloud_transport import CloudTransport
 sys.path.insert(0,str(Path.cwd()/'tests/api'))
-from test_cloud_connection import Remote
+import test_cloud_connection as cloud_fixture
+from http.server import ThreadingHTTPServer
+from socketserver import TCPServer
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # The default HTTPServer reverse-resolves 127.0.0.1 during startup.
+        # This owned literal-loopback server needs no external DNS service.
+        TCPServer.server_bind(self)
+        self.server_name='127.0.0.1'
+        self.server_port=self.server_address[1]
+cloud_fixture.ThreadingHTTPServer=LoopbackHTTPServer
+def unexpected_lookup(*args):
+    raise AssertionError('Synthetic loopback fixture must not resolve hostnames')
+socket.getfqdn=unexpected_lookup
+stage('preparing_accounts')
 password='Synthetic connection manager passphrase 73!'
 initial=initialise(app.state.store,'Synthetic Local Group','Synthetic North','manager@example.test','Synthetic Manager',password)
 south=add_site(app.state.store,initial['site']['organisation_id'],'Synthetic South')
 grant_user(app.state.store,'manager@example.test',south['id'],'MANAGER')
 add_user(app.state.store,'reviewer@example.test','Synthetic Reviewer',password,[initial['site']['id']],'REVIEWER')
-remote=Remote()
+remote=cloud_fixture.Remote()
+stage('binding_cloud_fixture')
 with remote.serve() as origin:
     def transport(selected):
         remote.identity_status=401 if (directory/'fail-identity').exists() else 200
         return CloudTransport(origin,allow_local_test=True)
     app.state.cloud_connection.transport_factory=transport
+    stage('starting_api')
     print('CONNECTION_READY '+json.dumps({'url':'http://127.0.0.1:'+str(port),'north':initial['site']['id'],'south':south['id'],'identity':remote.identity}),flush=True)
     import uvicorn
     uvicorn.Server(uvicorn.Config(app,log_level='warning',access_log=False,proxy_headers=False)).run(sockets=[listener])
@@ -72,23 +92,41 @@ const test = base.extend<{ installation: Installation }>({
     );
     let output = "",
       errors = "",
+      startupStage = "spawned",
       timer: NodeJS.Timeout | undefined;
     try {
       const ready = new Promise<Installation>((done, reject) => {
         child.stdout.on("data", (chunk) => {
           output += String(chunk);
+          for (const line of output.split("\n")) {
+            const stage = line.startsWith("CONNECTION_STAGE ")
+              ? line.slice("CONNECTION_STAGE ".length).trim()
+              : "";
+            if (
+              [
+                "configuring",
+                "importing_api",
+                "preparing_accounts",
+                "binding_cloud_fixture",
+                "starting_api",
+              ].includes(stage)
+            )
+              startupStage = stage;
+          }
           const line = output
             .split("\n")
             .find((value) => value.startsWith("CONNECTION_READY "));
           if (line) done(JSON.parse(line.slice("CONNECTION_READY ".length)));
         });
         child.stderr.on("data", (chunk) => {
-          errors += String(chunk);
+          errors = (errors + String(chunk)).slice(-4000);
         });
         child.once("error", reject);
         child.once("exit", (code) =>
           reject(
-            new Error(`Synthetic connection fixture exited ${code}: ${errors}`),
+            new Error(
+              `Synthetic connection fixture exited ${code} during ${startupStage}: ${errors}`,
+            ),
           ),
         );
       });
@@ -97,7 +135,11 @@ const test = base.extend<{ installation: Installation }>({
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () =>
-              reject(new Error("Synthetic connection fixture did not start")),
+              reject(
+                new Error(
+                  `Synthetic connection fixture did not start during ${startupStage}: ${errors}`,
+                ),
+              ),
             20000,
           );
         }),
