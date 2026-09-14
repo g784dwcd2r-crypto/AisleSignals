@@ -35,6 +35,9 @@ const platforms = [
   },
 ] as const;
 
+const MACOS_PILOT_URL =
+  "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-macos-v0.1.0/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg";
+
 export default function Downloads({ session, navigate }: DownloadsProps) {
   const canConnect = session.user.role !== "REVIEWER";
   return (
@@ -44,8 +47,8 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
           <span className="eyebrow">PHARMACY LAPTOP SOFTWARE</span>
           <h1>Download AisleSignals</h1>
           <p>
-            Start with the connection utility, then pair each laptop to its
-            pharmacy using a private one-use code.
+            Install the Mac pilot application, then connect the laptop to its
+            pharmacy workspace.
           </p>
         </div>
         {canConnect && (
@@ -54,6 +57,58 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
             Pair a laptop
           </Button>
         )}
+      </div>
+
+      <article className="download-card featured-download">
+        <header>
+          <span className="download-platform-icon">
+            <Apple size={25} />
+          </span>
+          <div>
+            <span className="download-state pilot">Unsigned pilot</span>
+            <h2>macOS pilot application</h2>
+          </div>
+        </header>
+        <p>
+          A real AisleSignals Pilot.app packaged in a mountable disk image. It
+          runs the local monitoring and staff-review interface without requiring
+          a separate Python installation.
+        </p>
+        <dl className="download-details">
+          <div>
+            <dt>Installation file</dt>
+            <dd>.dmg</dd>
+          </div>
+          <div>
+            <dt>Mac processor</dt>
+            <dd>Apple silicon (arm64)</dd>
+          </div>
+          <div>
+            <dt>Version</dt>
+            <dd>0.1.0 pilot</dd>
+          </div>
+        </dl>
+        <a
+          className="button primary download-action"
+          href={MACOS_PILOT_URL}
+          download
+        >
+          <Download size={17} />
+          Download macOS pilot (.dmg)
+        </a>
+        <small className="download-caution">
+          This pilot is not Apple-signed or notarised. Use it only under your
+          organisation’s installation policy. Cloud pairing still uses the
+          separate connection utility below.
+        </small>
+      </article>
+
+      <div className="downloads-subheading">
+        <span className="eyebrow">CLOUD CONNECTION UTILITY</span>
+        <h2>Connect the laptop to this dashboard</h2>
+        <p>
+          Download this separately after installing the Mac pilot application.
+        </p>
       </div>
 
       <div className="downloads-availability" role="status">
@@ -177,18 +232,18 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
           <div>
             <span className="eyebrow">DESKTOP APPLICATION</span>
             <h2 id="installer-heading">
-              Desktop installation files are not released yet
+              Production installers are not released yet
             </h2>
             <p>
-              The macOS .dmg and Windows .msi still need signing, automatic
-              updates and branch-laptop acceptance before customer download.
-              This page will publish the real installers when those checks pass.
+              The downloadable Mac pilot is unsigned. Customer-ready signed
+              macOS and Windows installers still need signing, automatic updates
+              and branch-laptop acceptance.
             </p>
           </div>
         </div>
         <div className="installer-checks" aria-label="Installer release checks">
           <span>
-            <TerminalSquare size={16} /> macOS .dmg: not released
+            <TerminalSquare size={16} /> Signed macOS .dmg: pending
           </span>
           <span>
             <ShieldCheck size={16} /> Windows .msi: not released

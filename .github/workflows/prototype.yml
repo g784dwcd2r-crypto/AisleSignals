@@ -118,6 +118,9 @@ jobs:
         run: python -m PyInstaller --clean --noconfirm packaging/pilot.spec
       - name: Verify pilot archive, startup and absence of demo accounts
         run: python scripts/package_bundle.py --bundle-name AisleSignalsPilot --smoke
+      - name: Build and verify macOS pilot DMG
+        if: runner.os == 'macOS'
+        run: python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke
       - uses: actions/upload-artifact@v4
         with:
           name: AisleSignalsPrototype-${{ runner.os }}-${{ runner.arch }}-unsigned
@@ -132,6 +135,7 @@ jobs:
           path: |
             dist/AisleSignalsPilot-*.zip
             dist/AisleSignalsPilot-*.tar.gz
+            dist/AisleSignalsPilot-*.dmg
             dist/AisleSignalsPilot-*.sha256
           if-no-files-found: error
           retention-days: 14
