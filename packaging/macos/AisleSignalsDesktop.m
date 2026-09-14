@@ -1,11 +1,13 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
-static NSString *const ASApplicationURL = @"http://127.0.0.1:8765/#live-detection";
+static NSString *const ASLocalURL = @"http://127.0.0.1:8765/#live-detection";
+static NSString *const ASCloudURL = @"https://aislesignals-control-staging.onrender.com/";
 
 @interface ASAppDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
+@property(nonatomic, strong) NSSegmentedControl *modeControl;
 @property(nonatomic, strong) NSTask *backend;
 @property(nonatomic) NSInteger loadAttempts;
 @property(nonatomic) BOOL applicationLoaded;
@@ -20,15 +22,34 @@ static NSString *const ASApplicationURL = @"http://127.0.0.1:8765/#live-detectio
     self.webView.navigationDelegate = self;
 
     NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-        NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView;
+        NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1320, 840)
                                               styleMask:style
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     self.window.title = @"AisleSignals";
-    self.window.titlebarAppearsTransparent = YES;
     self.window.minSize = NSMakeSize(980, 640);
-    self.window.contentView = self.webView;
+
+    NSView *root = [[NSView alloc] initWithFrame:NSZeroRect];
+    self.modeControl = [NSSegmentedControl segmentedControlWithLabels:@[@"Cloud workspace", @"Live detection"]
+                                                          trackingMode:NSSegmentSwitchTrackingSelectOne
+                                                                target:self
+                                                                action:@selector(modeChanged:)];
+    self.modeControl.selectedSegment = 0;
+    self.modeControl.segmentStyle = NSSegmentStyleRounded;
+    self.modeControl.translatesAutoresizingMaskIntoConstraints = NO;
+    self.webView.translatesAutoresizingMaskIntoConstraints = NO;
+    [root addSubview:self.modeControl];
+    [root addSubview:self.webView];
+    [NSLayoutConstraint activateConstraints:@[
+        [self.modeControl.topAnchor constraintEqualToAnchor:root.topAnchor constant:12],
+        [self.modeControl.leadingAnchor constraintEqualToAnchor:root.leadingAnchor constant:16],
+        [self.webView.topAnchor constraintEqualToAnchor:self.modeControl.bottomAnchor constant:10],
+        [self.webView.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+        [self.webView.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],
+        [self.webView.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],
+    ]];
+    self.window.contentView = root;
     [self.window center];
     [self.window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
@@ -40,7 +61,23 @@ static NSString *const ASApplicationURL = @"http://127.0.0.1:8765/#live-detectio
         "<strong>Starting AisleSignals</strong><div class='sub'>Preparing secure local monitoring…</div></div></body></html>";
     [self.webView loadHTMLString:starting baseURL:nil];
     [self startBackend];
-    [self performSelector:@selector(loadApplication) withObject:nil afterDelay:0.6];
+    [self performSelector:@selector(loadCloudWorkspace) withObject:nil afterDelay:0.2];
+}
+
+- (void)modeChanged:(NSSegmentedControl *)sender {
+    self.applicationLoaded = NO;
+    self.loadAttempts = 0;
+    if (sender.selectedSegment == 0) {
+        [self loadCloudWorkspace];
+    } else {
+        [self loadLocalApplication];
+    }
+}
+
+- (void)loadCloudWorkspace {
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASCloudURL]
+                                               cachePolicy:NSURLRequestUseProtocolCachePolicy
+                                           timeoutInterval:15.0]];
 }
 
 - (void)startBackend {
@@ -69,22 +106,24 @@ static NSString *const ASApplicationURL = @"http://127.0.0.1:8765/#live-detectio
     }
 }
 
-- (void)loadApplication {
+- (void)loadLocalApplication {
     self.loadAttempts += 1;
-    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASApplicationURL]
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:ASLocalURL]
                                                cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
                                            timeoutInterval:2.0]];
 }
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
-    if ([webView.URL.host isEqualToString:@"127.0.0.1"]) self.applicationLoaded = YES;
+    self.applicationLoaded = YES;
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
-    if (!self.applicationLoaded && self.loadAttempts < 80) {
-        [self performSelector:@selector(loadApplication) withObject:nil afterDelay:0.5];
+    if (self.modeControl.selectedSegment == 1 && !self.applicationLoaded && self.loadAttempts < 80) {
+        [self performSelector:@selector(loadLocalApplication) withObject:nil afterDelay:0.5];
+    } else if (!self.applicationLoaded && self.modeControl.selectedSegment == 1) {
+        [self showFailure:@"Local monitoring did not become ready. Close the app and try again. Details are in ~/Library/Application Support/AisleSignals/desktop.log."];
     } else if (!self.applicationLoaded) {
-        [self showFailure:@"AisleSignals did not become ready. Close the app and try again. Details are in ~/Library/Application Support/AisleSignals/desktop.log."];
+        [self showFailure:@"The cloud workspace could not be reached. Check this laptop's internet connection and try again."];
     }
 }
 
