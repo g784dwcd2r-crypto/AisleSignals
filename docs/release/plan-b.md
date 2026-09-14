@@ -32,6 +32,17 @@ Every API, background job, stream, clip, export and remote command must derive o
 - The final active company owner cannot remove or demote themselves until ownership is transferred to another verified active owner.
 - High-risk changes, including owner transfer, media-export permission and support access, require recent authentication and create an immutable audit event.
 
+### Account and credential lifecycle
+
+- Every user can edit their own display name, job title, notification preferences and other approved profile fields. Organisation, role and branch authority are changed only through the access-administration flow.
+- A user can change their password after confirming the current password and MFA. A successful change revokes other sessions and sends a security notification.
+- Changing a login email requires recent authentication, verification of the new address and notification to the previous address. The old email remains active until verification succeeds.
+- The sign-in page provides a generic forgot-password response that does not reveal whether an account exists. Reset links are single-use, expire quickly, are stored only as hashes and are rate limited.
+- An authorised administrator can send or resend a password-reset link to an active team member. Administrators cannot view, retrieve or choose another user's password.
+- A completed password reset revokes existing sessions, live-view grants and remembered devices. Suspended and removed accounts cannot use reset links to reactivate themselves.
+- Users can manage authenticator enrollment, recovery codes and active sessions after recent authentication. MFA reset follows a separately audited recovery process and notifies the account owner.
+- Profile, email, password, MFA, reset and session events are recorded without storing passwords, reset tokens, authenticator secrets or recovery codes in audit text.
+
 ## Workstreams
 
 | ID | Deliverable | Completion evidence |
@@ -45,6 +56,7 @@ Every API, background job, stream, clip, export and remote command must derive o
 | B7 | Reliability and observability | Stream loss, frozen frames, laptop sleep, queue delay, storage failure and notification failure produce separate health states and recovery records |
 | B8 | Privacy, retention and audit | Controller/processor responsibilities are recorded; access purpose, viewer, branch, timestamps and actions are audited; snapshot and clip retention, deletion, export and legal hold follow configured policy and branch authority |
 | B9 | Team and access administration | Authorised administrators can invite, assign, change, suspend and remove team access; changes take effect immediately, preserve case history and are fully audited |
+| B10 | Account and credential management | Users can maintain their profile, password, MFA and sessions; authorised administrators can send secure team password resets without accessing credentials |
 
 ## Operating flow
 
@@ -125,13 +137,19 @@ Build the team directory, invitation lifecycle, role editor, branch assignments,
 
 **Gate B6:** cross-company and unassigned-branch access tests fail closed; role reduction and removal terminate existing sessions and live access; pending invitations can be revoked; the final owner cannot be removed; historical alert and incident records remain attributable.
 
-### B7 — Commission branch by branch
+### B7 — Add account and credential management
+
+Build the account page, safe profile editing, verified email-change flow, password change, forgot-password delivery, administrator-triggered team reset, MFA and recovery-code management, and active-session controls. Integrate delivery retries and generic responses so the system does not disclose registered addresses.
+
+**Gate B7:** password and email changes require recent authentication; reset links are hashed, single-use and expiring; enumeration and rate-limit tests pass; successful changes revoke the required sessions; suspended users remain suspended; administrators cannot set or see team passwords; sensitive values never enter logs or audit records.
+
+### B8 — Commission branch by branch
 
 Run controller approval, privacy, access, camera mapping, snapshot, clip, live-view, alarm and recovery acceptance at each branch. Activate only the accepted evidence mode, cameras and roles, then monitor alert load and service health during the supervised pilot.
 
 ## Relationship to Plan U
 
-[Plan U](plan-u.md) builds the complete pharmacy laptop application and its real CCTV-to-cloud detection path. Plan B builds the authorised central control centre above that path. B1 and B6 can begin with the current cloud identity and heartbeat foundation, while the media and commissioning stages depend on the relevant Plan U camera, detector, packaging and commissioning gates.
+[Plan U](plan-u.md) builds the complete pharmacy laptop application and its real CCTV-to-cloud detection path. Plan B builds the authorised central control centre above that path. B1, B6 and B7 can begin with the current cloud identity and heartbeat foundation, while the media and commissioning stages depend on the relevant Plan U camera, detector, packaging and commissioning gates.
 
 ## Completion rule
 
