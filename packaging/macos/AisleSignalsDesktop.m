@@ -233,7 +233,11 @@ static NSString *ASCloudURL(void) {
 
     self.backend = [[NSTask alloc] init];
     self.backend.executableURL = executable;
-    self.backend.arguments = @[@"--casework-only", @"--no-browser", @"--port",
+    // The launcher itself validates the pinned runtime and model digests. If
+    // they are absent or invalid it starts the API with vision explicitly
+    // disabled; when they are valid it starts and health-checks the model
+    // before the API. The desktop wrapper must not force either outcome.
+    self.backend.arguments = @[@"--no-browser", @"--port",
                                [NSString stringWithFormat:@"%ld", (long)self.localPort], @"--owner-pid",
                                [NSString stringWithFormat:@"%d", getpid()]];
     self.backend.standardOutput = self.logHandle;

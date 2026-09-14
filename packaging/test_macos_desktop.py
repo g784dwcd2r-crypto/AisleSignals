@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import subprocess
 
 import pytest
 
@@ -31,6 +32,13 @@ def test_native_wrapper_compiles_and_declares_private_local_transport(tmp_path):
     assert info["NSAppTransportSecurity"] == {"NSAllowsLocalNetworking": True}
     assert info["AisleSignalsCloudOrigin"] == "https://aislesignals-control-staging.onrender.com/"
     assert "authorised pharmacy operator" in info["NSCameraUsageDescription"]
+    # Inspect the compiled native launcher rather than source text. The normal
+    # app path must let the guarded pilot launcher decide whether verified
+    # model assets are usable; a user can still choose explicit safe mode from
+    # command-line maintenance when required.
+    compiled_strings = subprocess.check_output(["strings", "-a", launcher], text=True)
+    assert "--owner-pid" in compiled_strings
+    assert "--casework-only" not in compiled_strings
 
 
 def test_explicit_sdk_must_be_an_sdk_directory(tmp_path):
