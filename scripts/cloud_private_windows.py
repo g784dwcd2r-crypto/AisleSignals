@@ -27,6 +27,7 @@ ADMINISTRATORS = "S-1-5-32-544"
 OWNER_RIGHTS = "S-1-3-4"
 TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 READ_CONTROL = 0x00020000
+FILE_LIST_DIRECTORY = 0x00000001
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 CREATE_NEW = 1
@@ -334,6 +335,11 @@ class _Native:
 
     @contextmanager
     def opened(self, path, *, access=GENERIC_READ, disposition=OPEN_EXISTING, directory=False, private_parent=False, descriptor=None):
+        if directory:
+            # Attribute/security-only opens do not participate in NTFS share
+            # accounting. Request directory read data (LIST_DIRECTORY) so the
+            # no-write/no-delete sharing below actually fences other opens.
+            access |= FILE_LIST_DIRECTORY
         flags = OPEN_REPARSE_POINT | (BACKUP_SEMANTICS if directory else 0)
         if access & GENERIC_WRITE:
             flags |= WRITE_THROUGH

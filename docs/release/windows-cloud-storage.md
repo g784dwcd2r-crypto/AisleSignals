@@ -45,7 +45,9 @@ points are not accepted. If the profile is redirected, choose another supported
 local private directory; do not remove these checks.
 
 Each ancestor is opened without write or delete sharing and held throughout the
-operation. The adapter checks the final path reported by the handle, object
+operation. These handles request `FILE_LIST_DIRECTORY` as well as attribute and
+security reads: attribute-only opens do not participate in NTFS sharing checks.
+The adapter checks the final path reported by the handle, object
 type, owner and DACL. Holding the handles prevents renaming/deleting checked
 ancestors. The ACL policy separately rejects other-principal `FILE_WRITE_DATA`
 (`FILE_ADD_FILE`) and `FILE_WRITE_ATTRIBUTES`, which could authorize in-place
@@ -128,6 +130,7 @@ browser or API test cannot replace them.
 - [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew): exclusive creation, explicit security attributes, reparse-point opening and handle sharing.
 - [GetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo) and [file access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights): handle-based ownership and DACL inspection.
 - [Windows security identifiers](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers): `OWNER RIGHTS` (`S-1-3-4`) represents the current object owner; it is resolved only after ownership validation.
+- [NTFS sharing-check algorithm](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/8c0e3f4f-0729-49f4-a14d-7f7add593819) and [file access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants): a held directory needs read-data/list access to participate in share accounting; attribute-only handles do not fence another writer or rename.
 - [FSCTL_SET_REPARSE_POINT](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fsa/4aeefef8-92c3-4abc-af7a-a610caf8a165): why ancestor `FILE_WRITE_DATA` and `FILE_WRITE_ATTRIBUTES` grants are rejected even with delete sharing disabled.
 - [GetFileInformationByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle) and [GetFinalPathNameByHandleW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew): opened-object identity, link count and final path.
 - [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex): exclusive bounded lock acquisition and process/handle lifetime.
