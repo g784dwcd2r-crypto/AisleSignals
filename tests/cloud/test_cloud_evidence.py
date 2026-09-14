@@ -418,8 +418,6 @@ def test_rotated_keyring_reads_old_and_new_evidence(workspace):
     old_evidence = owner.post(
         f"/device-api/sync/v1/observations/{old_source['source_event_id']}/evidence",
         headers=bearer(laptop), json=manifest(old_content)).json()
-    assert owner.put("/device-api/sync/v1/evidence/" + old_evidence["evidence_id"],
-                     headers={**bearer(laptop), "Content-Type": "image/jpeg"}, content=old_content).status_code == 200
 
     rotated_settings = replace(
         settings, evidence_keks=(("synthetic-v1", b"k" * 32), ("synthetic-v2", b"n" * 32)),
@@ -427,6 +425,13 @@ def test_rotated_keyring_reads_old_and_new_evidence(workspace):
     rotated_app = create_app(rotated_settings, maintenance_factory=NonRecurringMaintenance, evidence_store=store)
     with TestClient(rotated_app, base_url="https://testserver", headers={"Origin": "https://testserver"}) as rotated:
         rotated.cookies.update(owner.cookies)
+        old_upload = "/device-api/sync/v1/evidence/" + old_evidence["evidence_id"]
+        assert rotated.put(old_upload, headers={**bearer(laptop), "Content-Type": "image/jpeg"},
+                           content=old_content).status_code == 200
+        # A lost success response is reconciled under the persisted v1 key even
+        # though new manifests now use v2.
+        assert rotated.put(old_upload, headers={**bearer(laptop), "Content-Type": "image/jpeg"},
+                           content=old_content).status_code == 200
         old_download = rotated.get(
             f"/control-api/alerts/{old_alert['id']}/evidence/{old_evidence['evidence_id']}")
         assert old_download.status_code == 200 and old_download.content == old_content

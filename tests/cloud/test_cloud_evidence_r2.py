@@ -138,6 +138,14 @@ def test_probe_fails_closed_for_read_only_and_delete_denied_credentials():
     assert [call[0] for call in delete_denied.calls].count("delete") == 2
 
 
+def test_probe_does_not_treat_bucket_or_unknown_404_as_object_absence():
+    for code in ("NoSuchBucket", "UnknownProviderFailure", "404"):
+        fake = FakeS3()
+        fake.fail["get"] = client_error(code, 404)
+        assert store(fake).probe() is False
+        assert fake.objects == {}
+
+
 def test_r2_transport_failure_probe_and_malformed_stream_fail_closed():
     fake, subject = FakeS3(), None
     fake.fail["put"] = ConnectTimeoutError(endpoint_url="https://private.invalid")

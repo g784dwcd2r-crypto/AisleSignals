@@ -92,9 +92,10 @@ class EvidenceService:
             fail(503, "EVIDENCE_DISABLED", "Cloud evidence is not enabled for this service.")
 
     def encrypt(self, row, content: bytes) -> bytes:
-        if row["kek_version"] != self.settings.evidence_kek_version:
+        kek = self._keks.get(row["kek_version"])
+        if kek is None:
             raise EvidenceCryptoError("Evidence write key is unavailable.")
-        return seal(content, kek=self._keks[row["kek_version"]], kek_version=row["kek_version"], aad=_aad(row))
+        return seal(content, kek=kek, kek_version=row["kek_version"], aad=_aad(row))
 
     def decrypt(self, row, envelope: bytes) -> bytes:
         kek = self._keks.get(row["kek_version"])

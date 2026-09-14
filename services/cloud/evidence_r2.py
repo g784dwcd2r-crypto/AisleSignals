@@ -38,8 +38,7 @@ class R2EvidenceBlobStore:
     @staticmethod
     def _missing(error: ClientError) -> bool:
         response = error.response or {}
-        return (response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404
-                or response.get("Error", {}).get("Code") in {"NoSuchKey", "NotFound", "404"})
+        return response.get("Error", {}).get("Code") == "NoSuchKey"
 
     def put_if_absent(self, key: str, value: bytes) -> bool:
         if not isinstance(value, bytes) or len(value) > MAX_ENVELOPE_BYTES:

@@ -86,7 +86,9 @@ For KEK rotation, generate a new 32-byte key and add it under a new version in
 `CLOUD_EVIDENCE_KEKS` without removing existing entries. Change
 `CLOUD_EVIDENCE_KEK_VERSION` to the new version in the same secret update and
 redeploy. Verify that one pre-rotation object and one post-rotation object both
-download before completing the rotation. Remove an old key only after a database
+download before completing the rotation. A manifest accepted before rotation
+continues its delayed upload with its persisted old version, while every manifest
+accepted after rotation records the new current version. Remove an old key only after a database
 query proves no retained evidence row references that version and the applicable
 backup retention period has ended. Never reuse a version label for different
 key material; the service rejects duplicate labels and a current version absent
