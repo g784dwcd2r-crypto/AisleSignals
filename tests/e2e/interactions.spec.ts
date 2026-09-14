@@ -16,7 +16,7 @@ async function open(page: Page) {
 
 // Provider responses below are explicit fixtures for workflow tests. They do not
 // demonstrate model accuracy. Actual pretrained inference is tested separately.
-async function modelWorkflow(page: Page, { concealment = false, delayed = false, delayMs = 1800, reviewConflict = false, unavailable = false } = {}) {
+async function modelWorkflow(page: Page, { concealment = false, delayed = false, delayMs = 1800, reviewConflict = false, unavailable = false, serverCancelled = false } = {}) {
   let submitted: any = null;
   const submissions: { payload: any; receivedAt: number }[] = [];
   let item: any = null;
@@ -28,6 +28,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     (window as any).__interactionAudioStarts = 0;
     const start = OscillatorNode.prototype.start;
     OscillatorNode.prototype.start = function (...args) {
+      if ((window as any).__interactionAudioFail) throw new Error('synthetic audio failure');
       (window as any).__interactionAudioStarts++;
       return start.apply(this, args);
     };
@@ -54,6 +55,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
     item = {
       id: resultId, run_id: submitted.run_id, source_kind: submitted.source_kind,
       source_label: submitted.source_label, created_at: new Date().toISOString(),
+      ...(submitted.camera_calibration ? { camera_calibration: submitted.camera_calibration, camera_calibration_status: 'READY' } : { camera_calibration_status: 'MISSING' }),
       expires_at: new Date(Date.now() + 86400000).toISOString(), model: 'qwen3-vl:4b',
       action, visibility: 'clear', person_visible: true, product_visible: concealment, sequence_observed: concealment,
       reason: 'Controlled model-boundary fixture. Review the sampled frames.',
@@ -65,7 +67,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
   });
   await page.route(`**/api/interactions/jobs/${jobId}`, async route => {
     if (delayed) await new Promise(resolve => setTimeout(resolve, delayMs));
-    await route.fulfill({ json: { id: jobId, status: 'completed', result: item } }).catch(() => {});
+    await route.fulfill({ json: serverCancelled ? { id: jobId, status: 'cancelled' } : { id: jobId, status: 'completed', result: item } }).catch(() => {});
   });
   await page.route(`**/api/interactions/jobs/${jobId}/cancel`, async route => {
     cancelled++;
@@ -96,6 +98,8 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
 }
 
 async function commission(page: Page) {
+  for (const label of ['Entrance zone is visible', 'Exit zone is visible', 'Cashier zone is visible', 'Relevant shelf zones are visible'])
+    await page.getByLabel(label, { exact: true }).check();
   const alarm = page.getByLabel('Experimental product attention alarm', { exact: true });
   await expect(alarm).toBeDisabled();
   await expect(page.getByRole('button', { name: 'I heard the test tone', exact: true })).toBeDisabled();
@@ -237,10 +241,12 @@ test('product analysis samples actual video without pose gates, displays evidenc
   await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked();
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
   await collect(page);
+  await expect(page.getByText('Analysis and recorded demonstrations remain available. Automatic attention sound stays blocked until all four zones are confirmed.', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
   await expect(page.locator('.interaction-result')).toHaveCount(1);
   const payload = probe.submitted();
   expect(payload.source_kind).toBe('RECORDED_VIDEO');
+  expect(payload.camera_calibration).toBeUndefined();
   expect(payload.frames).toHaveLength(4);
   for (let i = 0; i < payload.frames.length; i++) {
     expect(Buffer.from(payload.frames[i].jpeg_base64, 'base64').subarray(0, 2).toString('hex')).toBe('ffd8');
@@ -259,12 +265,16 @@ test('product analysis samples actual video without pose gates, displays evidenc
 });
 
 test('explicit experimental alarm requests audio only for a fresh eligible result', async ({ page }) => {
-  await modelWorkflow(page, { concealment: true });
+  const probe = await modelWorkflow(page, { concealment: true });
   await open(page);
   await collect(page, true);
   await page.getByRole('button', { name: 'Analyse recent sequence', exact: true }).click();
   await expect(page.locator('.interaction-alert')).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(2);
+  expect(probe.submitted().camera_calibration).toEqual({ schema_version: '1.0', entrance_zone_confirmed: true, exit_zone_confirmed: true, cashier_zone_confirmed: true, shelf_zones_confirmed: true });
+  await expect(page.locator('.interaction-result .interaction-facts')).toContainText('Camera calibration: operator-declared complete');
+  await page.getByLabel('Entrance zone is visible', { exact: true }).uncheck();
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
   await page.getByRole('button', { name: 'Silence product alarm', exact: true }).click();
   await page.getByRole('button', { name: 'Acknowledge attention', exact: true }).click();
   await expect(page.locator('.interaction-alert')).toHaveCount(0);
@@ -272,6 +282,29 @@ test('explicit experimental alarm requests audio only for a fresh eligible resul
   expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(2);
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
   await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+});
+
+test('unexpected server cancellation disarms and pauses automatic analysis', async ({ page }) => {
+  await modelWorkflow(page, { concealment: true, serverCancelled: true });
+  await open(page);
+  await collect(page, true);
+  await page.getByLabel('Analyse automatically', { exact: true }).check();
+  await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked({ timeout: 8000 });
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+  await expect(page.getByText('Analysis interrupted. Automatic submission is paused; check the service and retry.', { exact: true })).toBeVisible();
+});
+
+test('attention playback failure is not recorded and fails closed', async ({ page }) => {
+  await modelWorkflow(page, { concealment: true });
+  await open(page);
+  await collect(page, true);
+  await page.evaluate(() => ((window as any).__interactionAudioFail = true));
+  await page.getByLabel('Analyse automatically', { exact: true }).check();
+  await expect(page.locator('.interaction-alert')).toBeVisible();
+  await expect(page.getByLabel('Analyse automatically', { exact: true })).not.toBeChecked({ timeout: 8000 });
+  await expect(page.getByLabel('Experimental product attention alarm', { exact: true })).not.toBeChecked();
+  await expect(page.getByText(/sound failed and automatic analysis is paused/i)).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__interactionAudioStarts)).toBe(1);
 });
 
 test('stopping cancels the pending job and a late concealment response cannot sound', async ({ page }) => {

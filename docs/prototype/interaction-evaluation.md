@@ -97,7 +97,13 @@ Prediction-file input requires a `provenance` object with `origin`, `model` and 
 - Confusion matrix: actual labels are rows; predictions are columns. Per-class precision and recall include integer support and prediction counts. A zero denominator is `null`, not 0% or 100%. No overall theft-accuracy number is generated.
 - Abstention: `UNCLEAR` predictions divided by all selected windows. Errors count as abstentions and are also reported separately. A high abstention rate can conceal an unusable detector even if precision on a few answered windows looks good.
 - Normal camera-hours: only measured normal sessions whose labelled windows cover the complete duration and whose inferences have no errors enter the denominator. Overlapping windows count the session duration once. Separate source hashes reject an exactly duplicated recording, but the operator must also avoid overlapping exports of the same time period.
-- Simulated false-alarm episodes: alarm-eligible results on qualifying normal sessions are grouped using the configured source-time cooldown (default 30 seconds). This is a replay estimate of eligibility under that rule. It does not test browser freshness checks, live processing gaps, real alert queueing or physical sound. Without qualifying normal duration the rate is `null`.
+- Simulated false-alarm episodes: alarm-eligible results on qualifying normal sessions must pass a 15-second measured evaluation processing-time proxy for the browser freshness gate, then are grouped using the configured source-time cooldown (default 30 seconds). An eligible prediction without `wall_ms` makes that normal session ineligible for an alarm-rate claim. The replay does not reproduce live queue and polling delay, live processing gaps, real alert queueing or physical sound. Without qualifying normal duration the rate is `null`.
+- Simulated alarm delivery: reports eligible windows, new sound requests,
+  cooldown-suppressed windows, concealment windows without an eligible signal,
+  and concealment windows without a new sound request. The last count includes
+  deliberate cooldown suppression and must not be presented as model recall.
+  `routing_rule_strength` counts the optional deterministic evidence-strength
+  categories. Those categories are not calibrated probabilities.
 - Timing: median, nearest-rank p95 and maximum inference times and wall times are reported. They are model-call timings, not detection latency. Separately measure action onset → captured frames → inference completion → delivered alert on each real laptop. Sparse samples and a slow model can miss a fast action altogether.
 - Provenance: canonical manifest and prediction SHA-256, model tag/digest when provided, prompt version/hash, and frame hashes from real execution. Reports omit frame bytes and generated narrative. Pin and archive exact runtime/model artifacts separately; an absent model digest does not become a verified model version.
 

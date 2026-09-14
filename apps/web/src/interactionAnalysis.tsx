@@ -21,12 +21,16 @@ import { BrowserAttentionSound } from "./playbackAlerts";
 import type { DetectionRect, LiveSourceKind } from "./liveDetectionTypes";
 import {
   captureInteractionFrame,
+  prepareInteractionSound,
+  confirmedCameraCalibration,
   freshInteractionAlarm,
   InteractionFrameBuffer,
   InteractionAlarmCommission,
+  InteractionAttentionPolicy,
   interactionLabels,
   interactionCropPixels,
   safeInteractionFrameUrl,
+  type CameraCalibration,
 } from "./interactionCapture";
 import type {
   InteractionReview,
@@ -188,6 +192,16 @@ export default function InteractionAnalysis({
     "off" | "testing" | "confirm" | "confirmed"
   >("off");
   const [recordedAlarmAllowed, setRecordedAlarmAllowed] = useState(false);
+  const [calibrationChecks, setCalibrationChecks] = useState({
+    entrance: false,
+    exit: false,
+    cashier: false,
+    shelves: false,
+  });
+  const calibrationReady = Object.values(calibrationChecks).every(Boolean);
+  const cameraCalibration: CameraCalibration | null = calibrationReady
+    ? confirmedCameraCalibration()
+    : null;
   const [sourceReady, setSourceReady] = useState(false);
   const [recordedSource, setRecordedSource] = useState(false);
   const [cropEnabled, setCropEnabled] = useState(false);
@@ -255,6 +269,7 @@ export default function InteractionAnalysis({
   );
   const mounted = useRef(true);
   const commission = useRef(new InteractionAlarmCommission());
+  const attention = useRef(new InteractionAttentionPolicy());
   const historyRevision = useRef(0);
   const refreshRevision = useRef(0);
   const cropPreview = useRef<HTMLCanvasElement>(null);
@@ -274,6 +289,7 @@ export default function InteractionAnalysis({
     cameraReady,
     cameraLabel: cameraChoice.label,
     sourceKey,
+    cameraCalibration,
   });
   options.current = {
     enabled,
@@ -289,6 +305,7 @@ export default function InteractionAnalysis({
     cameraReady,
     cameraLabel: cameraChoice.label,
     sourceKey,
+    cameraCalibration,
   };
   const buffer = useRef(new InteractionFrameBuffer());
   const generation = useRef(0);
@@ -300,7 +317,6 @@ export default function InteractionAnalysis({
     cancelled: boolean;
   } | null>(null);
   const sound = useRef<BrowserAttentionSound | null>(null);
-  const lastAlarm = useRef(-Infinity);
   const lastSubmitted = useRef(-Infinity);
   const lastProgress = useRef({ media: -1, wall: 0 });
   const submitRef = useRef<() => Promise<void>>(async () => {});
@@ -328,6 +344,7 @@ export default function InteractionAnalysis({
       options.current.cropEnabled ? options.current.crop : null,
       options.current.sourceKey,
       options.current.cameraLabel,
+      options.current.cameraCalibration,
     ]);
   }
   function disarmAlarm(
@@ -348,6 +365,7 @@ export default function InteractionAnalysis({
     if (!context || options.current.muted || options.current.volume <= 0)
       return;
     disarmAlarm();
+    attention.current.resetRun();
     const revision = commission.current.beginTest(context);
     setCommissionStage("testing");
     const speaker = (sound.current ??= new BrowserAttentionSound());
@@ -459,6 +477,12 @@ export default function InteractionAnalysis({
     setCropError("");
     setCrop(options.current.crop);
     setCameraChoice({ sourceKey, confirmed: false, custom: false, label: "" });
+    setCalibrationChecks({
+      entrance: false,
+      exit: false,
+      cashier: false,
+      shelves: false,
+    });
     setStatus(
       "Choose or confirm the camera layout before sampling product interactions. Earlier camera samples and alarms were cleared.",
     );
@@ -488,6 +512,12 @@ export default function InteractionAnalysis({
     setCropEnabled(nextEnabled);
     setCrop(nextCrop);
     setCropError(invalid);
+    setCalibrationChecks({
+      entrance: false,
+      exit: false,
+      cashier: false,
+      shelves: false,
+    });
     const label = tileLabel ?? "custom selected area";
     options.current.cameraReady = nextEnabled && !!sourceKey;
     options.current.cameraLabel = label;
@@ -616,6 +646,9 @@ export default function InteractionAnalysis({
         at_seconds,
         jpeg_base64,
       })),
+      ...(options.current.cameraCalibration
+        ? { camera_calibration: options.current.cameraCalibration }
+        : {}),
     };
     const requestKey = idempotencyKey("/interactions/jobs", "POST", payload);
     try {
@@ -689,27 +722,42 @@ export default function InteractionAnalysis({
             result: saved,
           });
           if (visibleAttention) setHighlight(saved.id);
-          const eligible =
+          const soundReservation =
             visibleAttention &&
             options.current.alarmEnabled &&
             !options.current.muted &&
             options.current.volume > 0 &&
-            now - lastAlarm.current >= 30_000 &&
-            commission.current.claim(contextKey(), saved.id, saved.source_kind);
-          if (eligible) {
-            lastAlarm.current = now;
+            prepareInteractionSound(attention.current, commission.current, {
+              id: saved.id,
+              camera: contextKey(),
+              now,
+              context: contextKey(),
+              source: saved.source_kind,
+            });
+          let sounded = false;
+          let soundFailure = "";
+          if (soundReservation) {
             const played = sound.current?.play({
               volume: options.current.volume,
               durationSeconds: 8,
             });
-            setSoundStatus(
-              played?.message ??
-                "Audio is unavailable. Review the highlighted result.",
-            );
+            if (played?.ok && soundReservation()) {
+              sounded = true;
+              setSoundStatus(played.message);
+            } else {
+              soundFailure =
+                played?.message ??
+                "Audio is unavailable. Review the highlighted result.";
+              options.current.automatic = false;
+              setAutomatic(false);
+              disarmAlarm(
+                `${soundFailure} Automatic analysis is paused; repeat the sound check before re-enabling it.`,
+              );
+            }
           }
           const delay = Math.round((now - frames.at(-1)!.capturedAt) / 1000);
           setStatus(
-            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${eligible ? "Attention requested; review the sampled frames." : delay > 15 ? "Delayed result saved for review; no alarm." : visibleAttention ? "Visual attention requested; sound was not triggered." : "Saved for review."}`,
+            `${interactionLabels[saved.action]} · result ${delay}s after last sampled frame. ${sounded ? "Attention requested; review the sampled frames." : soundFailure ? "Visual attention remains; sound failed and automatic analysis is paused." : delay > 15 ? "Delayed result saved for review; no alarm." : visibleAttention ? "Visual attention requested; sound was not triggered." : "Saved for review."}`,
           );
           return;
         }
@@ -717,11 +765,10 @@ export default function InteractionAnalysis({
           throw new Error(
             result.error || "The local model could not analyse this sequence.",
           );
-        if (result.status === "cancelled") {
-          setSubmittedWindow(null);
-          setStatus("Analysis cancelled. No alarm was triggered.");
-          return;
-        }
+        if (result.status === "cancelled")
+          throw new Error(
+            "The local service cancelled analysis unexpectedly. No alarm was triggered.",
+          );
         if (age > 120_000) {
           await api(
             `/interactions/jobs/${created.id}/cancel`,
@@ -1087,8 +1134,26 @@ export default function InteractionAnalysis({
     options.current.enabled = options.current.automatic = false;
     setEnabled(false);
     setAutomatic(false);
+    setCalibrationChecks({
+      entrance: false,
+      exit: false,
+      cashier: false,
+      shelves: false,
+    });
     cancel();
   }, [allMode]);
+
+  useEffect(() => {
+    setCalibrationChecks({
+      entrance: false,
+      exit: false,
+      cashier: false,
+      shelves: false,
+    });
+    disarmAlarm(
+      "Camera source changed. Confirm zone coverage and repeat the sound check.",
+    );
+  }, [sourceKey]);
 
   return (
     <section
@@ -1122,6 +1187,44 @@ export default function InteractionAnalysis({
           ? `${model.model} · ${model.message}`
           : "Checking the local interaction service…"}
       </p>
+      <fieldset className="interaction-commission">
+        <legend>Pharmacy camera calibration</legend>
+        <p>
+          Confirm that the current camera selection covers each operating zone.
+          This is staff-declared metadata for alarm gating, not proof that the
+          camera placement or detection model is accurate.
+        </p>
+        {(
+          [
+            ["entrance", "Entrance zone is visible"],
+            ["exit", "Exit zone is visible"],
+            ["cashier", "Cashier zone is visible"],
+            ["shelves", "Relevant shelf zones are visible"],
+          ] as const
+        ).map(([key, label]) => (
+          <label className="ld-inline-check" key={key}>
+            <input
+              type="checkbox"
+              checked={calibrationChecks[key]}
+              onChange={(event) => {
+                disarmAlarm(
+                  "Camera calibration changed. Repeat the sound check before arming.",
+                );
+                setCalibrationChecks((current) => ({
+                  ...current,
+                  [key]: event.target.checked,
+                }));
+              }}
+            />
+            {label}
+          </label>
+        ))}
+        <p role="status">
+          {calibrationReady
+            ? "Calibration metadata complete for this camera selection. Alarm commissioning is available after the speaker check."
+            : "Analysis and recorded demonstrations remain available. Automatic attention sound stays blocked until all four zones are confirmed."}
+        </p>
+      </fieldset>
       {!allMode && (
         <>
           <p className="interaction-readiness" role="status">
@@ -1174,6 +1277,7 @@ export default function InteractionAnalysis({
                   !enabled ||
                   !model?.ready ||
                   !sourceReady ||
+                  !cameraCalibration ||
                   commissionStage !== "confirmed" ||
                   (recordedSource && !recordedAlarmAllowed)
                 }
@@ -1471,6 +1575,7 @@ export default function InteractionAnalysis({
             videoRef={videoRef}
             readRunning={() => options.current.readSession().running}
             modelReady={model?.ready === true}
+            cameraCalibration={cameraCalibration}
             muted={muted}
             volume={volume}
             cancelRef={allCancel}
@@ -1544,6 +1649,7 @@ export default function InteractionAnalysis({
             type="button"
             onClick={() => {
               silence();
+              attention.current.acknowledge(contextKey(), performance.now());
               setHighlight(null);
               setStatus(
                 "Attention acknowledged. Review the sampled frames and record Useful, Normal shopping or Unclear below.",
@@ -1593,6 +1699,24 @@ export default function InteractionAnalysis({
           </div>
           <p>{item.reason}</p>
           <div className="interaction-facts">
+            <span>
+              Camera calibration:{" "}
+              {item.camera_calibration
+                ? "operator-declared complete"
+                : "missing"}
+            </span>
+            {item.alarm_blocked_reason === "CAMERA_CALIBRATION_REQUIRED" && (
+              <span>
+                Automatic alarm blocked: camera zone calibration required
+              </span>
+            )}
+            {item.evidence_strength && (
+              <span title={item.evidence_strength_note}>
+                Evidence rule strength:{" "}
+                {item.evidence_strength.replaceAll("_", " ").toLowerCase()}
+                {" · not a probability"}
+              </span>
+            )}
             <span>
               Model reports person visible: {item.person_visible ? "yes" : "no"}
             </span>

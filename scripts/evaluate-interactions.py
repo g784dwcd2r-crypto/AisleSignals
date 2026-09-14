@@ -33,7 +33,13 @@ CLASSES = (
 SPLITS = ("train", "validation", "test")
 NORMAL_CLASSES = set(CLASSES) - {"POSSIBLE_CONCEALMENT", "UNCLEAR"}
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
-VERSION = "interaction-evaluator-v2"
+VERSION = "interaction-evaluator-v4"
+ALARM_FRESHNESS_SECONDS = 15
+EVIDENCE_STRENGTHS = (
+    "STRONG_RULE_MATCH",
+    "PARTIAL_RULE_MATCH",
+    "INSUFFICIENT_RULE_MATCH",
+)
 SCENARIOS = (
     "ORDINARY_BROWSING", "PICKUP", "RETURN", "BASKET_PLACEMENT",
     "STAGED_CONCEALMENT", "PHONE_OR_BAG_HANDLING", "STAFF_RESTOCKING",
@@ -179,6 +185,8 @@ def validate_predictions(predictions, windows):
         number(result.get("inference_ms"), "inference timing", maximum=3600000)
         if "wall_ms" in result:
             number(result["wall_ms"], "wall timing", maximum=3600000)
+        if "evidence_strength" in result:
+            require(result["evidence_strength"] in EVIDENCE_STRENGTHS, "Unknown evidence rule strength")
         found[wid] = {**result, "status": status}
     require(set(found) == expected, "Missing predictions: every selected window must be included, including errors")
     return found
@@ -221,6 +229,68 @@ def alarm_metrics(windows, found):
         "physical_alarm_delivery_tested": False,
         "confidence_interval": None,
         "uncertainty_note": "Counts are descriptive for these sampled windows. Overlapping windows and repeated actors are dependent; no population-accuracy or independence assumption is made.",
+    }
+
+
+def sound_candidate(prediction, freshness_seconds=ALARM_FRESHNESS_SECONDS):
+    """Apply the browser threshold to measured evaluation processing time."""
+    return (
+        prediction["status"] == "OK"
+        and prediction["alarm_eligible"]
+        and "wall_ms" in prediction
+        and prediction["wall_ms"] <= freshness_seconds * 1000
+    )
+
+
+def simulated_delivery_metrics(windows, found, cooldown_seconds, freshness_seconds=ALARM_FRESHNESS_SECONDS):
+    """Replay browser freshness and cooldown gates; never claim speaker delivery."""
+    emitted = []
+    suppressed = []
+    stale = []
+    unassessed = []
+    concealment_without_signal = 0
+    concealment_without_new_sound = 0
+    for sid in sorted({window["session_id"] for window in windows}):
+        last_sound = -math.inf
+        candidates = sorted(
+            (window for window in windows if window["session_id"] == sid),
+            key=lambda value: (value["end_seconds"], value["id"]),
+        )
+        for window in candidates:
+            prediction = found[window["id"]]
+            eligible = prediction["alarm_eligible"] and prediction["status"] == "OK"
+            fresh = sound_candidate(prediction, freshness_seconds)
+            if eligible and "wall_ms" not in prediction:
+                unassessed.append(window["id"])
+            elif eligible and not fresh:
+                stale.append(window["id"])
+            sounded = fresh and window["end_seconds"] - last_sound >= cooldown_seconds
+            if sounded:
+                emitted.append(window["id"])
+                last_sound = window["end_seconds"]
+            elif fresh:
+                suppressed.append(window["id"])
+            if window["label"] == "POSSIBLE_CONCEALMENT":
+                concealment_without_signal += not eligible
+                concealment_without_new_sound += not sounded
+    return {
+        "eligible_windows": len(emitted) + len(suppressed) + len(stale) + len(unassessed),
+        "fresh_eligible_windows": len(emitted) + len(suppressed),
+        "stale_eligible_windows": len(stale),
+        "freshness_unassessed_eligible_windows": len(unassessed),
+        "simulation_complete": not unassessed,
+        "simulated_new_sound_requests": len(emitted),
+        "cooldown_suppressed_windows": len(suppressed),
+        "concealment_windows_without_eligible_signal": concealment_without_signal,
+        "concealment_windows_without_new_sound": concealment_without_new_sound,
+        "cooldown_seconds": cooldown_seconds,
+        "freshness_seconds": freshness_seconds,
+        "physical_alarm_delivery_tested": False,
+        "offline_delivery_note": (
+            "Application metadata uses the persistent retry outbox; this source-time "
+            "simulation applies measured evaluation processing time plus source-time cooldown; "
+            "it does not reproduce live queue/poll delay, a network, operating-system audio or staff response."
+        ),
     }
 
 
@@ -283,7 +353,7 @@ def coverage_report(plan, by_session, windows, found, included_normal_sessions, 
                 continue
             last_alarm = -math.inf
             for window in sorted((w for w in selected if w["session_id"] == sid), key=lambda value: value["end_seconds"]):
-                if found[window["id"]]["alarm_eligible"] and window["end_seconds"] - last_alarm >= cooldown_seconds:
+                if sound_candidate(found[window["id"]]) and window["end_seconds"] - last_alarm >= cooldown_seconds:
                     normal_alarms += 1
                     last_alarm = window["end_seconds"]
         matrix, metrics = classification_metrics(selected, found)
@@ -359,12 +429,14 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
             excluded_sessions.append({"session_id": sid, "reason": "Windows do not cover the entire normal observation"})
         elif any(found[w["id"]]["status"] == "ERROR" for w in candidates):
             excluded_sessions.append({"session_id": sid, "reason": "Inference errors prevent complete model coverage"})
+        elif any(found[w["id"]]["alarm_eligible"] and "wall_ms" not in found[w["id"]] for w in candidates):
+            excluded_sessions.append({"session_id": sid, "reason": "Wall timing missing for an eligible result prevents alarm freshness simulation"})
         else:
             included_sessions.append(sid)
             normal_seconds += session["duration_seconds"]
             last_alarm_time = -math.inf
             for window in sorted(candidates, key=lambda value: value["end_seconds"]):
-                if found[window["id"]]["alarm_eligible"] and window["end_seconds"] - last_alarm_time >= cooldown_seconds:
+                if sound_candidate(found[window["id"]]) and window["end_seconds"] - last_alarm_time >= cooldown_seconds:
                     normal_alarms += 1
                     last_alarm_time = window["end_seconds"]
 
@@ -392,6 +464,15 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
         "inference_errors": errors,
         "alarms_on_unclear_ground_truth": unknown_truth_alarms,
         "alarm_eligibility": alarm_metrics(windows, found),
+        "simulated_alarm_delivery": simulated_delivery_metrics(
+            windows, found, cooldown_seconds
+        ),
+        "routing_rule_strength": {
+            strength: sum(
+                item.get("evidence_strength") == strength for item in found.values()
+            )
+            for strength in EVIDENCE_STRENGTHS
+        },
         "normal_observation": {
             "measured_covered_camera_hours": normal_seconds / 3600,
             "simulated_false_alarm_episodes": normal_alarms,
@@ -405,9 +486,9 @@ def evaluate(manifest, predictions, root: Path, split="test", cooldown_seconds=3
         "wall_timing": summarize_timings([p["wall_ms"] for p in found.values() if "wall_ms" in p]),
         "warnings": [
             "Counts describe these labelled sampled windows, not general theft accuracy or proof of theft.",
-            "Structured model output and alarm eligibility are not calibrated confidence.",
+            "Evidence rule strength, structured model output and alarm eligibility are not calibrated confidence.",
             "Window coverage does not mean every video frame was analysed; sampling may miss fast actions.",
-            "Simulated alarm episodes use source-window end times, not live queueing or speaker delivery.",
+            "Simulated alarm episodes use evaluation wall time as a proxy for the live 15-second freshness gate, then apply source-window cooldown; live queue/poll delay and speaker delivery remain untested.",
             "Do not tune prompts or thresholds on the test split; relabelled feedback belongs to a new development version.",
         ],
     }
@@ -482,6 +563,7 @@ def run_local(manifest, root: Path, split, provider=None):
             model_digest = result.get("model_digest", model_digest)
             prompt_sha256 = result.get("prompt_sha256", prompt_sha256)
             results.append({"window_id": wid, "action": result["action"], "alarm_eligible": result["alarm_eligible"],
+                            **({"evidence_strength": result["evidence_strength"]} if "evidence_strength" in result else {}),
                             "inference_ms": result["inference_ms"], "status": "OK", "wall_ms": (time.perf_counter() - start) * 1000})
         except Exception:
             # Provider errors can contain raw generated text. Retain a count,

@@ -9,6 +9,13 @@ export type InteractionAction =
   | "NORMAL_SHOPPING"
   | "UNCLEAR";
 export type InteractionReview = "USEFUL" | "NORMAL_SHOPPING" | "UNCLEAR";
+export type CameraCalibration = Readonly<{
+  schema_version: "1.0";
+  entrance_zone_confirmed: true;
+  exit_zone_confirmed: true;
+  cashier_zone_confirmed: true;
+  shelf_zones_confirmed: true;
+}>;
 export type SavedInteraction = {
   id: string;
   version: number;
@@ -18,6 +25,9 @@ export type SavedInteraction = {
   camera_context?: CameraContext | null;
   camera_id?: string;
   camera_label?: string;
+  camera_calibration?: CameraCalibration;
+  camera_calibration_status?: "READY" | "MISSING";
+  alarm_blocked_reason?: "CAMERA_CALIBRATION_REQUIRED";
   created_at: string;
   expires_at: string;
   model: string;
@@ -29,10 +39,22 @@ export type SavedInteraction = {
   reason: string;
   evidence_frame_indices: number[];
   alarm_eligible: boolean;
+  evidence_strength?:
+    "STRONG_RULE_MATCH" | "PARTIAL_RULE_MATCH" | "INSUFFICIENT_RULE_MATCH";
+  evidence_strength_note?: string;
   inference_ms: number;
   frames: { at_seconds: number; url: string }[];
   review: null | { outcome: InteractionReview; note: string };
 };
+
+const COMPLETE_CAMERA_CALIBRATION: CameraCalibration = Object.freeze({
+  schema_version: "1.0",
+  entrance_zone_confirmed: true,
+  exit_zone_confirmed: true,
+  cashier_zone_confirmed: true,
+  shelf_zones_confirmed: true,
+});
+export const confirmedCameraCalibration = () => COMPLETE_CAMERA_CALIBRATION;
 
 export const interactionLabels: Record<InteractionAction, string> = {
   TAKE_PRODUCT: "Product picked up",
@@ -52,9 +74,66 @@ export type SampledFrame = {
   sourceHeight: number;
 };
 export const INTERACTION_FRESH_MS = 15_000;
+export const INTERACTION_ALARM_COOLDOWN_MS = 30_000;
+export const ACKNOWLEDGED_CAMERA_QUIET_MS = 120_000;
+
+export type AttentionDecision =
+  | "REQUEST_SOUND"
+  | "ALREADY_DELIVERED"
+  | "GLOBAL_COOLDOWN"
+  | "ACKNOWLEDGED_CAMERA_QUIET"
+  | "INVALID";
+
+/** Sound suppression never discards the saved observation staff can review. */
+export class InteractionAttentionPolicy {
+  private static readonly MAX_DELIVERED_IDS = 1000;
+  private lastSoundAt = -Infinity;
+  private delivered = new Set<string>();
+  private quietUntil = new Map<string, number>();
+
+  check(id: string, camera: string, now: number): AttentionDecision {
+    if (!id || !camera || !Number.isFinite(now)) return "INVALID";
+    if (this.delivered.has(id)) return "ALREADY_DELIVERED";
+    if (now < (this.quietUntil.get(camera) ?? -Infinity))
+      return "ACKNOWLEDGED_CAMERA_QUIET";
+    if (now - this.lastSoundAt < INTERACTION_ALARM_COOLDOWN_MS)
+      return "GLOBAL_COOLDOWN";
+    return "REQUEST_SOUND";
+  }
+
+  recordDelivery(id: string, now: number) {
+    if (!id || !Number.isFinite(now) || this.delivered.has(id)) return false;
+    if (this.delivered.size >= InteractionAttentionPolicy.MAX_DELIVERED_IDS) {
+      const oldest = this.delivered.values().next().value;
+      if (oldest !== undefined) this.delivered.delete(oldest);
+    }
+    this.delivered.add(id);
+    this.lastSoundAt = now;
+    return true;
+  }
+
+  decide(id: string, camera: string, now: number): AttentionDecision {
+    const decision = this.check(id, camera, now);
+    if (decision !== "REQUEST_SOUND") return decision;
+    return this.recordDelivery(id, now) ? "REQUEST_SOUND" : "INVALID";
+  }
+
+  acknowledge(camera: string, now: number) {
+    if (!camera || !Number.isFinite(now)) return false;
+    this.quietUntil.set(camera, now + ACKNOWLEDGED_CAMERA_QUIET_MS);
+    return true;
+  }
+
+  resetRun() {
+    this.lastSoundAt = -Infinity;
+    this.quietUntil.clear();
+    // Keep the bounded recent ID history so a late result cannot replay after restart.
+  }
+}
 
 /** A browser audio callback is not evidence that a member of staff heard it. */
 export class InteractionAlarmCommission {
+  private static readonly MAX_DELIVERED_IDS = 1000;
   private revision = 0;
   private context = "";
   private testedAt: number | null = null;
@@ -115,20 +194,57 @@ export class InteractionAlarmCommission {
   get active() {
     return !!this.context;
   }
-  claim(context: string, id: string, source: LiveSourceKind) {
+  checkClaim(context: string, id: string, source: LiveSourceKind) {
     if (
       !this.armed ||
       !this.confirmed ||
       !this.matches(context) ||
       !id ||
       this.delivered.has(id) ||
-      this.delivered.size >= 1000 ||
       (source === "RECORDED_VIDEO" && !this.recordedAllowed)
     )
       return false;
+    return true;
+  }
+  recordClaim(id: string) {
+    if (!id || this.delivered.has(id)) return false;
+    if (this.delivered.size >= InteractionAlarmCommission.MAX_DELIVERED_IDS) {
+      const oldest = this.delivered.values().next().value;
+      if (oldest !== undefined) this.delivered.delete(oldest);
+    }
     this.delivered.add(id);
     return true;
   }
+  claim(context: string, id: string, source: LiveSourceKind) {
+    return this.checkClaim(context, id, source) && this.recordClaim(id);
+  }
+}
+
+/** Checks both gates without consuming the ID; commit only after sound playback succeeds. */
+export function prepareInteractionSound(
+  attention: InteractionAttentionPolicy,
+  commission: InteractionAlarmCommission,
+  input: {
+    id: string;
+    camera: string;
+    now: number;
+    context: string;
+    source: LiveSourceKind;
+  },
+) {
+  if (attention.check(input.id, input.camera, input.now) !== "REQUEST_SOUND")
+    return null;
+  if (!commission.checkClaim(input.context, input.id, input.source))
+    return null;
+  let pending = true;
+  return () => {
+    if (!pending) return false;
+    pending = false;
+    return (
+      commission.recordClaim(input.id) &&
+      attention.recordDelivery(input.id, input.now)
+    );
+  };
 }
 
 /** Bounded ephemeral history. Discontinuities discard sequences rather than joining unrelated moments. */

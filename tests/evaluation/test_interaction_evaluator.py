@@ -44,7 +44,7 @@ def predictions(windows, changes=None):
     return {
         "provenance": {"origin": "SYNTHETIC_METRICS_TEST", "model": "synthetic-not-a-model", "prompt_version": "none"},
         "results": [{"window_id": w["id"], "action": w["label"], "alarm_eligible": w["label"] == "POSSIBLE_CONCEALMENT",
-                     "inference_ms": 10, **(changes or {}).get(w["id"], {})} for w in windows],
+                     "inference_ms": 10, "wall_ms": 10, **(changes or {}).get(w["id"], {})} for w in windows],
     }
 
 
@@ -90,6 +90,65 @@ def test_false_alarm_episodes_use_measured_continuous_duration_and_cooldown(tmp_
     assert normal["simulated_false_alarm_episodes"] == 2
     assert normal["simulated_false_alarms_per_camera_hour"] == 120
     assert normal["physical_alarm_delivery_tested"] is False
+    delivery = report["simulated_alarm_delivery"]
+    assert delivery["eligible_windows"] == 3
+    assert delivery["simulated_new_sound_requests"] == 2
+    assert delivery["cooldown_suppressed_windows"] == 1
+    assert delivery["physical_alarm_delivery_tested"] is False
+
+
+def test_delivery_report_separates_missed_signal_from_cooldown_suppression(tmp_path):
+    windows = [
+        window("c1", label="POSSIBLE_CONCEALMENT", start=0, end=6),
+        window("c2", label="POSSIBLE_CONCEALMENT", start=6, end=12),
+        window("c3", label="POSSIBLE_CONCEALMENT", start=12, end=18),
+    ]
+    data = manifest([session(duration=18)], windows)
+    guesses = predictions(windows, {"c2": {"alarm_eligible": False}})
+    delivery = evaluator.evaluate(data, guesses, tmp_path)["simulated_alarm_delivery"]
+    assert delivery["eligible_windows"] == 2
+    assert delivery["simulated_new_sound_requests"] == 1
+    assert delivery["cooldown_suppressed_windows"] == 1
+    assert delivery["concealment_windows_without_eligible_signal"] == 1
+    assert delivery["concealment_windows_without_new_sound"] == 2
+
+
+def test_delivery_applies_processing_freshness_gate_and_does_not_guess_missing_timing(tmp_path):
+    windows = [
+        window("fresh", label="POSSIBLE_CONCEALMENT", start=0, end=6),
+        window("stale", label="POSSIBLE_CONCEALMENT", start=36, end=42),
+        window("unknown", label="POSSIBLE_CONCEALMENT", start=72, end=78),
+    ]
+    data = manifest([session(duration=78)], windows)
+    guesses = predictions(windows, {"stale": {"wall_ms": 15001}})
+    del guesses["results"][2]["wall_ms"]
+    delivery = evaluator.evaluate(data, guesses, tmp_path)["simulated_alarm_delivery"]
+    assert delivery["eligible_windows"] == 3
+    assert delivery["fresh_eligible_windows"] == 1
+    assert delivery["stale_eligible_windows"] == 1
+    assert delivery["freshness_unassessed_eligible_windows"] == 1
+    assert delivery["simulated_new_sound_requests"] == 1
+    assert delivery["simulation_complete"] is False
+
+
+def test_normal_observation_excludes_unassessed_alarm_freshness(tmp_path):
+    data, guesses = normal_case()
+    del guesses["results"][0]["wall_ms"]
+    normal = evaluator.evaluate(data, guesses, tmp_path)["normal_observation"]
+    assert normal["simulated_false_alarms_per_camera_hour"] is None
+    assert normal["measured_covered_camera_hours"] == 0
+    assert "Wall timing missing" in normal["excluded_sessions"][0]["reason"]
+
+
+def test_optional_rule_strength_is_counted_and_strictly_validated(tmp_path):
+    data = manifest()
+    guesses = predictions(data["windows"])
+    guesses["results"][0]["evidence_strength"] = "STRONG_RULE_MATCH"
+    report = evaluator.evaluate(data, guesses, tmp_path)
+    assert report["routing_rule_strength"]["STRONG_RULE_MATCH"] == 1
+    guesses["results"][0]["evidence_strength"] = "92_PERCENT_CONFIDENT"
+    with pytest.raises(evaluator.EvaluationError, match="Unknown evidence rule strength"):
+        evaluator.evaluate(data, guesses, tmp_path)
 
 
 @pytest.mark.parametrize("issue", ["unmeasured", "coverage_gap", "model_error", "staged"])

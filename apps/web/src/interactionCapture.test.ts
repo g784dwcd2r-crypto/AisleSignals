@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ACKNOWLEDGED_CAMERA_QUIET_MS,
   freshInteractionAlarm,
+  InteractionAttentionPolicy,
   InteractionFrameBuffer,
   safeInteractionFrameUrl,
   interactionCropPixels,
   captureInteractionFrame,
+  prepareInteractionSound,
   InteractionAlarmCommission,
 } from "./interactionCapture";
 
@@ -323,6 +326,89 @@ describe("staff product alarm commissioning", () => {
     gate.arm(context, false);
     expect(gate.claim(context, "job-one", "CAMERA")).toBe(false);
     expect(gate.claim(context, "job-two", "CAMERA")).toBe(true);
+  });
+
+  it("keeps accepting commissioned jobs after its bounded history fills", () => {
+    const gate = commissioned();
+    for (let index = 0; index < 1001; index++)
+      expect(gate.claim(context, `job-${index}`, "CAMERA")).toBe(true);
+    expect(gate.claim(context, "job-1000", "CAMERA")).toBe(false);
+  });
+
+  it("does not consume attention or cooldown when commissioning rejects", () => {
+    const attention = new InteractionAttentionPolicy();
+    const gate = new InteractionAlarmCommission();
+    expect(
+      prepareInteractionSound(attention, gate, {
+        id: "job-one",
+        camera: "camera-1",
+        now: 1000,
+        context,
+        source: "CAMERA",
+      }),
+    ).toBeNull();
+    expect(attention.check("job-one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    expect(attention.check("job-two", "camera-2", 1001)).toBe("REQUEST_SOUND");
+    const revision = gate.beginTest(context);
+    gate.finishTest(revision, context, 2000);
+    gate.confirm(context, 2001);
+    gate.arm(context, false);
+    const commit = prepareInteractionSound(attention, gate, {
+      id: "job-one",
+      camera: "camera-1",
+      now: 2002,
+      context,
+      source: "CAMERA",
+    });
+    expect(commit).not.toBeNull();
+    expect(attention.check("job-one", "camera-1", 2002)).toBe("REQUEST_SOUND");
+    expect(commit?.()).toBe(true);
+    expect(commit?.()).toBe(false);
+    expect(attention.check("job-two", "camera-2", 2003)).toBe(
+      "GLOBAL_COOLDOWN",
+    );
+  });
+});
+
+describe("product attention duplicate and acknowledgement policy", () => {
+  it("shares a global cooldown across cameras without losing later observations", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.decide("one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    expect(policy.decide("two", "camera-2", 2000)).toBe("GLOBAL_COOLDOWN");
+    expect(policy.decide("two", "camera-2", 31000)).toBe("REQUEST_SOUND");
+    expect(policy.decide("two", "camera-2", 62000)).toBe("ALREADY_DELIVERED");
+  });
+
+  it("acknowledgement quiets only that camera and expires deterministically", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.acknowledge("camera-1", 5000)).toBe(true);
+    expect(policy.decide("one", "camera-1", 6000)).toBe(
+      "ACKNOWLEDGED_CAMERA_QUIET",
+    );
+    expect(policy.decide("two", "camera-2", 6000)).toBe("REQUEST_SOUND");
+    expect(
+      policy.decide("three", "camera-1", 5000 + ACKNOWLEDGED_CAMERA_QUIET_MS),
+    ).toBe("REQUEST_SOUND");
+  });
+
+  it("resetting a run clears cooldowns but never replays an already delivered id", () => {
+    const policy = new InteractionAttentionPolicy();
+    expect(policy.decide("one", "camera-1", 1000)).toBe("REQUEST_SOUND");
+    policy.acknowledge("camera-1", 2000);
+    policy.resetRun();
+    expect(policy.decide("one", "camera-1", 3000)).toBe("ALREADY_DELIVERED");
+    expect(policy.decide("two", "camera-1", 3000)).toBe("REQUEST_SOUND");
+  });
+
+  it("keeps accepting new observations after the bounded duplicate history fills", () => {
+    const policy = new InteractionAttentionPolicy();
+    for (let index = 0; index < 1001; index++)
+      expect(policy.decide(`job-${index}`, "camera-1", index * 30001)).toBe(
+        "REQUEST_SOUND",
+      );
+    expect(policy.decide("job-1000", "camera-1", 1002 * 30001)).toBe(
+      "ALREADY_DELIVERED",
+    );
   });
 });
 

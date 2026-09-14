@@ -156,7 +156,9 @@ def test_minimum_sample_counts_do_not_gate_or_claim_accuracy(tmp_path):
 
 def test_branch_metrics_include_errors_and_normal_alarm_burden_without_pooling(tmp_path):
     manifest, predictions, plan = dataset()
-    predictions["results"][-1].update(action="POSSIBLE_CONCEALMENT", alarm_eligible=True)
+    predictions["results"][-1].update(
+        action="POSSIBLE_CONCEALMENT", alarm_eligible=True, wall_ms=10
+    )
     predictions["results"][1].update(action="UNCLEAR", status="ERROR", alarm_eligible=False)
     branch = evaluator.evaluate(manifest, predictions, tmp_path, coverage_plan=plan)["branch_coverage"]["branches"][0]
     assert branch["per_class"]["TAKE_PRODUCT"]["recall"] == 0

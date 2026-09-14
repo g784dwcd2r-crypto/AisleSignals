@@ -21,6 +21,23 @@ This iteration follows the owner's instruction to relax the earlier EUR 60 devel
 
 The experimental interaction alarm is a separate opt-in control. A recorded video remains labelled as a test. Stopping, seeking, changing the source, losing visibility or leaving the tab cancels the current analysis session and disarms its sound. Late results are for review only. Speaker output still depends on browser activation, system volume and the laptop remaining awake.
 
+Before sound can be armed, staff must declare that the current camera selection covers the pharmacy entrance, exit, cashier and relevant shelf zones. The additive `camera_calibration` record is stored with new analysis jobs and surfaced in review history. Older clients and saved results without it remain readable and can still run analysis, but an otherwise alarm-eligible model observation is downgraded with `CAMERA_CALIBRATION_REQUIRED`. These confirmations are an operational gate, not an automated test of camera placement, image quality or model accuracy; each branch still needs a documented site acceptance exercise.
+
+Every result includes an explainable `evidence_strength` of
+`STRONG_RULE_MATCH`, `PARTIAL_RULE_MATCH` or `INSUFFICIENT_RULE_MATCH`. This is
+computed from the visible-person, visible-product, sequence, visibility and
+supporting-frame gates. It is not a confidence probability. Only a clear,
+fully supported `POSSIBLE_CONCEALMENT` sequence is alarm-eligible, and staff
+must still review it.
+
+Sound requests use one 30-second cooldown across the active camera set and
+deduplicate each saved observation ID. Acknowledging an all-camera attention
+quietens repeat sound from that camera for two minutes while sampling and saved
+review observations continue. Muting, stopping or changing the run disarms
+sound and requires another physical speaker check. These controls reduce alarm
+fatigue; they do not improve recognition accuracy or prove that anyone heard a
+sound.
+
 ## Local model setup
 
 The pinned model is the Q4_K_M version of [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF), accompanied by its F16 vision projector. Combined download is approximately 3.3 GB. The publisher marks this model Apache-2.0. It is a general vision-language model; its capabilities do not establish pharmacy detection accuracy.
@@ -50,7 +67,7 @@ These commands launch foreground development processes, not an all-shift service
 
 ## Data and failure behaviour
 
-The browser sends a bounded set of JPEG frames only after analysis is enabled and submitted. The authenticated API validates frame count, bytes, decoded dimensions and increasing timestamps. The review store is capped at 100 jobs per site and 500 total; delete reviewed results to free capacity. The provider address is restricted to loopback. Incoming request text and image text never grant the model authority to use tools or change application settings.
+The browser sends a bounded set of JPEG frames only after analysis is enabled and submitted. The authenticated API validates frame count, bytes, decoded dimensions and increasing timestamps. The review store is capped at 100 jobs per site and 600 total; delete reviewed results to free capacity. The provider address is restricted to loopback. Incoming request text and image text never grant the model authority to use tools or change application settings.
 
 Jobs, observations, reviews and evidence are scoped to the signed-in organisation and pharmacy site. Frame URLs require the same authenticated site access and do not expose arbitrary paths. The API retains metadata and sanitized JPEG derivatives locally; the browser and API do not send them to an external AI provider. All such files are excluded from git. Deletion and expiry revoke frame access. The existing local demonstration accounts/authentication remain a prototype limitation.
 

@@ -31,6 +31,8 @@ class DelayedReviewProvider(MockProvider):
     def analyze(self, frames):
         # Exercise real async completion beyond the short scanner fixture's end.
         time.sleep(float((Path(sys.argv[1])/'delay').read_text()) if (Path(sys.argv[1])/'delay').exists() else 0.15)
+        if (Path(sys.argv[1])/'fail').exists():
+            raise RuntimeError('synthetic provider unavailable')
         return super().analyze(frames)
 app.state.interactions.provider=DelayedReviewProvider()
 import uvicorn
@@ -137,6 +139,7 @@ async function openGrid(
         }
         disconnect() {}
         start() {
+          if (state.failSound) throw new Error("synthetic audio failure");
           state.sound++;
         }
         stop() {}
@@ -342,6 +345,13 @@ async function openGrid(
     .check();
 }
 async function begin(page: Page, automatic = true) {
+  for (const label of [
+    "Entrance zone is visible",
+    "Exit zone is visible",
+    "Cashier zone is visible",
+    "Relevant shelf zones are visible",
+  ])
+    await page.getByLabel(label, { exact: true }).check();
   await page
     .getByLabel("Enable all-camera product analysis", { exact: true })
     .check();
@@ -412,11 +422,23 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
   }) => {
     test.setTimeout(45000);
     const posts: any[] = [];
+    const completed = new Set<string>();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     page.on("request", (r) => {
       if (r.method() === "POST" && r.url().endsWith("/api/interactions/jobs"))
         posts.push({ body: r.postDataJSON(), at: Date.now() });
+    });
+    page.on("response", async (response) => {
+      if (
+        response.request().method() !== "GET" ||
+        !/\/api\/interactions\/jobs\/[a-f0-9-]+$/.test(response.url()) ||
+        !response.ok()
+      )
+        return;
+      const job = await response.json().catch(() => null);
+      if (job?.status === "completed" && job.result?.id)
+        completed.add(job.result.id);
     });
     await openGrid(page, installation, layout);
     if (layout === "2x2") {
@@ -432,6 +454,11 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     const count = layout === "2x2" ? 4 : 6;
     await expect
       .poll(() => posts.length, { timeout: 22000 })
+      .toBeGreaterThanOrEqual(count);
+    // A POST means processing started, not that its observation is available.
+    // Wait on the real completion boundary before checking React's history.
+    await expect
+      .poll(() => completed.size, { timeout: 10000 })
       .toBeGreaterThanOrEqual(count);
     await expect(page.locator(".interaction-result")).toHaveCount(count, {
       timeout: 5000,
@@ -668,6 +695,41 @@ test("a held model job never queues another camera; layout invalidation cancels 
   await expect(armed).not.toBeChecked();
 });
 
+test("a failed model job pauses automatic all-camera analysis", async ({
+  page,
+  installation,
+}) => {
+  test.setTimeout(25000);
+  await writeFile(join(installation.directory, "fail"), "1");
+  const posts: any[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().endsWith("/api/interactions/jobs")
+    )
+      posts.push(request.postDataJSON());
+  });
+  await openGrid(page, installation, "2x2");
+  await begin(page);
+  const automatic = page.getByLabel("Analyse all cameras automatically", {
+    exact: true,
+  });
+  await expect(automatic).not.toBeChecked({ timeout: 12000 });
+  const status = page
+    .getByRole("region", { name: "All-camera product analysis" })
+    .locator(":scope > p[role=status]")
+    .last();
+  await expect(status).toContainText("Automatic submissions are paused");
+  expect(posts).toHaveLength(1);
+  await page.waitForTimeout(3000);
+  expect(posts).toHaveLength(1);
+  await expect(
+    page.getByLabel("Experimental attention alarm for all confirmed cameras", {
+      exact: true,
+    }),
+  ).not.toBeChecked();
+});
+
 for (const change of [
   "source disconnect",
   "source resize",
@@ -798,6 +860,38 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
     page.getByLabel("Enable all-camera product analysis", { exact: true }),
   ).not.toBeChecked();
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+});
+
+test("all-camera playback failure disarms sound and pauses automatic submissions", async ({
+  page,
+  installation,
+}) => {
+  test.setTimeout(30000);
+  await openGrid(page, installation, "2x2");
+  await begin(page);
+  const alarm = page.getByLabel(
+    "Experimental attention alarm for all confirmed cameras",
+    { exact: true },
+  );
+  await page
+    .getByRole("button", { name: "Test all-camera alarm sound", exact: true })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "I heard the all-camera test tone",
+      exact: true,
+    })
+    .click();
+  await alarm.check();
+  await page.evaluate(() => ((window as any).__all.failSound = true));
+  await expect(
+    page.getByLabel("Analyse all cameras automatically", { exact: true }),
+  ).not.toBeChecked({ timeout: 12000 });
+  await expect(alarm).not.toBeChecked();
+  await expect(
+    page.getByText(/sound failed and automatic submissions are paused/i),
+  ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 
 test("slow per-camera pose processing exposes lost continuity and a hung worker stops all processing", async ({

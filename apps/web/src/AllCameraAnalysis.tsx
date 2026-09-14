@@ -5,9 +5,12 @@ import { runtimeHealth } from "./runtimeHealth";
 import { BrowserAttentionSound } from "./playbackAlerts";
 import {
   captureInteractionFrame,
+  prepareInteractionSound,
   freshInteractionAlarm,
   InteractionAlarmCommission,
+  InteractionAttentionPolicy,
   interactionLabels,
+  type CameraCalibration,
   type SavedInteraction,
 } from "./interactionCapture";
 import {
@@ -34,6 +37,7 @@ type Props = {
   modelReady: boolean;
   volume: number;
   muted: boolean;
+  cameraCalibration: CameraCalibration | null;
   cancelRef: RefObject<(() => void) | null>;
   silenceRef: RefObject<(() => void) | null>;
   onResult: (result: SavedInteraction) => void;
@@ -70,10 +74,11 @@ export default function AllCameraAnalysis(props: Props) {
     null,
   );
   const previousRun = useRef<AllCameraRun | null>(null);
+  const previousCalibration = useRef(props.cameraCalibration);
   const commission = useRef(new InteractionAlarmCommission());
   const speaker = useRef<BrowserAttentionSound | null>(null);
   const mounted = useRef(true);
-  const lastAlarm = useRef(-Infinity);
+  const attention = useRef(new InteractionAttentionPolicy());
   const progress = useRef({ media: -1, at: 0 });
   const submitRef = useRef<() => Promise<void>>(async () => {});
 
@@ -103,6 +108,7 @@ export default function AllCameraAnalysis(props: Props) {
           run!.sourceKey,
           run!.runtime,
           run!.cameras.map(cameraKey),
+          options.current.cameraCalibration,
         ])
       : "";
   }
@@ -132,6 +138,7 @@ export default function AllCameraAnalysis(props: Props) {
         ).catch(() => undefined);
     }
     disarm();
+    attention.current.resetRun();
     if (mounted.current) {
       setEnabled(false);
       setAutomatic(false);
@@ -209,6 +216,9 @@ export default function AllCameraAnalysis(props: Props) {
         at_seconds,
         jpeg_base64,
       })),
+      ...(config.cameraCalibration
+        ? { camera_calibration: config.cameraCalibration }
+        : {}),
     };
     const key = idempotencyKey("/interactions/jobs", "POST", payload);
     let outcome: "completed" | "failed" | "cancelled" = "cancelled",
@@ -255,6 +265,7 @@ export default function AllCameraAnalysis(props: Props) {
             lastAlarmAt: -Infinity,
             result,
           });
+          let soundFailure = "";
           if (fresh) {
             setAlerts((previous) =>
               [
@@ -266,33 +277,51 @@ export default function AllCameraAnalysis(props: Props) {
                 ),
               ].slice(0, 6),
             );
-            if (
+            const soundReservation =
               options.current.armed &&
               !options.current.muted &&
-              now - lastAlarm.current >= 30000 &&
-              commission.current.claim(
-                contextKey(),
-                result.id,
-                result.source_kind,
-              )
-            ) {
-              lastAlarm.current = now;
+              prepareInteractionSound(attention.current, commission.current, {
+                id: result.id,
+                camera: cameraKey(ticket.camera),
+                now,
+                context: contextKey(),
+                source: result.source_kind,
+              });
+            if (soundReservation) {
               const played = speaker.current?.play({
                 volume: options.current.volume,
                 durationSeconds: 8,
               });
-              setSoundMessage(
-                `${cameraName(ticket.camera)}: ${played?.message ?? "Sound unavailable; review the visual observation."}`,
-              );
+              if (played?.ok && soundReservation())
+                setSoundMessage(
+                  `${cameraName(ticket.camera)}: ${played.message}`,
+                );
+              else {
+                soundFailure =
+                  played?.message ??
+                  "Sound unavailable; review the visual observation.";
+                options.current.automatic = false;
+                if (mounted.current) setAutomatic(false);
+                disarm(
+                  `${soundFailure} Automatic submissions are paused; repeat the sound check before re-enabling them.`,
+                );
+              }
             }
+            if (soundFailure)
+              setStatus(
+                `${cameraName(ticket.camera)}: visual attention remains; sound failed and automatic submissions are paused.`,
+              );
           }
-          setStatus(
-            `${cameraName(ticket.camera)}: ${interactionLabels[result.action]}. ${fresh ? "Fresh attention; review required." : "Saved for staff review; no fresh alarm requested."}`,
-          );
+          if (!soundFailure)
+            setStatus(
+              `${cameraName(ticket.camera)}: ${interactionLabels[result.action]}. ${fresh ? "Fresh attention; review required." : "Saved for staff review; no fresh alarm requested."}`,
+            );
           return;
         }
         if (job.status === "failed" || job.status === "cancelled") {
-          outcome = job.status === "failed" ? "failed" : "cancelled";
+          // A locally requested cancellation marks the ticket and exits above.
+          // A server-side cancellation here is therefore an unexpected failure.
+          outcome = "failed";
           failure = job.error ?? "Analysis ended.";
           return;
         }
@@ -302,6 +331,7 @@ export default function AllCameraAnalysis(props: Props) {
             "POST",
             {},
           ).catch(() => undefined);
+          outcome = "failed";
           failure = "Analysis exceeded its time limit. No new job was queued.";
           return;
         }
@@ -311,12 +341,17 @@ export default function AllCameraAnalysis(props: Props) {
       outcome = "failed";
       failure = error instanceof Error ? error.message : "Analysis failed.";
       if (error instanceof ApiError && error.code === "EVIDENCE_LIMIT") {
-        options.current.automatic = false;
-        setAutomatic(false);
-        failure +=
-          " Automatic submissions are paused. Review storage before enabling them again.";
+        failure += " Review storage before enabling automatic analysis again.";
       }
     } finally {
+      if (outcome === "failed" && current(ticket.run)) {
+        options.current.automatic = false;
+        if (mounted.current) setAutomatic(false);
+        disarm(
+          "Analysis failed. Automatic submissions and attention sound are paused until staff review the model status.",
+        );
+        failure = `${failure ?? "Analysis failed."} Automatic submissions are paused.`;
+      }
       forgetAction("/interactions/jobs", "POST", payload, key);
       controller.current.settle(ticket, outcome, performance.now(), failure);
       if (active.current === pending) active.current = null;
@@ -341,6 +376,14 @@ export default function AllCameraAnalysis(props: Props) {
   useEffect(() => {
     disarm("Volume or mute changed. Test this camera set again before arming.");
   }, [props.volume, props.muted]);
+  useEffect(() => {
+    const previous = previousCalibration.current;
+    previousCalibration.current = props.cameraCalibration;
+    if (previous && previous !== props.cameraCalibration)
+      disarm(
+        "Camera calibration changed. Confirm all zones and test this camera set again before arming.",
+      );
+  }, [props.cameraCalibration]);
   useEffect(() => {
     mounted.current = true;
     props.cancelRef.current = cancel;
@@ -511,6 +554,7 @@ export default function AllCameraAnalysis(props: Props) {
             disabled={
               !enabled ||
               !running ||
+              !props.cameraCalibration ||
               stage !== "confirmed" ||
               (props.run?.sourceKind === "RECORDED_VIDEO" && !recordedAllowed)
             }
@@ -528,6 +572,12 @@ export default function AllCameraAnalysis(props: Props) {
           />
           Experimental attention alarm for all confirmed cameras
         </label>
+        {!props.cameraCalibration && (
+          <p role="status">
+            Sound cannot be armed until entrance, exit, cashier and shelf zone
+            coverage is confirmed above.
+          </p>
+        )}
         <button onClick={() => disarm()}>
           Stop sound & disarm all cameras
         </button>
@@ -627,10 +677,16 @@ export default function AllCameraAnalysis(props: Props) {
           <span>
             {item.source_kind === "RECORDED_VIDEO" ? "RECORDED TEST. " : ""}
             Check the sampled frames below. Sound may be off or cooling down.
+            Acknowledgement quiets repeat sound from this camera for two
+            minutes; observations continue to be saved for review.
           </span>
           <button
             onClick={() => {
               silence();
+              attention.current.acknowledge(
+                cameraKey(item.camera_context!),
+                performance.now(),
+              );
               setAlerts((previous) =>
                 previous.filter((row) => row.id !== item.id),
               );

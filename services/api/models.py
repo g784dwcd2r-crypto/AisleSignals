@@ -77,6 +77,27 @@ class CameraContext(Input):
         return self
 
 
+class CameraCalibration(Input):
+    """Operator-declared coverage gates; these do not validate physical placement."""
+
+    schema_version: Literal["1.0"]
+    entrance_zone_confirmed: StrictBool
+    exit_zone_confirmed: StrictBool
+    cashier_zone_confirmed: StrictBool
+    shelf_zones_confirmed: StrictBool
+
+    @model_validator(mode="after")
+    def complete(self):
+        if not all((
+            self.entrance_zone_confirmed,
+            self.exit_zone_confirmed,
+            self.cashier_zone_confirmed,
+            self.shelf_zones_confirmed,
+        )):
+            raise ValueError("Camera calibration requires all four pharmacy zone confirmations.")
+        return self
+
+
 def camera_provenance(item: dict) -> dict:
     context = item.get("camera_context")
     if context is None:
