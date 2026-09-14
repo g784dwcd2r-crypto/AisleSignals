@@ -36,7 +36,7 @@ const test = base.extend<{ installation: Installation }>({
           if (line) resolve(JSON.parse(line.slice(14)));
         });
         child.stderr.on("data", (chunk) => {
-          errors += String(chunk);
+          errors = (errors + String(chunk)).slice(-4000);
         });
         child.once("error", reject);
         child.once("exit", (code) =>
@@ -55,18 +55,25 @@ const test = base.extend<{ installation: Installation }>({
           );
         }),
       ]).finally(() => clearTimeout(timer));
-      await expect
-        .poll(
-          async () => {
-            try {
-              return (await fetch(installation.url + "/health/ready")).status;
-            } catch {
-              return 0;
-            }
-          },
-          { timeout: 10000 },
-        )
-        .toBe(200);
+      try {
+        await expect
+          .poll(
+            async () => {
+              try {
+                return (await fetch(installation.url + "/health/ready")).status;
+              } catch {
+                return 0;
+              }
+            },
+            { timeout: 10000 },
+          )
+          .toBe(200);
+      } catch (reason) {
+        throw new Error(
+          `Synthetic control fixture did not become ready (exit ${child.exitCode ?? "running"}): ${errors}`,
+          { cause: reason },
+        );
+      }
       await use(installation);
     } finally {
       if (child.exitCode === null) child.kill("SIGTERM");
