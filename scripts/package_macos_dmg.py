@@ -52,16 +52,14 @@ def build_app(source: Path, destination: Path, version: str) -> Path:
     macos.mkdir(parents=True)
     shutil.copytree(source, runtime, symlinks=True)
     launcher = macos / EXECUTABLE
-    launcher.write_text(
-        "#!/bin/sh\n"
-        'contents="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"\n'
-        'if [ "$#" -eq 0 ]; then\n'
-        '  set -- --casework-only\n'
-        'fi\n'
-        'exec "$contents/Resources/AisleSignalsPilot/AisleSignalsPilot" "$@"\n',
-        encoding="utf-8",
+    desktop_source = Path(__file__).resolve().parents[1] / "packaging" / "macos" / "AisleSignalsDesktop.m"
+    subprocess.run(
+        [
+            "xcrun", "clang", "-fobjc-arc", str(desktop_source), "-o", str(launcher),
+            "-framework", "Cocoa", "-framework", "WebKit",
+        ],
+        check=True,
     )
-    launcher.chmod(0o755)
     info = {
         "CFBundleDevelopmentRegion": "en",
         "CFBundleDisplayName": "AisleSignals Pilot",
@@ -72,6 +70,7 @@ def build_app(source: Path, destination: Path, version: str) -> Path:
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
+        "LSMinimumSystemVersion": "13.0",
         "LSArchitecturePriority": ["arm64"],
         "NSCameraUsageDescription": (
             "AisleSignals uses a camera only after an authorised pharmacy operator selects it for local monitoring."
