@@ -190,7 +190,10 @@ def test_proxy_environment_is_not_used_and_body_is_bounded(monkeypatch):
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             calls.append(self.path)
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
             self.send_response(200)
+            self.send_header("Content-Length", "65537")
             self.end_headers()
             self.wfile.write(b"x"*65537)
         def log_message(self,*args):
