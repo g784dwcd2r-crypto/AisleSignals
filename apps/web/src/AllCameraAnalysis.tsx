@@ -344,7 +344,11 @@ export default function AllCameraAnalysis(props: Props) {
         failure += " Review storage before enabling automatic analysis again.";
       }
     } finally {
-      if (outcome === "failed" && current(ticket.run)) {
+      if (
+        outcome === "failed" &&
+        !ticket.cancelled &&
+        ticket.run === options.current.run
+      ) {
         options.current.automatic = false;
         if (mounted.current) setAutomatic(false);
         disarm(
