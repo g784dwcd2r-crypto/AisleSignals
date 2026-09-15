@@ -87,6 +87,41 @@ def test_audit_matches_exact_frontend_and_public_fail_closed_contract(tmp_path, 
     assert result["deployed_release"] == {"environment": "production", "release_sha": RELEASE_SHA}
 
 
+def test_audit_accepts_owner_bootstrap_pending_when_named_owner_is_not_required(tmp_path, monkeypatch):
+    root, files = fixture(tmp_path)
+    monkeypatch.setattr("deployment.verify_cloud_release._checkout_sha",
+                        lambda repo, expected: RELEASE_SHA)
+    pending = {"/control-api/setup/status": (
+        200, b'{"configured":true,"needs_setup":true}'
+    )}
+    result = audit("https://control.example.test", root, expected_sha=RELEASE_SHA,
+                   opener=Opener(files, pending))
+    assert result["setup"] == {"configured": True, "needs_setup": True}
+
+
+def test_audit_requires_named_owner_when_requested(tmp_path, monkeypatch):
+    root, files = fixture(tmp_path)
+    monkeypatch.setattr("deployment.verify_cloud_release._checkout_sha",
+                        lambda repo, expected: RELEASE_SHA)
+    pending = {"/control-api/setup/status": (
+        200, b'{"configured":true,"needs_setup":true}'
+    )}
+    with pytest.raises(AuditFailure, match="named-owner setup"):
+        audit("https://control.example.test", root, expected_sha=RELEASE_SHA,
+              require_configured=True, opener=Opener(files, pending))
+
+
+@pytest.mark.parametrize("state", [
+    b'{"configured":false,"needs_setup":false}',
+    b'{"configured":false,"needs_setup":true}',
+])
+def test_audit_rejects_unusable_setup_state(tmp_path, state):
+    root, files = fixture(tmp_path)
+    impossible = {"/control-api/setup/status": (200, state)}
+    with pytest.raises(AuditFailure, match="invalid shape"):
+        audit("https://control.example.test", root, opener=Opener(files, impossible))
+
+
 @pytest.mark.parametrize("base_url", [
     "http://control.example.test", "https://user@control.example.test",
     "https://control.example.test/path", "https://control.example.test/?token=secret",

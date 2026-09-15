@@ -69,7 +69,7 @@ import {
   setSessionContext,
 } from "./api";
 import { date, getAlertCount, label, money } from "./format";
-import { safeInteractionFrameUrl } from "./interactionCapture";
+import { safeIncidentFrameUrl } from "./interactionCapture";
 import CameraContextDetails from "./CameraContextDetails";
 
 import { buildCasePatch, caseFields } from "./caseForm";
@@ -2206,7 +2206,7 @@ function CaseInteractionSource({ incident }: { incident: Incident }) {
       </button>
       <div className="interaction-frames">
         {evidence?.frames.map((frame, index) => {
-          const url = safeInteractionFrameUrl(frame.url, source.id);
+          const url = safeIncidentFrameUrl(frame.url, incident.id);
           return (
             <figure key={`${revision}:${index}`}>
               {url && !unavailableFrames.includes(index) ? (

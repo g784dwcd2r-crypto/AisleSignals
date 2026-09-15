@@ -180,6 +180,9 @@
 .video-test-actions > span {
   font-size: 12px;
 }
+.video-test-player-panel .video-test-actions .button {
+  transition: box-shadow 0.15s;
+}
 .video-test-progress {
   padding: 18px 22px;
   border-top: 1px solid var(--border);
