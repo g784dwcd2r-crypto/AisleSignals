@@ -388,6 +388,24 @@ async function begin(page: Page, automatic = true) {
     page.getByText("POSE TRACKING RUNNING", { exact: true }),
   ).toBeVisible();
 }
+async function keepRuntimeHealthy(page: Page, installation: Installation) {
+  const health = await (
+    await page.request.get(`${installation.url}/api/runtime/health`)
+  ).json();
+  let healthRouted!: () => void;
+  const firstRoutedHealth = new Promise<void>((resolve) => {
+    healthRouted = resolve;
+  });
+  await page.route("**/api/runtime/health", async (route) => {
+    healthRouted();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(health),
+    });
+  });
+  await firstRoutedHealth;
+}
 async function pixels(page: Page, base64: string) {
   return page.evaluate(async (data) => {
     const img = new Image();
@@ -801,6 +819,7 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
 }) => {
   test.setTimeout(30000);
   await openGrid(page, installation, "2x2");
+  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const alarm = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
@@ -868,22 +887,7 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
 }) => {
   test.setTimeout(60000);
   await openGrid(page, installation, "2x2");
-  const health = await (
-    await page.request.get(`${installation.url}/api/runtime/health`)
-  ).json();
-  let healthRouted!: () => void;
-  const firstRoutedHealth = new Promise<void>((resolve) => {
-    healthRouted = resolve;
-  });
-  await page.route("**/api/runtime/health", async (route) => {
-    healthRouted();
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(health),
-    });
-  });
-  await firstRoutedHealth;
+  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const alarm = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
