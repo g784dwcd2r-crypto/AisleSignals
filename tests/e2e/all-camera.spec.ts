@@ -228,13 +228,15 @@ async function openGrid(
                     id: request.id,
                     persons: occluded
                       ? []
-                      : [{
-                          box: { x: .2, y: .1, width: .6, height: .88 },
-                          detectorScore: .95,
-                          subjectPixels: 32000,
-                          visibilityState: "sufficient",
-                          landmarks: points,
-                        }],
+                      : [
+                          {
+                            box: { x: 0.2, y: 0.1, width: 0.6, height: 0.88 },
+                            detectorScore: 0.95,
+                            subjectPixels: 32000,
+                            visibilityState: "sufficient",
+                            landmarks: points,
+                          },
+                        ],
                   },
                 },
                 state.delay ?? 0,
@@ -517,7 +519,9 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
         .filter({ hasText: `Camera ${i + 1} · ${layout}` });
       await expect(row).toHaveCount(1);
       await row.locator("summary").first().click();
-      await row.getByText("Sampled frames · chronological review", { exact: true }).click();
+      await row
+        .getByText("Sampled frames · chronological review", { exact: true })
+        .click();
       const saved = await row
         .locator("img")
         .first()
@@ -860,10 +864,12 @@ test("camera-labelled sampled interpretations stay silent after commissioning an
     .toBe(2);
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
   await expect(
-    page.getByText(
-      "Automatic alarm blocked: complete custody pipeline validation required",
-      { exact: true },
-    ).first(),
+    page
+      .getByText(
+        "Automatic alarm blocked: complete custody pipeline validation required",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
   await page
     .getByLabel("Analyse all cameras automatically", { exact: true })
@@ -927,12 +933,16 @@ test("disabled automatic alarm never attempts playback or pauses sampling", asyn
   ).toBeChecked();
   await expect(alarm).toBeChecked();
   await expect(
-    page.getByText(
-      "Automatic alarm blocked: complete custody pipeline validation required",
-      { exact: true },
-    ).first(),
+    page
+      .getByText(
+        "Automatic alarm blocked: complete custody pipeline validation required",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__all.soundAttempts)).toBe(1);
+  expect(await page.evaluate(() => (window as any).__all.soundAttempts)).toBe(
+    1,
+  );
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 

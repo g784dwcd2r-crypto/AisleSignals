@@ -278,9 +278,7 @@ function observePerson(
       insideDetectorBox(observed.landmarks[index], box),
     );
     const armInside = ARM_CHAINS.some((chain) =>
-      chain.every((index) =>
-        insideDetectorBox(observed.landmarks[index], box),
-      ),
+      chain.every((index) => insideDetectorBox(observed.landmarks[index], box)),
     );
     const shoulderSpan = Math.abs(
       observed.landmarks[11].x - observed.landmarks[12].x,

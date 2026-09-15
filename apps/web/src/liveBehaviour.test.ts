@@ -620,9 +620,7 @@ describe("dedicated person detector gate", () => {
       landmarks: points,
     });
     for (const now of [0, 200, 400])
-      expect(
-        engine.update([detected(pose("reach"))], now).events,
-      ).toEqual([]);
+      expect(engine.update([detected(pose("reach"))], now).events).toEqual([]);
     const outside = pose("waist");
     outside[15] = { ...outside[15], x: 0.05 };
     expect(engine.update([detected(outside)], 600).events).toEqual([]);
