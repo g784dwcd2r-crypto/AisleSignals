@@ -65,7 +65,16 @@ def test_reviewed_observation_creates_unassessed_case_and_preserves_provenance(p
     assert response.json()["interaction"]["incident_id"] == case["id"]
     result = client.get(f"/api/incidents/{case['id']}/interaction-source").json()
     assert result["evidence_status"] == "available"
-    assert [client.get(frame["url"]).status_code for frame in result["frames"]] == [200] * 3
+    assert all(
+        frame["url"].startswith(f"/api/incidents/{case['id']}/interaction-source/frames/")
+        for frame in result["frames"]
+    )
+    responses = [client.get(frame["url"]) for frame in result["frames"]]
+    assert [response.status_code for response in responses] == [200] * 3
+    assert all(response.headers["content-type"] == "image/jpeg" for response in responses)
+    assert all(response.headers["cache-control"] == "no-store" for response in responses)
+    assert client.get(f"{result['frames'][0]['url']}?token=forbidden").status_code == 400
+    assert client.get(f"/api/incidents/{case['id']}/interaction-source/frames/3").status_code == 404
     edited = client.patch(f"/api/incidents/{case['id']}", json={"expected_version": 1, "classification": "BENIGN", "outcome": "NO_LOSS_ESTABLISHED"})
     assert edited.status_code == 200 and edited.json()["interaction_source"] == source
     exported = client.post(f"/api/incidents/{case['id']}/export", json={"expected_version": 2, "purpose": "Synthetic review of provenance"})
@@ -144,6 +153,7 @@ def test_reviewer_permission_branch_scope_csrf_and_revocation(pilot):
     outsider = client_for(app, "other.reviewer@example.test")
     assert link(outsider, item).status_code == 404
     assert outsider.get(f"/api/incidents/{case['id']}/interaction-source").status_code == 404
+    assert outsider.get(f"/api/incidents/{case['id']}/interaction-source/frames/0").status_code == 404
     assert outsider.get(item["frames"][0]["url"]).status_code == 404
     disable_user(app.state.store, reviewer_email)
     assert link(reviewer, item).status_code == 401
@@ -160,6 +170,7 @@ def test_link_does_not_extend_retention_or_recreate_deleted_frames(pilot):
     assert source["evidence_status"] == "deleted" and source["frames"] == []
     assert source["source"] == case["interaction_source"]
     assert client.get(item["frames"][0]["url"]).status_code == 404
+    assert client.get(f"/api/incidents/{case['id']}/interaction-source/frames/0").status_code == 404
     assert link(client, item).status_code == 404
 
 
@@ -176,6 +187,7 @@ def test_case_source_and_image_access_expire_at_the_original_deadline(pilot, mon
     assert source["evidence_status"] == "expired" and source["frames"] == []
     assert source["source"]["expires_at"] == item["expires_at"]
     assert client.get(item["frames"][0]["url"]).status_code == 410
+    assert client.get(f"/api/incidents/{case['id']}/interaction-source/frames/0").status_code == 410
     assert link(client, item).status_code == 410
 
 

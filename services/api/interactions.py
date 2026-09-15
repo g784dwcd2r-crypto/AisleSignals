@@ -879,9 +879,70 @@ def install_interactions(app, context, problem, new_incident, idempotent):
             except (OSError, ValueError, VisionError):
                 state = "unavailable"
         return {"source": source, "evidence_status": state, "frames": [
-            {"at_seconds": frame["at_seconds"], "url": f"/api/interactions/{source['id']}/frames/{index}"}
+            {
+                "at_seconds": frame["at_seconds"],
+                "url": f"/api/incidents/{incident_id}/interaction-source/frames/{index}",
+            }
             for index, frame in enumerate(source["frames"])
         ] if state == "available" else []}
+
+    @app.get("/api/incidents/{incident_id}/interaction-source/frames/{index}")
+    def case_evidence(
+        incident_id: UUID, index: int, request: Request, ctx=Depends(context)
+    ):
+        if request.url.query:
+            problem(
+                400,
+                "URL_CREDENTIALS_REJECTED",
+                "Evidence URLs do not accept query parameters.",
+            )
+        incident = ctx.get("incident", str(incident_id))
+        source = incident.get("interaction_source")
+        if not source:
+            problem(
+                404,
+                "INTERACTION_SOURCE_UNAVAILABLE",
+                "This case has no linked product observation.",
+            )
+        if expired(source):
+            problem(
+                410,
+                "INTERACTION_EXPIRED",
+                "This linked sampled evidence has expired.",
+            )
+        current = ctx.store.get(ctx.conn, ctx.user, "interaction", source["id"])
+        if (
+            current is None
+            or current.get("incident_id") != incident["id"]
+            or current.get("status") != "completed"
+            or expired(current)
+            or current.get("frames") != source.get("frames")
+            or not 0 <= index < len(source.get("frames", []))
+        ):
+            problem(
+                404,
+                "EVIDENCE_UNAVAILABLE",
+                "This linked sampled frame is not available.",
+            )
+        try:
+            data = read_frame(
+                service.evidence_root,
+                current,
+                index,
+                service.cipher,
+                MAX_JPEG_BYTES,
+            )
+        except (OSError, VisionError, ValueError):
+            problem(
+                404,
+                "EVIDENCE_UNAVAILABLE",
+                "This linked sampled frame is missing or failed its integrity check.",
+            )
+        return Response(
+            data,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @app.delete("/api/interactions/{item_id}")
     def delete(item_id: UUID, ctx=Depends(context)):

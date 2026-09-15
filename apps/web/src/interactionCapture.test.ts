@@ -5,6 +5,7 @@ import {
   InteractionAttentionPolicy,
   InteractionFrameBuffer,
   safeInteractionFrameUrl,
+  safeIncidentFrameUrl,
   interactionCropPixels,
   captureInteractionFrame,
   prepareInteractionSound,
@@ -418,13 +419,36 @@ describe("authenticated sampled frame URLs", () => {
     expect(
       safeInteractionFrameUrl(`/api/interactions/${id}/frames/3`, id),
     ).toBe(`/api/interactions/${id}/frames/3`);
+    const incidentId = "ed25eb7d-55d7-4aad-bd87-066a935f7244";
+    expect(
+      safeIncidentFrameUrl(
+        `/api/incidents/${incidentId}/interaction-source/frames/3`,
+        incidentId,
+      ),
+    ).toBe(`/api/incidents/${incidentId}/interaction-source/frames/3`);
     for (const path of [
       `https://example.com/${id}`,
       `/api/interactions/${id}/frames/6`,
       `/api/interactions/${id}/frames/0?download=1`,
       `/api/interactions/ed25eb7d-55d7-4aad-bd87-066a935f7244/frames/0`,
+      `/api/incidents/${incidentId}/interaction-source/frames/0`,
       "data:image/png;base64,aA==",
     ])
       expect(safeInteractionFrameUrl(path, id)).toBeNull();
+  });
+
+  it("allows only the current incident's bounded linked frame route", () => {
+    const incidentId = "ed25eb7d-55d7-4aad-bd87-066a935f7244";
+    const allowed = `/api/incidents/${incidentId}/interaction-source/frames/3`;
+    expect(safeIncidentFrameUrl(allowed, incidentId)).toBe(allowed);
+    for (const path of [
+      `https://example.com/${incidentId}`,
+      `/api/incidents/${incidentId}/interaction-source/frames/6`,
+      `/api/incidents/${incidentId}/interaction-source/frames/0?download=1`,
+      `/api/incidents/ed25eb7d-55d7-4aad-bd87-066a935f7245/interaction-source/frames/0`,
+      `/api/interactions/${id}/frames/0`,
+      "data:image/png;base64,aA==",
+    ])
+      expect(safeIncidentFrameUrl(path, incidentId)).toBeNull();
   });
 });

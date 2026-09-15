@@ -365,8 +365,23 @@ export function safeInteractionFrameUrl(
   value: string,
   id: string,
 ): string | null {
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return /^[a-f0-9-]{36}$/i.test(id) &&
-    new RegExp(`^/api/interactions/${id}/frames/[0-5]$`, "i").test(value)
+    new RegExp(`^/api/interactions/${escapedId}/frames/[0-5]$`, "i").test(value)
+    ? value
+    : null;
+}
+
+export function safeIncidentFrameUrl(
+  value: string,
+  incidentId: string,
+): string | null {
+  const escapedId = incidentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return /^[a-f0-9-]{36}$/i.test(incidentId) &&
+    new RegExp(
+      `^/api/incidents/${escapedId}/interaction-source/frames/[0-5]$`,
+      "i",
+    ).test(value)
     ? value
     : null;
 }
