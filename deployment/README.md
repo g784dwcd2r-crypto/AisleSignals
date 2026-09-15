@@ -11,6 +11,8 @@ covers the manual paid Render release path, pre-deploy migration and rollback.
 Desktop production identity, unsigned installation candidates, signing,
 notarisation and signed update publishing are covered by the
 [desktop production release runbook](../docs/release/desktop-production-release.md).
+The separate [domain checklist](../docs/release/production-domain-cloudflare.md)
+covers the custom production hostname and Cloudflare cutover without creating it.
 
 This launcher coordinates the API and optional local model on an existing laptop. It does not activate a camera, register an unattended service, enrol a branch, create an account, download models, or qualify theft detection. Staff must remain present with the browser open and the laptop awake. Each of the six branches needs its own physical acceptance record; successful checks here do not activate the other branches.
 

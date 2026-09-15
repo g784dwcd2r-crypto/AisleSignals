@@ -6,6 +6,10 @@ projects:
   - name: AisleSignals
     environments:
       - name: Production
+        networking:
+          isolation: enabled
+        permissions:
+          protection: enabled
         services:
           - type: web
             name: aislesignals-control-production
@@ -31,6 +35,8 @@ projects:
                 value: require
               - key: CLOUD_EVIDENCE_MODE
                 value: METADATA_ONLY
+              - key: CLOUD_ALLOWED_HOSTS
+                sync: false
               - key: CLOUD_AUTH_KEY
                 sync: false
               - key: CLOUD_BOOTSTRAP_TOKEN
