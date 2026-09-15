@@ -830,7 +830,7 @@ for (const change of [
     }
   });
 
-test("fresh camera-labelled alarms require commissioning and share one cooldown; historical refresh does not replay sound", async ({
+test("camera-labelled sampled interpretations stay silent after commissioning and historical refresh", async ({
   page,
   installation,
 }) => {
@@ -854,26 +854,24 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
     .click();
   await alarm.check();
   await expect
-    .poll(() => page.evaluate(() => (window as any).__all.sound), {
+    .poll(() => page.locator(".interaction-result").count(), {
       timeout: 12000,
     })
     .toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
   await expect(
-    page.getByRole("button", {
-      name: "Acknowledge Camera 1 attention",
-      exact: true,
-    }),
+    page.getByText(
+      "Automatic alarm blocked: complete custody pipeline validation required",
+      { exact: true },
+    ).first(),
   ).toBeVisible();
-  await expect(page.locator(".interaction-result")).toHaveCount(2, {
-    timeout: 8000,
-  });
   await page
     .getByLabel("Analyse all cameras automatically", { exact: true })
     .uncheck();
   await page
     .getByRole("button", { name: "Refresh model & history", exact: true })
     .click();
-  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
   await page
     .getByRole("button", {
       name: "Stop sound & disarm all cameras",
@@ -894,10 +892,10 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
   await expect(
     page.getByLabel("Enable all-camera product analysis", { exact: true }),
   ).not.toBeChecked();
-  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 
-test("all-camera playback failure disarms sound and pauses automatic submissions", async ({
+test("disabled automatic alarm never attempts playback or pauses sampling", async ({
   page,
   installation,
 }) => {
@@ -920,17 +918,21 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
   await page.evaluate(() => ((window as any).__all.failSound = true));
   await alarm.check();
   await expect
-    .poll(() => page.evaluate(() => (window as any).__all.soundAttempts), {
-      timeout: 30000,
+    .poll(() => page.locator(".interaction-result").count(), {
+      timeout: 12000,
     })
     .toBe(2);
   await expect(
     page.getByLabel("Analyse all cameras automatically", { exact: true }),
-  ).not.toBeChecked();
-  await expect(alarm).not.toBeChecked();
+  ).toBeChecked();
+  await expect(alarm).toBeChecked();
   await expect(
-    page.getByText(/sound failed and automatic submissions are paused/i),
+    page.getByText(
+      "Automatic alarm blocked: complete custody pipeline validation required",
+      { exact: true },
+    ).first(),
   ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__all.soundAttempts)).toBe(1);
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 

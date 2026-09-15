@@ -189,7 +189,9 @@ test("staff review creates one unassessed linked case, opens its real evidence a
       exact: true,
     }),
   ).toBeDisabled();
-  await result.locator("summary").click();
+  await result
+    .getByText("Sampled frames · chronological review", { exact: true })
+    .click();
   await expect
     .poll(() =>
       result

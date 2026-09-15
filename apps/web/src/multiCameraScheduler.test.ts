@@ -95,6 +95,33 @@ describe("bounded multi-camera work scheduling", () => {
     });
   });
 
+  it("fails continuity at settlement when inference creates the revisit gap", () => {
+    const r = rig(1, {
+      maxCameraRevisitMs: 500,
+      maxResultAgeMs: 1_000,
+    });
+    const first = one(r.scheduler.dispatch(r.context, r.frame()).tickets);
+    expect(r.scheduler.settle(first, "completed")).toMatchObject({
+      status: "accepted",
+      continuityBroken: false,
+    });
+    r.at(100);
+    const slow = one(r.scheduler.dispatch(r.context, r.frame()).tickets);
+    expect(slow.continuityBroken).toBe(false);
+    // A fresh presented frame keeps the source healthy while this camera's
+    // bounded inference job is still running.
+    r.at(700);
+    expect(r.scheduler.dispatch(r.context, r.frame()).tickets).toEqual([]);
+    expect(r.scheduler.settle(slow, "completed")).toMatchObject({
+      status: "accepted",
+      continuityBroken: true,
+    });
+    expect(r.scheduler.snapshot().cameras[0]).toMatchObject({
+      revisitP95Ms: 700,
+      continuityResets: 1,
+    });
+  });
+
   it.each([1, 4, 6] as const)(
     "fairly services %i cameras under sustained one-slot load",
     (count) => {

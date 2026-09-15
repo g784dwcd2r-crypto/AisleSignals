@@ -585,6 +585,67 @@ describe("dedicated person detector gate", () => {
     expect(result.tracks[0].label).toBe("Person detected · pose unavailable");
     expect(result.events).toEqual([]);
   });
+
+  it("blocks a nearby pose whose torso or usable arm belongs outside the person box", () => {
+    const box = { x: 0.46, y: 0.05, width: 0.08, height: 0.9 };
+    const result = new LiveBehaviourEngine().update(
+      [
+        {
+          box,
+          detectorScore: 0.92,
+          subjectPixels: 12_000,
+          visibilityState: "sufficient",
+          // The pose center and many face points are inside, but the shoulders,
+          // hips and arm chain belong to a different/wider subject.
+          landmarks: pose("reach"),
+        },
+      ],
+      0,
+    );
+    expect(result.tracks[0]).toMatchObject({
+      box,
+      label: "Person detected · pose unavailable",
+    });
+    expect(result.events).toEqual([]);
+  });
+
+  it("does not accumulate hand evidence after a rule-critical wrist leaves its detector box", () => {
+    const engine = new LiveBehaviourEngine();
+    const box = { x: 0.14, y: 0.05, width: 0.72, height: 0.94 };
+    const detected = (points: PosePoint[]) => ({
+      box,
+      detectorScore: 0.92,
+      subjectPixels: 30_000,
+      visibilityState: "sufficient" as const,
+      landmarks: points,
+    });
+    for (const now of [0, 200, 400])
+      expect(
+        engine.update([detected(pose("reach"))], now).events,
+      ).toEqual([]);
+    const outside = pose("waist");
+    outside[15] = { ...outside[15], x: 0.05 };
+    expect(engine.update([detected(outside)], 600).events).toEqual([]);
+    for (const now of [800, 1_000, 1_200])
+      expect(engine.update([detected(pose("waist"))], now).events).toEqual([]);
+    const firstCleanCycle: LiveBehaviourEvent[] = [];
+    const secondCleanCycle: LiveBehaviourEvent[] = [];
+    for (const [cycleIndex, start] of [1_400, 2_600].entries()) {
+      for (const [offset, position] of [
+        [0, "reach"],
+        [200, "reach"],
+        [400, "reach"],
+        [600, "waist"],
+        [800, "waist"],
+        [1_000, "waist"],
+      ] as const)
+        (cycleIndex === 0 ? firstCleanCycle : secondCleanCycle).push(
+          ...engine.update([detected(pose(position))], start + offset).events,
+        );
+    }
+    expect(firstCleanCycle).toEqual([]);
+    expect(secondCleanCycle).toHaveLength(1);
+  });
 });
 
 describe("observed-limb exclusions and display-only smoothing", () => {

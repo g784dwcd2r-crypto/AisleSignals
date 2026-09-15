@@ -53,7 +53,12 @@ export type CameraDispatch = {
   reason: RejectionReason | null;
 };
 export type CameraSettlement =
-  | { status: "accepted"; ticket: CameraWorkTicket }
+  | {
+      status: "accepted";
+      ticket: CameraWorkTicket;
+      /** Includes inference time, measured immediately before consumption. */
+      continuityBroken: boolean;
+    }
   | { status: "failed" }
   | { status: "rejected"; reason: RejectionReason };
 export type CameraSchedulerOptions = {
@@ -372,7 +377,6 @@ export class MultiCameraScheduler {
       const continuityBroken =
         camera.lastCompletedAt !== null &&
         now - camera.lastCompletedAt > this.cameraRevisit;
-      if (continuityBroken) camera.continuityResets++;
       const ticket: CameraWorkTicket = Object.freeze({
         id: ++this.nextId,
         context,
@@ -448,13 +452,19 @@ export class MultiCameraScheduler {
     if (now === null)
       throw new Error("A completed ticket requires a valid clock.");
     work.camera.completed++;
+    let continuityBroken = ticket.continuityBroken;
     if (work.camera.lastCompletedAt !== null) {
-      work.camera.revisitGaps.push(now - work.camera.lastCompletedAt);
+      const completedGap = now - work.camera.lastCompletedAt;
+      work.camera.revisitGaps.push(completedGap);
       if (work.camera.revisitGaps.length > 32)
         work.camera.revisitGaps.splice(0, work.camera.revisitGaps.length - 32);
+      // Dispatch-time checks cannot see slow inference. The settlement result
+      // is the authoritative gate used immediately before an engine update.
+      continuityBroken ||= completedGap > this.cameraRevisit;
     }
+    if (continuityBroken) work.camera.continuityResets++;
     work.camera.lastCompletedAt = now;
-    return { status: "accepted", ticket };
+    return { status: "accepted", ticket, continuityBroken };
   }
 
   /** Epoch check only. After asynchronous work also recheck result deadline

@@ -1106,7 +1106,7 @@ export default function LiveDetection({
                   )
                     return;
                   if (accepted.status === "accepted") {
-                    if (ticket.continuityBroken) {
+                    if (accepted.continuityBroken) {
                       state.engine.reset();
                       state.tracks = [];
                     }

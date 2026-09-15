@@ -106,6 +106,22 @@ function quality(point: PosePoint | undefined): number {
   return Math.min(point.visibility!, point.presence ?? 1);
 }
 
+function insideDetectorBox(
+  point: PosePoint | undefined,
+  box: DetectionRect,
+  margin = 0.08,
+): boolean {
+  if (quality(point) < MIN_VISIBILITY) return false;
+  const marginX = box.width * margin;
+  const marginY = box.height * margin;
+  return (
+    point!.x >= box.x - marginX &&
+    point!.x <= box.x + box.width + marginX &&
+    point!.y >= box.y - marginY &&
+    point!.y <= box.y + box.height + marginY
+  );
+}
+
 function observe(
   landmarks: PosePoint[],
   aspectRatio: number,
@@ -258,22 +274,32 @@ function observePerson(
         poseUsable: false,
         visibilityState,
       };
-    const marginX = box.width * 0.08,
-      marginY = box.height * 0.08;
-    const inBox = observed.landmarks.filter(
-      (point) =>
-        quality(point) >= MIN_VISIBILITY &&
-        point.x >= box.x - marginX &&
-        point.x <= box.x + box.width + marginX &&
-        point.y >= box.y - marginY &&
-        point.y <= box.y + box.height + marginY,
-    ).length;
+    const torsoInside = TORSO.every((index) =>
+      insideDetectorBox(observed.landmarks[index], box),
+    );
+    const armInside = ARM_CHAINS.some((chain) =>
+      chain.every((index) =>
+        insideDetectorBox(observed.landmarks[index], box),
+      ),
+    );
+    const shoulderSpan = Math.abs(
+      observed.landmarks[11].x - observed.landmarks[12].x,
+    );
+    const torsoSpan = Math.abs(
+      midpoint(observed.landmarks[11], observed.landmarks[12]).y -
+        midpoint(observed.landmarks[23], observed.landmarks[24]).y,
+    );
     if (
-      observed.center.x < box.x - marginX ||
-      observed.center.x > box.x + box.width + marginX ||
-      observed.center.y < box.y - marginY ||
-      observed.center.y > box.y + box.height + marginY ||
-      inBox < 10
+      !insideDetectorBox(
+        { ...observed.center, visibility: 1, presence: 1 },
+        box,
+      ) ||
+      !torsoInside ||
+      !armInside ||
+      torsoSpan < box.height * 0.14 ||
+      torsoSpan > box.height * 0.75 ||
+      shoulderSpan < box.width * 0.1 ||
+      shoulderSpan > box.width * 0.95
     )
       observed.poseUsable = false;
     observed.visibilityState = visibilityState;
@@ -618,7 +644,11 @@ export class LiveBehaviourEngine {
     const wrist = observation.landmarks[15 + handIndex];
     const elbow = observation.landmarks[13 + handIndex];
     const shoulder = observation.landmarks[11 + handIndex];
-    if (quality(wrist) < MIN_VISIBILITY || quality(elbow) < MIN_VISIBILITY) {
+    if (
+      !insideDetectorBox(wrist, observation.box) ||
+      !insideDetectorBox(elbow, observation.box) ||
+      !insideDetectorBox(shoulder, observation.box)
+    ) {
       track.hands[handIndex] = newHand();
       return false;
     }
