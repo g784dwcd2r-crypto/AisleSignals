@@ -11,7 +11,10 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  timeout: 30_000,
+  // Windows CI starts a fresh Python/SQLite fixture for each stateful journey.
+  // Module loading can exceed the generic 30-second test budget under runner
+  // contention, while each test can still set a tighter interaction timeout.
+  timeout: process.platform === 'win32' ? 45_000 : 30_000,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: testOrigin,

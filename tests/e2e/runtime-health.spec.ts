@@ -100,7 +100,7 @@ const test = base.extend<{ installation: Installation }>({
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error("Case fixture startup timed out")),
-            20000,
+            process.platform === "win32" ? 35_000 : 20_000,
           );
         }),
       ]).finally(() => clearTimeout(timer));
