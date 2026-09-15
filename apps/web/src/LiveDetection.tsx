@@ -872,12 +872,13 @@ export default function LiveDetection({
     modelLoad.current = controller;
     setPhase("loading");
     setError("");
-    setStatus("Loading the local pose model…");
+    setStatus("Loading the local person and pose models…");
     setMetrics({ fps: 0, latency: 0, frames: 0 });
     setActiveAlert(null);
     alarmEvent.current = null;
     runId.current = crypto.randomUUID();
     let detector: PoseDetector | null = null;
+    let detectorPool: PoseDetector[] = [];
     try {
       const sourceKey = current.url ?? current.stream?.id ?? "";
       const camera =
@@ -938,8 +939,11 @@ export default function LiveDetection({
         controller.signal,
         cameras ? "IMAGE" : "VIDEO",
       );
+      detectorPool = [detector];
+      if (cameras)
+        detectorPool.push(await createPoseDetector(controller.signal, "IMAGE"));
       if (!mounted.current || generation !== runGeneration.current) {
-        detector.close();
+        detectorPool.forEach((item) => item.close());
         return;
       }
       detectorRef.current = detector;
@@ -992,7 +996,7 @@ export default function LiveDetection({
       loadingRef.current = false;
       runningRef.current = true;
       setPhase("running");
-      setStatus("Analysing frames. Waiting for a clear body pose…");
+      setStatus("Analysing frames. Waiting for a person detector result…");
       if (cameras) {
         const run: AllCameraRun = Object.freeze({
           runId: runId.current,
@@ -1005,10 +1009,10 @@ export default function LiveDetection({
         });
         setAllRun(run);
         const scheduler = new MultiCameraScheduler({
-          sampleIntervalMs: 500,
-          maxInFlight: 1,
+          sampleIntervalMs: 250,
+          maxInFlight: detectorPool.length,
           maxFrameAgeMs: 1000,
-          maxResultAgeMs: 1000,
+          maxResultAgeMs: 1600,
         });
         const scheduled = scheduler.start({
           organisationId,
@@ -1057,7 +1061,7 @@ export default function LiveDetection({
           scheduler.stop();
           if (mounted.current) setPoseCoverage(scheduler.snapshot());
           clearInterval(heartbeat);
-          detector?.close();
+          detectorPool.forEach((item) => item.close());
           perCamera.forEach((camera) => camera.engine.reset());
         };
         const tickAll = async () => {
@@ -1077,77 +1081,90 @@ export default function LiveDetection({
                 sourceHeight: video.videoHeight,
               })
             : null;
-          const ticket = work?.tickets[0];
-          if (ticket) {
-            const state = perCamera.find(
-              (item) => cameraContextId(item.camera) === ticket.camera.id,
-            )!;
-            const abort = () => detector?.close();
-            ticket.signal.addEventListener("abort", abort, { once: true });
-            try {
-              const poses = await detector!.detect(
-                video,
-                now,
-                state.camera.crop,
-              );
-              const accepted = scheduler.settle(ticket, "completed");
-              if (
-                closed ||
-                generation !== runGeneration.current ||
-                !runtimeHealth.canMonitor() ||
-                !continuity.isFresh(maxResultAgeMs)
-              )
-                return;
-              if (accepted.status === "accepted") {
-                const result = state.engine.update(
-                  poses,
-                  ticket.frame.mediaTime * 1000,
-                  state.region.width / state.region.height,
-                );
-                state.tracks = result.tracks;
-                state.lastAt = performance.now();
-                completed++;
-                setMetrics({
-                  frames: completed,
-                  fps:
-                    (completed * 1000) /
-                    Math.max(1, performance.now() - poseStartedAt),
-                  latency: performance.now() - ticket.frame.observedAt,
-                });
-                for (const event of result.events)
-                  trigger(event, current, ticket.frame.mediaTime, state.camera);
-              } else {
-                state.engine.reset();
-                state.tracks = [];
-              }
-              const stamp = performance.now();
-              setTracks(
-                perCamera.flatMap((item) =>
-                  stamp - item.lastAt > 1200
-                    ? []
-                    : projectPoseTracks(item.tracks, item.region.area).map(
-                        (track) => ({
-                          ...track,
-                          cameraIndex: item.camera.camera_index,
-                        }),
-                      ),
-                ),
-              );
-              setStatus(
-                `All ${cameras.length} cameras rotate through one IMAGE-mode worker. Tracks remain camera-local; delayed cameras lose movement continuity.`,
-              );
-            } catch (failure) {
-              scheduler.settle(ticket, "failed");
-              if (!closed && generation === runGeneration.current) {
-                stop(
-                  "All-camera pose worker stopped. No late camera result may be used.",
-                );
-                setError(message(failure));
-              }
-              return;
-            } finally {
-              ticket.signal.removeEventListener("abort", abort);
-            }
+          const tickets = work?.tickets ?? [];
+          if (tickets.length) {
+            await Promise.all(
+              tickets.map(async (ticket, workerIndex) => {
+                const state = perCamera.find(
+                  (item) => cameraContextId(item.camera) === ticket.camera.id,
+                )!;
+                const assignedDetector = detectorPool[workerIndex];
+                const abort = () => assignedDetector.close();
+                ticket.signal.addEventListener("abort", abort, { once: true });
+                try {
+                  const persons = await assignedDetector.detect(
+                    video,
+                    now,
+                    state.camera.crop,
+                  );
+                  const accepted = scheduler.settle(ticket, "completed");
+                  if (
+                    closed ||
+                    generation !== runGeneration.current ||
+                    !runtimeHealth.canMonitor() ||
+                    !continuity.isFresh(maxResultAgeMs)
+                  )
+                    return;
+                  if (accepted.status === "accepted") {
+                    if (accepted.continuityBroken) {
+                      state.engine.reset();
+                      state.tracks = [];
+                    }
+                    const result = state.engine.update(
+                      persons,
+                      ticket.frame.mediaTime * 1000,
+                      state.region.width / state.region.height,
+                    );
+                    state.tracks = result.tracks;
+                    state.lastAt = performance.now();
+                    completed++;
+                    for (const event of result.events)
+                      trigger(
+                        event,
+                        current,
+                        ticket.frame.mediaTime,
+                        state.camera,
+                      );
+                  } else {
+                    state.engine.reset();
+                    state.tracks = [];
+                  }
+                } catch (failure) {
+                  scheduler.settle(ticket, "failed");
+                  if (!closed && generation === runGeneration.current) {
+                    stop(
+                      "All-camera person detector stopped. No late camera result may be used.",
+                    );
+                    setError(message(failure));
+                  }
+                } finally {
+                  ticket.signal.removeEventListener("abort", abort);
+                }
+              }),
+            );
+            const stamp = performance.now();
+            setTracks(
+              perCamera.flatMap((item) =>
+                stamp - item.lastAt > 2500
+                  ? []
+                  : projectPoseTracks(item.tracks, item.region.area).map(
+                      (track) => ({
+                        ...track,
+                        cameraIndex: item.camera.camera_index,
+                      }),
+                    ),
+              ),
+            );
+            setMetrics({
+              frames: completed,
+              fps:
+                (completed * 1000) /
+                Math.max(1, performance.now() - poseStartedAt),
+              latency: performance.now() - tickets[0].frame.observedAt,
+            });
+            setStatus(
+              `All ${cameras.length} cameras use two bounded person-first workers. Tracks remain camera-local; uncertain continuity is paused.`,
+            );
           }
           if (!closed && generation === runGeneration.current)
             tickTimer.current = setTimeout(
@@ -1246,8 +1263,8 @@ export default function LiveDetection({
             });
             setStatus(
               result.tracks.length
-                ? `${result.tracks.length} usable body track${result.tracks.length === 1 ? "" : "s"}. This is not a count of everyone visible.`
-                : "No clear body pose. People may still be present; use a closer camera area with a visible torso and arms.",
+                ? `${result.tracks.length} person detector track${result.tracks.length === 1 ? "" : "s"}. Pose rules pause for partial, small or ambiguous people.`
+                : "No person detected. People may still be present; use a closer, unobstructed camera area.",
             );
             for (const event of result.events)
               trigger(event, trackedSource, mediaTime);
@@ -1270,9 +1287,11 @@ export default function LiveDetection({
       void tick();
     } catch (failure) {
       if (!mounted.current || generation !== runGeneration.current) {
+        detectorPool.forEach((item) => item.close());
         detector?.close();
         return;
       }
+      detectorPool.forEach((item) => item.close());
       stop("Detection could not start.");
       setError(message(failure));
       setPhase("error");
@@ -1333,7 +1352,9 @@ export default function LiveDetection({
             Connect CCTV. See movement patterns. Respond to an attention alarm.
           </p>
         </div>
-        <span className="ld-local-badge">Local pose AI · Experimental</span>
+        <span className="ld-local-badge">
+          Local person-first AI · Experimental
+        </span>
       </div>
       <section className="ld-source-panel" aria-labelledby="ld-source-heading">
         <div>
@@ -1570,7 +1591,7 @@ export default function LiveDetection({
           {phase === "loading" && (
             <div className="ld-loading">
               <span className="ld-spinner" />
-              Loading local pose model…
+              Loading local person and pose models…
             </div>
           )}
           {source && <span className="ld-source-name">{source.label}</span>}
@@ -1624,15 +1645,16 @@ export default function LiveDetection({
         >
           {poseCoverage.cameras.map((camera, index) => (
             <div key={camera.id}>
-              <strong>Camera {index + 1} body tracking</strong>
+              <strong>Camera {index + 1} person tracking</strong>
               <p>
                 {!poseCoverage.active
                   ? "Stopped"
                   : camera.completionAgeMs === null
                     ? "Waiting for first observation"
-                    : camera.completionAgeMs > 1200
-                      ? "Degraded: movement history reset after a sampling gap"
-                      : "Recent pose processing"}
+                    : camera.completionAgeMs > 1200 ||
+                        camera.continuityResets > 0
+                      ? "Degraded: movement history reset after a measured revisit gap"
+                      : "Recent person-first processing"}
               </p>
               <span>
                 {camera.completed}/{camera.expectedSamples} completed target
@@ -1641,7 +1663,7 @@ export default function LiveDetection({
               <p>
                 {camera.completionAgeMs === null
                   ? "No completed pose frame"
-                  : `Last frame ${(camera.completionAgeMs / 1000).toFixed(1)}s ago`}
+                  : `Last frame ${(camera.completionAgeMs / 1000).toFixed(1)}s ago · revisit p95 ${camera.revisitP95Ms === null ? "pending" : `${camera.revisitP95Ms.toFixed(0)}ms`} · ${camera.continuityResets} resets`}
               </p>
             </div>
           ))}

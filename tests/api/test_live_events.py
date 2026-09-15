@@ -94,9 +94,11 @@ def test_updated_rules_preserve_versioned_history_and_reject_unknown_rule_versio
     client = sign_in(app)
     old = write(client, sample()).json()
     current = write(client, sample(event_id=str(uuid4()), rule_version="pose-rules-v2",
+                                  model_version="mediapipe-efficientdet-lite0-u8-v1+pose-lite-f16-v1",
                                   source_label="Synthetic view · Camera 3 · 3x2 grid"))
     assert current.status_code == 200
     assert current.json()["rule_version"] == "pose-rules-v2"
+    assert current.json()["model_version"].startswith("mediapipe-efficientdet")
     assert "Camera 3" in current.json()["source_label"]
     assert old["rule_version"] == "pose-rules-v1"
     assert write(client, sample(event_id=str(uuid4()), rule_version="invented-rules")).status_code == 422

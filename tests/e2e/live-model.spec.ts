@@ -39,7 +39,7 @@ async function syntheticPoseWorker(page: Page, delayInit = false) {
         const landmarks = Array.from({ length: 33 }, () => ({ x: .5, y: .2, visibility: .99 }));
         for (const [i,x,y] of [[11,.42,.32],[12,.58,.32],[13,.39,.48],[14,.61,.48],[15,.38,.82],[16,.62,.82],[23,.44,.6],[24,.56,.6],[25,.43,.77],[26,.57,.77],[27,.42,.95],[28,.58,.95]])
           landmarks[i] = {x,y,visibility:.99};
-        queueMicrotask(() => this.onmessage?.({ data: { type: 'result', id: request.id, poses: [landmarks] } }));
+        queueMicrotask(() => this.onmessage?.({ data: { type: 'result', id: request.id, persons: [{ box: { x: .2, y: .1, width: .6, height: .88 }, detectorScore: .95, subjectPixels: 32000, visibilityState: 'sufficient', landmarks }] } }));
       }
       terminate() { if (!this.closed) { state.workers--; this.closed=true; } }
     }
@@ -59,13 +59,14 @@ test('real local model processes decoded video with no people or fabricated alar
   });
   await page.getByRole('button', { name: 'Start detection', exact: true }).click();
   await expect(page.getByText('POSE TRACKING RUNNING', { exact: true })).toBeVisible();
-  await expect(page.getByText(/^No clear body pose/)).toBeVisible();
+  await expect(page.getByText(/^No person detected/)).toBeVisible();
   await expect.poll(() => page.locator('.ld-metrics b').nth(2).textContent()).not.toBe('0');
   await page.getByRole('button', { name: 'Stop detection', exact: true }).click();
   await expect(page.getByText('DETECTION STOPPED', { exact: true })).toBeVisible();
   expect(posts).toEqual([]);
   expect(errors).toEqual([]);
   expect(urls.some(url => url.includes('pose_landmarker_lite.task'))).toBe(true);
+  expect(urls.some(url => url.includes('efficientdet_lite0_uint8.tflite'))).toBe(true);
   expect(urls.some(url => url.endsWith('.wasm'))).toBe(true);
   expect(urls.filter(url => /^https?:/.test(url)).every(url => new URL(url).origin === new URL(page.url()).origin)).toBe(true);
   await expect(page.locator('.ld-track')).toHaveCount(0);

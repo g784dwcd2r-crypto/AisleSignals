@@ -1,4 +1,5 @@
 import type {
+  DetectedPerson,
   DetectionRect,
   LiveBehaviourEvent,
   LiveDetectionSettings,
@@ -7,6 +8,7 @@ import type {
   LiveTrack,
   PosePoint,
 } from "./liveDetectionTypes";
+import { AnonymousPersonTracker } from "./anonymousPersonTracker";
 
 /** MediaPipe's body landmarks, without face connections or identity features. */
 export const POSE_CONNECTIONS: readonly (readonly [number, number])[] = [
@@ -51,6 +53,9 @@ type Observation = {
   quality: number;
   box: DetectionRect;
   duplicate: boolean;
+  detectorScore: number;
+  poseUsable: boolean;
+  visibilityState: DetectedPerson["visibilityState"];
 };
 type HandState = {
   phase: "idle" | "reaching" | "returning" | "waist" | "leave";
@@ -101,9 +106,27 @@ function quality(point: PosePoint | undefined): number {
   return Math.min(point.visibility!, point.presence ?? 1);
 }
 
+function insideDetectorBox(
+  point: PosePoint | undefined,
+  box: DetectionRect,
+  margin = 0.08,
+): boolean {
+  if (quality(point) < MIN_VISIBILITY) return false;
+  const marginX = box.width * margin;
+  const marginY = box.height * margin;
+  return (
+    point!.x >= box.x - marginX &&
+    point!.x <= box.x + box.width + marginX &&
+    point!.y >= box.y - marginY &&
+    point!.y <= box.y + box.height + marginY
+  );
+}
+
 function observe(
   landmarks: PosePoint[],
   aspectRatio: number,
+  detectorBox?: DetectionRect,
+  detectorScore = 1,
 ): Observation | null {
   if (!Array.isArray(landmarks) || landmarks.length < 33) return null;
   const torsoQuality = TORSO.map((index) => quality(landmarks[index]));
@@ -205,8 +228,92 @@ function observe(
     scale,
     quality:
       torsoQuality.reduce((total, value) => total + value, 0) / TORSO.length,
-    box: bounds(accepted, scale, aspectRatio),
+    box: detectorBox ?? bounds(accepted, scale, aspectRatio),
     duplicate: false,
+    detectorScore,
+    poseUsable: true,
+    visibilityState: "sufficient",
+  };
+}
+
+function observePerson(
+  person: DetectedPerson,
+  aspectRatio: number,
+): Observation | null {
+  const { box, detectorScore, subjectPixels, visibilityState } = person;
+  if (
+    ![box.x, box.y, box.width, box.height, detectorScore].every(
+      Number.isFinite,
+    ) ||
+    box.x < 0 ||
+    box.y < 0 ||
+    box.width <= 0 ||
+    box.height <= 0 ||
+    box.x + box.width > 1.000001 ||
+    box.y + box.height > 1.000001 ||
+    detectorScore < 0.4 ||
+    detectorScore > 1 ||
+    !Number.isSafeInteger(subjectPixels) ||
+    subjectPixels < 1 ||
+    subjectPixels > 16_384 * 16_384 ||
+    !["sufficient", "edge_truncated", "too_small"].includes(visibilityState)
+  )
+    return null;
+  if (person.landmarks && visibilityState === "sufficient") {
+    const observed = observe(person.landmarks, aspectRatio, box, detectorScore);
+    if (!observed)
+      return {
+        landmarks: [],
+        center: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+        hips: { x: box.x + box.width / 2, y: box.y + box.height * 0.6 },
+        scale: box.height,
+        quality: detectorScore,
+        box: { ...box },
+        duplicate: false,
+        detectorScore,
+        poseUsable: false,
+        visibilityState,
+      };
+    const torsoInside = TORSO.every((index) =>
+      insideDetectorBox(observed.landmarks[index], box),
+    );
+    const armInside = ARM_CHAINS.some((chain) =>
+      chain.every((index) => insideDetectorBox(observed.landmarks[index], box)),
+    );
+    const shoulderSpan = Math.abs(
+      observed.landmarks[11].x - observed.landmarks[12].x,
+    );
+    const torsoSpan = Math.abs(
+      midpoint(observed.landmarks[11], observed.landmarks[12]).y -
+        midpoint(observed.landmarks[23], observed.landmarks[24]).y,
+    );
+    if (
+      !insideDetectorBox(
+        { ...observed.center, visibility: 1, presence: 1 },
+        box,
+      ) ||
+      !torsoInside ||
+      !armInside ||
+      torsoSpan < box.height * 0.14 ||
+      torsoSpan > box.height * 0.75 ||
+      shoulderSpan < box.width * 0.1 ||
+      shoulderSpan > box.width * 0.95
+    )
+      observed.poseUsable = false;
+    observed.visibilityState = visibilityState;
+    return observed;
+  }
+  return {
+    landmarks: [],
+    center: { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+    hips: { x: box.x + box.width / 2, y: box.y + box.height * 0.6 },
+    scale: box.height,
+    quality: detectorScore,
+    box: { ...box },
+    duplicate: false,
+    detectorScore,
+    poseUsable: false,
+    visibilityState,
   };
 }
 
@@ -346,9 +453,9 @@ function contains(zone: DetectionRect, point: Point): boolean {
  */
 export class LiveBehaviourEngine {
   private readonly settings: LiveDetectionSettings;
+  private readonly personTracker = new AnonymousPersonTracker();
   private tracks: TrackState[] = [];
   private timestamp: number | null = null;
-  private nextId = 1;
   private eventSequence = 0;
   private aspectRatio = 1;
 
@@ -362,13 +469,14 @@ export class LiveBehaviourEngine {
 
   reset(): void {
     this.tracks = [];
+    this.personTracker.reset();
     this.timestamp = null;
     this.aspectRatio = 1;
     // IDs stay monotonic within the instance, including after a seek/reset.
   }
 
   update(
-    poses: PosePoint[][],
+    input: PosePoint[][] | DetectedPerson[],
     timestampMs: number,
     frameAspectRatio = 1,
   ): LiveEngineResult {
@@ -391,32 +499,25 @@ export class LiveBehaviourEngine {
       this.reset();
     this.timestamp = timestampMs;
     this.aspectRatio = frameAspectRatio;
-    const observations = distinctObservations(
-      poses
-        .slice(0, MAX_POSES)
-        .map((landmarks) => observe(landmarks, frameAspectRatio))
-        .filter((value): value is Observation => value !== null),
-      frameAspectRatio,
-    );
+    const detectorInput =
+      input.length === 0 || !Array.isArray(input[0])
+        ? (input as DetectedPerson[])
+        : null;
+    const observations = detectorInput
+      ? detectorInput
+          .slice(0, MAX_POSES)
+          .map((person) => observePerson(person, frameAspectRatio))
+          .filter((value): value is Observation => value !== null)
+      : distinctObservations(
+          (input as PosePoint[][])
+            .slice(0, MAX_POSES)
+            .map((landmarks) => observe(landmarks, frameAspectRatio))
+            .filter((value): value is Observation => value !== null),
+          frameAspectRatio,
+        );
     const previous = this.tracks.filter(
       (track) => timestampMs - track.lastSeenAt <= TRACK_RETENTION_MS,
     );
-    const costs = observations.map((observation) =>
-      previous.map((track) => {
-        const ratio = observation.scale / track.observed.scale;
-        if (ratio < 0.65 || ratio > 1.55) return Infinity;
-        const displacement =
-          distance(
-            observation.center,
-            track.observed.center,
-            frameAspectRatio,
-          ) /
-          ((observation.scale + track.observed.scale) / 2);
-        return displacement <= 0.85 ? displacement : Infinity;
-      }),
-    );
-    // Display association and permission to accumulate behaviour are separate:
-    // nearby people may have obvious unique matches while their arms overlap.
     const overlapping = observations.map(
       (observation, index) =>
         observation.duplicate ||
@@ -427,82 +528,35 @@ export class LiveBehaviourEngine {
               Math.min(observation.scale, other.scale) * 0.7,
         ),
     );
-    const assignments = observations.map((_, observationIndex) => {
-      const ranked = costs[observationIndex]
-        .map((cost, index) => ({ cost, index }))
-        .filter(({ cost }) => Number.isFinite(cost))
-        .sort((a, b) => a.cost - b.cost);
-      let matched: number | null = null;
-      let associationUncertain =
-        ranked.length > 1 && ranked[1].cost - ranked[0].cost < 0.22;
-      if (!associationUncertain && ranked.length) {
-        const candidate = ranked[0];
-        const rivals = costs
-          .map((row, index) => ({ cost: row[candidate.index], index }))
-          .filter(({ cost }) => Number.isFinite(cost))
-          .sort((a, b) => a.cost - b.cost);
-        if (
-          rivals[0].index === observationIndex &&
-          (rivals.length === 1 || rivals[1].cost - rivals[0].cost >= 0.22)
-        )
-          matched = candidate.index;
-        else associationUncertain = true;
-      }
-      return {
-        matched,
-        associationUncertain,
-        uncertain: overlapping[observationIndex] || associationUncertain,
-        candidates: ranked.map(({ index }) => index),
-      };
-    });
-    const invalidated = new Set<number>();
-    // Actual association ambiguity invalidates every affected match before any
-    // observation can emit. Nearby-but-unique display matches remain usable.
-    for (let pass = 0; pass <= assignments.length; pass++) {
-      let changed = false;
-      for (const assignment of assignments) {
-        if (
-          assignment.matched !== null &&
-          invalidated.has(assignment.matched)
-        ) {
-          assignment.matched = null;
-          assignment.associationUncertain = true;
-          assignment.uncertain = true;
-          changed = true;
-        }
-        if (assignment.associationUncertain)
-          for (const candidate of assignment.candidates)
-            if (!invalidated.has(candidate)) {
-              invalidated.add(candidate);
-              changed = true;
-            }
-      }
-      if (!changed) break;
-    }
-    const pausedEvidence = new Set(invalidated);
-    for (const assignment of assignments)
-      if (assignment.uncertain)
-        assignment.candidates.forEach((candidate) =>
-          pausedEvidence.add(candidate),
-        );
-    for (const assignment of assignments)
-      if (assignment.matched !== null && pausedEvidence.has(assignment.matched))
-        assignment.uncertain = true;
+    const assignments = this.personTracker.update(
+      observations.map((observation) => ({
+        box: observation.box,
+        score: observation.detectorScore,
+      })),
+      timestampMs,
+    );
+    const invalidated = new Set(this.personTracker.invalidatedTrackIds());
+    for (const track of previous)
+      if (invalidated.has(track.id)) clearEvidence(track);
     const used = new Set<number>();
     const visible: LiveTrack[] = [];
     const events: LiveBehaviourEvent[] = [];
     const next: TrackState[] = [];
 
     observations.forEach((observation, observationIndex) => {
-      const { matched, uncertain } = assignments[observationIndex];
+      const assignment = assignments[observationIndex];
+      if (!assignment) return;
+      const existing = previous.find((item) => item.id === assignment.trackId);
       const track =
-        matched !== null
-          ? previous[matched]
-          : this.newTrack(observation, timestampMs);
-      if (matched !== null) used.add(matched);
+        existing ?? this.newTrack(assignment.trackId, observation, timestampMs);
+      if (existing) used.add(existing.id);
+      const uncertain =
+        assignment.state !== "observed" ||
+        overlapping[observationIndex] ||
+        !observation.poseUsable;
       track.displayed = displayLandmarks(
         observation,
-        matched !== null ? track.displayed : [],
+        existing ? track.displayed : [],
         timestampMs - track.lastSeenAt,
         frameAspectRatio,
       );
@@ -519,22 +573,35 @@ export class LiveBehaviourEngine {
       visible.push({
         id: track.id,
         landmarks: track.displayed,
-        box: bounds(track.displayed, observation.scale, frameAspectRatio),
+        box: { ...observation.box },
         quality: observation.quality,
+        detectorScore: observation.detectorScore,
+        trackingState: assignment.state,
+        visibilityState: observation.visibilityState,
         status: alert ? "alert" : watch || uncertain ? "watch" : "normal",
         label: alert
           ? track.alertLabel
-          : uncertain
+          : overlapping[observationIndex]
             ? "Tracking overlap · paused"
-            : watch
-              ? "Movement under review"
-              : "Person tracked",
+            : assignment.state === "ambiguous"
+              ? "Association uncertain · paused"
+              : assignment.state === "recovered"
+                ? "Recovered after occlusion · paused"
+                : observation.visibilityState === "edge_truncated"
+                  ? "Person partly outside view · paused"
+                  : observation.visibilityState === "too_small"
+                    ? "Person too small for pose · paused"
+                    : !observation.poseUsable
+                      ? "Person detected · pose unavailable"
+                      : watch
+                        ? "Movement under review"
+                        : "Person tracked",
       });
       next.push(track);
     });
     // Retaining an ID briefly does not retain a partly observed behaviour.
-    previous.forEach((track, index) => {
-      if (!used.has(index) && !invalidated.has(index)) {
+    previous.forEach((track) => {
+      if (!used.has(track.id) && !invalidated.has(track.id)) {
         clearEvidence(track);
         track.displayed = [];
         next.push(track);
@@ -544,9 +611,13 @@ export class LiveBehaviourEngine {
     return { tracks: visible, events };
   }
 
-  private newTrack(observed: Observation, timestampMs: number): TrackState {
+  private newTrack(
+    id: number,
+    observed: Observation,
+    timestampMs: number,
+  ): TrackState {
     return {
-      id: this.nextId++,
+      id,
       observed,
       displayed: [],
       lastSeenAt: timestampMs,
@@ -571,7 +642,11 @@ export class LiveBehaviourEngine {
     const wrist = observation.landmarks[15 + handIndex];
     const elbow = observation.landmarks[13 + handIndex];
     const shoulder = observation.landmarks[11 + handIndex];
-    if (quality(wrist) < MIN_VISIBILITY || quality(elbow) < MIN_VISIBILITY) {
+    if (
+      !insideDetectorBox(wrist, observation.box) ||
+      !insideDetectorBox(elbow, observation.box) ||
+      !insideDetectorBox(shoulder, observation.box)
+    ) {
       track.hands[handIndex] = newHand();
       return false;
     }

@@ -1,4 +1,4 @@
-import type { PoseDetector, PosePoint } from "./liveDetectionTypes";
+import type { DetectedPerson, PoseDetector } from "./liveDetectionTypes";
 import { poseFrameRegion } from "./poseFrame";
 
 /** A dedicated worker owns the model. Only one bounded frame is in flight. */
@@ -20,7 +20,7 @@ export async function createPoseDetector(
   let loadingReject: ((error: Error) => void) | null = null;
   let pending: {
     id: number;
-    resolve: (poses: PosePoint[][]) => void;
+    resolve: (persons: DetectedPerson[]) => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
@@ -68,7 +68,7 @@ export async function createPoseDetector(
       const current = pending;
       pending = null;
       clearTimeout(current.timer);
-      current.resolve(result.poses);
+      current.resolve(result.persons);
     }
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -125,7 +125,7 @@ export async function createPoseDetector(
         bitmap.close();
         throw new Error("Detection stopped.");
       }
-      return new Promise<PosePoint[][]>((resolve, reject) => {
+      return new Promise<DetectedPerson[]>((resolve, reject) => {
         const id = ++sequence;
         const timeout = setTimeout(
           () =>
