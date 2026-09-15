@@ -1698,6 +1698,40 @@ export default function InteractionAnalysis({
             </span>
           </div>
           <p>{item.reason}</p>
+          {item.sampled_window_interpretation && (
+            <details className="interaction-custody">
+              <summary>
+                Sampled-window interpretation ·{" "}
+                {item.sampled_window_interpretation.decision
+                  .replaceAll("_", " ")
+                  .toLowerCase()}
+              </summary>
+              <p>{item.sampled_window_interpretation.reasons.join(" ")}</p>
+              <ol>
+                {item.sampled_window_interpretation.timeline.map(
+                  (entry, index) => (
+                    <li key={`${entry.frame_indices.join("-")}:${index}`}>
+                      <strong>
+                        Frames{" "}
+                        {entry.frame_indices
+                          .map((frame) => frame + 1)
+                          .join(", ")}{" "}
+                        · {entry.assertion.replaceAll("_", " ").toLowerCase()}
+                      </strong>{" "}
+                      — {entry.explanation}
+                    </li>
+                  ),
+                )}
+              </ol>
+              <p>
+                <strong>Complete custody alarm eligible: no.</strong>{" "}
+                {item.sampled_window_interpretation.limitations.join(" ")}
+                {item.alarm_eligible
+                  ? " The separately commissioned experimental candidate-window attention rule may still request staff attention."
+                  : " Supported sampled windows remain available for visual staff review."}
+              </p>
+            </details>
+          )}
           <div className="interaction-facts">
             <span>
               Camera calibration:{" "}
@@ -1710,11 +1744,25 @@ export default function InteractionAnalysis({
                 Automatic alarm blocked: camera zone calibration required
               </span>
             )}
+            {item.alarm_blocked_reasons?.includes(
+              "CUSTODY_VALIDATION_REQUIRED",
+            ) && (
+              <span>
+                Automatic alarm blocked: complete custody pipeline validation
+                required
+              </span>
+            )}
             {item.evidence_strength && (
               <span title={item.evidence_strength_note}>
                 Evidence rule strength:{" "}
                 {item.evidence_strength.replaceAll("_", " ").toLowerCase()}
                 {" · not a probability"}
+              </span>
+            )}
+            {item.attention_policy ===
+              "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION" && (
+              <span>
+                Audible alarm: blocked pending complete custody validation
               </span>
             )}
             <span>

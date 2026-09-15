@@ -31,6 +31,8 @@ from pydantic import (
     ValidationError,
 )
 
+from .custody_engine import sampled_window_interpretation
+
 MAX_JPEG_BYTES = 350_000
 MAX_EDGE = 768
 MAX_BODY_BYTES = 3_000_000
@@ -166,7 +168,7 @@ def public_observation(observation: ModelObservation, count: int) -> dict:
         )
     data = observation.model_dump()
     # Routing is an explicit experimental rule, never a model-reported confidence.
-    eligible = (
+    review_attention_eligible = (
         data["action"] == "POSSIBLE_CONCEALMENT"
         and data["visibility"] == "clear"
         and data["person_visible"]
@@ -219,11 +221,26 @@ def public_observation(observation: ModelObservation, count: int) -> dict:
     return {
         **data,
         "reason": reasons[data["action"]],
-        "alarm_eligible": eligible,
+        # A sampled VLM window is a review candidate, not an independently
+        # corroborated custody chain. Audible custody alarms remain disabled
+        # until upstream adapters feed and validate the complete state machine.
+        "alarm_eligible": False,
+        "alarm_blocked_reason": "CUSTODY_VALIDATION_REQUIRED",
+        "alarm_blocked_reasons": ["CUSTODY_VALIDATION_REQUIRED"],
+        "review_attention_eligible": review_attention_eligible,
+        "attention_policy": "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION",
         "evidence_strength": evidence_strength,
         "evidence_strength_note": (
             "Deterministic visibility/sequence rule strength; not a probability, "
             "identity finding or proof of theft."
+        ),
+        "sampled_window_interpretation": sampled_window_interpretation(
+            action=data["action"],
+            visibility=data["visibility"],
+            person_visible=data["person_visible"],
+            product_visible=data["product_visible"],
+            sequence_observed=data["sequence_observed"],
+            evidence_frame_indices=indices,
         ),
     }
 

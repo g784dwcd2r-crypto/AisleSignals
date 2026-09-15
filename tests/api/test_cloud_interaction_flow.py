@@ -4,7 +4,7 @@ from test_cloud_connection import paired_workspace, configured, action
 from test_interactions import MockProvider, sample, submit, wait_job
 
 
-@pytest.mark.parametrize('source_kind,queued', [('SCREEN_CAPTURE',True),('RECORDED_VIDEO',False)])
+@pytest.mark.parametrize('source_kind,queued', [('SCREEN_CAPTURE',False),('RECORDED_VIDEO',False)])
 def test_job_completion_atomically_queues_only_admitted_live_review_metadata(paired_workspace, source_kind, queued):
     app, initial, client, remote = paired_workspace
     saved = configured(client)

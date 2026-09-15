@@ -173,7 +173,9 @@ def test_real_scoped_store_evidence_review_delete_and_audit(app):
     client = sign_in(app)
     before = client.get("/api/bootstrap").json()
     item = complete(client)
-    assert item["alarm_eligible"] is True
+    assert item["alarm_eligible"] is False
+    assert item["review_attention_eligible"] is True
+    assert item["attention_policy"] == "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION"
     assert item["camera_calibration_status"] == "READY"
     assert item["camera_calibration"]["shelf_zones_confirmed"] is True
     assert item["validated"] is False and item["historical"] is True
@@ -462,6 +464,9 @@ def test_evidence_strength_is_explainable_rule_output_not_probability():
     strong = public_observation(ModelObservation(**observation()), 3)
     assert strong["evidence_strength"] == "STRONG_RULE_MATCH"
     assert "not a probability" in strong["evidence_strength_note"]
+    assert strong["sampled_window_interpretation"]["decision"] == "REVIEW_REQUIRED"
+    assert strong["sampled_window_interpretation"]["complete_custody_alarm_eligible"] is False
+    assert "checkout" in " ".join(strong["sampled_window_interpretation"]["limitations"])
     partial = public_observation(
         ModelObservation(**observation(visibility="partial", sequence_observed=False)),
         3,
@@ -481,6 +486,7 @@ def test_evidence_strength_is_explainable_rule_output_not_probability():
         3,
     )
     assert insufficient["evidence_strength"] == "INSUFFICIENT_RULE_MATCH"
+    assert insufficient["sampled_window_interpretation"]["decision"] == "ABSTAIN"
 
 
 @pytest.mark.parametrize("indices", [[-1, 2], [0, 3], [1, 1], [2, 0]])

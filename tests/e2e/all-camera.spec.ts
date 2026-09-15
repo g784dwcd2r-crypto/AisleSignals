@@ -226,7 +226,17 @@ async function openGrid(
                   data: {
                     type: "result",
                     id: request.id,
-                    poses: occluded ? [] : [points],
+                    persons: occluded
+                      ? []
+                      : [
+                          {
+                            box: { x: 0.2, y: 0.1, width: 0.6, height: 0.88 },
+                            detectorScore: 0.95,
+                            subjectPixels: 32000,
+                            visibilityState: "sufficient",
+                            landmarks: points,
+                          },
+                        ],
                   },
                 },
                 state.delay ?? 0,
@@ -508,7 +518,10 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
         .locator(".interaction-result")
         .filter({ hasText: `Camera ${i + 1} · ${layout}` });
       await expect(row).toHaveCount(1);
-      await row.locator("summary").click();
+      await row.locator("summary").first().click();
+      await row
+        .getByText("Sampled frames · chronological review", { exact: true })
+        .click();
       const saved = await row
         .locator("img")
         .first()
@@ -533,8 +546,8 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     expect(Object.values(pose.firstTracks)).toEqual(
       Array.from({ length: count }, (_, i) => `Camera ${i + 1} · Person #1`),
     );
-    expect(pose.modes).toEqual(["IMAGE"]);
-    expect(pose.workers).toBe(1);
+    expect(pose.modes).toEqual(["IMAGE", "IMAGE"]);
+    expect(pose.workers).toBe(2);
     expect(pose.sound).toBe(0);
     for (let i = 0; i < count; i++)
       expect(
@@ -636,8 +649,8 @@ test("a Camera 6 observation gap retires its anonymous ID without joining other 
     "Camera 6 · Person #2",
   ]);
   const state = await page.evaluate(() => (window as any).__all);
-  expect(state.modes).toEqual(["IMAGE"]);
-  expect(state.workers).toBe(1);
+  expect(state.modes).toEqual(["IMAGE", "IMAGE"]);
+  expect(state.workers).toBe(2);
   expect(state.sound).toBe(0);
   await page
     .getByRole("button", { name: "Stop detection", exact: true })
@@ -821,7 +834,7 @@ for (const change of [
     }
   });
 
-test("fresh camera-labelled alarms require commissioning and share one cooldown; historical refresh does not replay sound", async ({
+test("camera-labelled sampled interpretations stay silent after commissioning and historical refresh", async ({
   page,
   installation,
 }) => {
@@ -845,26 +858,26 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
     .click();
   await alarm.check();
   await expect
-    .poll(() => page.evaluate(() => (window as any).__all.sound), {
+    .poll(() => page.locator(".interaction-result").count(), {
       timeout: 12000,
     })
     .toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
   await expect(
-    page.getByRole("button", {
-      name: "Acknowledge Camera 1 attention",
-      exact: true,
-    }),
+    page
+      .getByText(
+        "Automatic alarm blocked: complete custody pipeline validation required",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
-  await expect(page.locator(".interaction-result")).toHaveCount(2, {
-    timeout: 8000,
-  });
   await page
     .getByLabel("Analyse all cameras automatically", { exact: true })
     .uncheck();
   await page
     .getByRole("button", { name: "Refresh model & history", exact: true })
     .click();
-  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
   await page
     .getByRole("button", {
       name: "Stop sound & disarm all cameras",
@@ -885,10 +898,10 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
   await expect(
     page.getByLabel("Enable all-camera product analysis", { exact: true }),
   ).not.toBeChecked();
-  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 
-test("all-camera playback failure disarms sound and pauses automatic submissions", async ({
+test("disabled automatic alarm never attempts playback or pauses sampling", async ({
   page,
   installation,
 }) => {
@@ -911,17 +924,25 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
   await page.evaluate(() => ((window as any).__all.failSound = true));
   await alarm.check();
   await expect
-    .poll(() => page.evaluate(() => (window as any).__all.soundAttempts), {
-      timeout: 30000,
+    .poll(() => page.locator(".interaction-result").count(), {
+      timeout: 12000,
     })
     .toBe(2);
   await expect(
     page.getByLabel("Analyse all cameras automatically", { exact: true }),
-  ).not.toBeChecked();
-  await expect(alarm).not.toBeChecked();
+  ).toBeChecked();
+  await expect(alarm).toBeChecked();
   await expect(
-    page.getByText(/sound failed and automatic submissions are paused/i),
+    page
+      .getByText(
+        "Automatic alarm blocked: complete custody pipeline validation required",
+        { exact: true },
+      )
+      .first(),
   ).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__all.soundAttempts)).toBe(
+    1,
+  );
   expect(await page.evaluate(() => (window as any).__all.sound)).toBe(1);
 });
 
@@ -938,8 +959,11 @@ test("slow per-camera pose processing exposes lost continuity and a hung worker 
       name: "Per-camera body tracking coverage",
       exact: true,
     }),
-  ).toContainText("Degraded: movement history reset", { timeout: 9000 });
-  expect(await page.evaluate(() => (window as any).__all.workers)).toBe(1);
+  ).toContainText(
+    "Degraded: movement history reset after a measured revisit gap",
+    { timeout: 9000 },
+  );
+  expect(await page.evaluate(() => (window as any).__all.workers)).toBe(2);
   await page.evaluate(() => ((window as any).__all.delay = 2000));
   await expect
     .poll(() => page.evaluate(() => (window as any).__all.workers), {

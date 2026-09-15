@@ -12,6 +12,7 @@
     "prebuild": "node ../../scripts/prepare-vision.mjs",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
+    "smoke:vision": "node ../../scripts/smoke-person-vision-bundle.mjs",
     "test": "vitest run",
     "preview": "vite preview --host 127.0.0.1",
     "format": "prettier --write src vite.config.ts tsconfig.json package.json index.html",

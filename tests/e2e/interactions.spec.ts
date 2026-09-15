@@ -38,7 +38,7 @@ async function modelWorkflow(page: Page, { concealment = false, delayed = false,
       onerror = null;
       postMessage(request: any) {
         request.bitmap?.close();
-        queueMicrotask(() => this.onmessage?.({ data: request.type === 'init' ? { type: 'ready' } : { type: 'result', id: request.id, poses: [] } }));
+        queueMicrotask(() => this.onmessage?.({ data: request.type === 'init' ? { type: 'ready' } : { type: 'result', id: request.id, persons: [] } }));
       }
       terminate() {}
     }
