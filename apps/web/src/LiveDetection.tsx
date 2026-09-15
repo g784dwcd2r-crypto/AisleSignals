@@ -1204,6 +1204,15 @@ export default function LiveDetection({
                 }
               }),
             );
+            // stop() clears the rendered tracks synchronously, but an in-flight
+            // batch can settle afterwards. Never let that stale continuation
+            // republish pre-stop tracks or monitoring status.
+            if (
+              closed ||
+              !runningRef.current ||
+              generation !== runGeneration.current
+            )
+              return;
             const stamp = performance.now();
             setTracks(
               perCamera.flatMap((item) =>

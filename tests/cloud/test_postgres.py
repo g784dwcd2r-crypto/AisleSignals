@@ -20,6 +20,7 @@ import pytest
 from services.cloud.config import CloudSettings
 from services.cloud.database import ReadinessProbe, SCHEMA_CHECKSUM, SCHEMA_VERSION, check_schema
 from services.cloud.migrate import MigrationError, migrate
+from scripts import cloud_recovery
 
 pytestmark = pytest.mark.skipif(os.environ.get("CLOUD_RUN_POSTGRES_TESTS") != "1", reason="Explicit opt-in required for disposable PostgreSQL process")
 
@@ -104,3 +105,28 @@ def test_locked_database_probe_has_bounded_failure(empty_database):
         assert result.ready is False
         assert result.code in {"DATABASE_UNAVAILABLE", "DATABASE_TIMEOUT"}
     assert asyncio.run(check_schema(empty_database)) is True
+
+
+def test_real_logical_backup_verifies_and_restores_into_empty_database(empty_database, tmp_path):
+    migrate(empty_database)
+    archive = tmp_path / "production-drill.dump"
+    source_url = empty_database.database_url + "?sslmode=disable"
+    metadata = cloud_recovery.backup(source_url, archive)
+    assert metadata == cloud_recovery.verify(archive)
+    target_name = "aislesignals_recovery_drill"
+    with psycopg.connect(empty_database.database_url, autocommit=True) as connection:
+        connection.execute(psycopg.sql.SQL("DROP DATABASE IF EXISTS {}").format(psycopg.sql.Identifier(target_name)))
+        connection.execute(psycopg.sql.SQL("CREATE DATABASE {}").format(psycopg.sql.Identifier(target_name)))
+    target_url = empty_database.database_url.rsplit("/", 1)[0] + f"/{target_name}?sslmode=disable"
+    try:
+        result = cloud_recovery.restore_drill(source_url, target_url, archive)
+        assert result == {"restored": True, "schema_version": SCHEMA_VERSION,
+                          "schema_checksum": SCHEMA_CHECKSUM}
+        restored_settings = CloudSettings.from_env({
+            "CLOUD_ENV": "development", "CLOUD_DATABASE_SSLMODE": "disable",
+            "DATABASE_URL": target_url,
+        })
+        assert asyncio.run(check_schema(restored_settings)) is True
+    finally:
+        with psycopg.connect(empty_database.database_url, autocommit=True) as connection:
+            connection.execute(psycopg.sql.SQL("DROP DATABASE IF EXISTS {}").format(psycopg.sql.Identifier(target_name)))
