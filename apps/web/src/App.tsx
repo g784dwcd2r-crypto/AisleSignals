@@ -1195,6 +1195,7 @@ export default function App() {
                         (site) => site.id === data.site.id,
                       )?.organisation_id
                     }
+                    manager={manager}
                     onOpenInteractionCase={openInteractionCase}
                   />
                 )}
