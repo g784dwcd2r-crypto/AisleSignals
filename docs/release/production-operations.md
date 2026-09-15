@@ -24,6 +24,7 @@ The reviewable target is `deployment/render-production.yaml`:
 - `python -m services.cloud.start_checked` as the server command;
 - `/health/ready` as the Render health check;
 - PostgreSQL external IP allow-list empty and storage autoscaling enabled.
+- Render environment network isolation and destructive-action protection enabled.
 
 The template is not proof of current Render settings. Preview it in the existing
 AisleSignals project and match resources by their actual IDs; do not create
@@ -41,6 +42,7 @@ Set secret values only in Render's protected environment controls:
 | `CLOUD_AUTH_KEY` | canonical base64url 32-byte key, backed up with the database recovery materials |
 | `CLOUD_BOOTSTRAP_TOKEN` | independent 43–128 character URL-safe token; remove after first owner setup |
 | `CLOUD_EVIDENCE_MODE` | keep `METADATA_ONLY` until the separate R2 gates pass |
+| `CLOUD_ALLOWED_HOSTS` | production custom hostname only; Render adds its own service hostname |
 | `RENDER_GIT_COMMIT` | provider-supplied exact deploy SHA; production refuses missing or malformed values |
 
 Render supplies `RENDER_EXTERNAL_HOSTNAME` and `RENDER_GIT_COMMIT`; do not set or
@@ -82,6 +84,50 @@ fails closed.
    labelled end-to-end observation only from an authorised commissioned test
    device under the applicable retention procedure.
 
+Run the lightweight public monitor independently of the deployed service. Pin
+the last accepted production SHA so a healthy but unintended release fails:
+
+```sh
+python deployment/check_cloud_health.py \
+  --origin https://control.example.ie \
+  --expected-sha 0123456789abcdef0123456789abcdef01234567
+```
+
+Configure Render deploy-failure and service-health notifications to a monitored
+owner channel. The probe proves only process liveness, exact release identity and
+database-schema readiness. It does not prove login, notification delivery,
+camera coverage, backups or detection quality.
+
+## Backups and measured restore drills
+
+Paid Render PostgreSQL supplies point-in-time recovery. Before every release,
+record the available recovery window and create a Render logical export. At
+least quarterly, and after a schema change, restore into a new isolated drill
+database. A recovery instance is a separate paid resource, so its creation is an
+operator action rather than part of the Blueprint or CI.
+
+The repository tool provides a second, explicit logical-backup and restore test.
+It accepts database passwords only through environment variables and never puts
+them in process arguments:
+
+```sh
+DATABASE_URL='postgresql://…?sslmode=require' \
+  python scripts/cloud_recovery.py backup --output /private/encrypted/aislesignals.dump
+python scripts/cloud_recovery.py verify --archive /private/encrypted/aislesignals.dump
+DATABASE_URL='postgresql://source…?sslmode=require' \
+RECOVERY_DATABASE_URL='postgresql://empty-drill…?sslmode=require' \
+  python scripts/cloud_recovery.py restore-drill --archive /private/encrypted/aislesignals.dump
+```
+
+The dump and adjacent manifest contain sensitive customer data and metadata.
+Store both on access-controlled encrypted storage, never in Git or the deployed
+web service. `restore-drill` rejects the source database and any non-empty target,
+uses a single transaction, then verifies the exact cumulative migration version
+and checksum. Preserve the private command log, archive digest, source backup ID,
+target database ID, start/end UTC times, operator and result as release evidence.
+Delete the drill database only after evidence is reviewed and within the agreed
+retention procedure.
+
 ## Rollback and recovery
 
 If pre-deploy migration fails, keep the previous service release running and
@@ -103,3 +149,9 @@ device credentials after an approved restore.
 Render backup retention, PITR, an isolated restore drill, exact live resource
 matching, GitHub branch protection and production approval rules remain external
 release gates until their evidence is recorded.
+
+Render references: [Blueprint specification](https://render.com/docs/blueprint-spec),
+[health checks](https://render.com/docs/health-checks), and
+[PostgreSQL recovery and backups](https://render.com/docs/postgresql-backups).
+Domain and Cloudflare setup is specified in
+[`production-domain-cloudflare.md`](production-domain-cloudflare.md).

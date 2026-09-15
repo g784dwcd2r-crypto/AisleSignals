@@ -174,6 +174,8 @@ def test_render_production_blueprint_is_manual_paid_and_separate():
     environment = blueprint["projects"][0]["environments"][0]
     service, database = environment["services"][0], environment["databases"][0]
     assert environment["name"] == "Production"
+    assert environment["networking"] == {"isolation": "enabled"}
+    assert environment["permissions"] == {"protection": "enabled"}
     assert service["name"] == "aislesignals-control-production"
     assert service["plan"] != "free" and database["plan"] != "free"
     assert service["branch"] == "main" and service["autoDeployTrigger"] == "off"
@@ -186,6 +188,7 @@ def test_render_production_blueprint_is_manual_paid_and_separate():
     assert variables["CLOUD_ENV"]["value"] == "production"
     assert variables["CLOUD_DATABASE_SSLMODE"]["value"] == "require"
     assert variables["CLOUD_EVIDENCE_MODE"]["value"] == "METADATA_ONLY"
+    assert variables["CLOUD_ALLOWED_HOSTS"] == {"key": "CLOUD_ALLOWED_HOSTS", "sync": False}
     assert "CLOUD_RELEASE_SHA" not in variables and "RENDER_GIT_COMMIT" not in variables
     assert variables["CLOUD_AUTH_KEY"] == {"key": "CLOUD_AUTH_KEY", "sync": False}
     assert variables["CLOUD_BOOTSTRAP_TOKEN"] == {"key": "CLOUD_BOOTSTRAP_TOKEN", "sync": False}
