@@ -462,6 +462,9 @@ def test_evidence_strength_is_explainable_rule_output_not_probability():
     strong = public_observation(ModelObservation(**observation()), 3)
     assert strong["evidence_strength"] == "STRONG_RULE_MATCH"
     assert "not a probability" in strong["evidence_strength_note"]
+    assert strong["sampled_window_interpretation"]["decision"] == "REVIEW_REQUIRED"
+    assert strong["sampled_window_interpretation"]["complete_custody_alarm_eligible"] is False
+    assert "checkout" in " ".join(strong["sampled_window_interpretation"]["limitations"])
     partial = public_observation(
         ModelObservation(**observation(visibility="partial", sequence_observed=False)),
         3,
@@ -481,6 +484,7 @@ def test_evidence_strength_is_explainable_rule_output_not_probability():
         3,
     )
     assert insufficient["evidence_strength"] == "INSUFFICIENT_RULE_MATCH"
+    assert insufficient["sampled_window_interpretation"]["decision"] == "ABSTAIN"
 
 
 @pytest.mark.parametrize("indices", [[-1, 2], [0, 3], [1, 1], [2, 0]])

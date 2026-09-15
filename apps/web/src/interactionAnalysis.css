@@ -359,6 +359,27 @@
   flex-shrink: 0;
   line-height: 1.7;
 }
+.interaction-custody {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid #d3decd;
+  border-radius: 7px;
+  background: #f8faf4;
+  font-size: 12px;
+}
+.interaction-custody summary {
+  color: #31553b;
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.interaction-custody ol {
+  margin: 10px 0;
+  padding-left: 22px;
+}
+.interaction-custody li + li {
+  margin-top: 7px;
+}
 .interaction-facts {
   display: flex;
   flex-wrap: wrap;

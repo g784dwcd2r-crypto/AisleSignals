@@ -1698,6 +1698,40 @@ export default function InteractionAnalysis({
             </span>
           </div>
           <p>{item.reason}</p>
+          {item.sampled_window_interpretation && (
+            <details className="interaction-custody">
+              <summary>
+                Sampled-window interpretation ·{" "}
+                {item.sampled_window_interpretation.decision
+                  .replaceAll("_", " ")
+                  .toLowerCase()}
+              </summary>
+              <p>{item.sampled_window_interpretation.reasons.join(" ")}</p>
+              <ol>
+                {item.sampled_window_interpretation.timeline.map(
+                  (entry, index) => (
+                    <li key={`${entry.frame_indices.join("-")}:${index}`}>
+                      <strong>
+                        Frames{" "}
+                        {entry.frame_indices
+                          .map((frame) => frame + 1)
+                          .join(", ")}{" "}
+                        · {entry.assertion.replaceAll("_", " ").toLowerCase()}
+                      </strong>{" "}
+                      — {entry.explanation}
+                    </li>
+                  ),
+                )}
+              </ol>
+              <p>
+                <strong>Complete custody alarm eligible: no.</strong>{" "}
+                {item.sampled_window_interpretation.limitations.join(" ")}
+                {item.alarm_eligible
+                  ? " The separately commissioned experimental candidate-window attention rule may still request staff attention."
+                  : ""}
+              </p>
+            </details>
+          )}
           <div className="interaction-facts">
             <span>
               Camera calibration:{" "}
