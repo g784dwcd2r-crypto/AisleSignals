@@ -16,6 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from services.cloud.config import CloudSettings, ConfigurationError
+import services.cloud.control_auth as control_auth
 from services.cloud.control_auth import hash_password, verify_password, totp_code, verify_totp
 from services.cloud.control_models import SetupBegin, InvitationCreate, UserUpdate, PharmacyUpdate
 from services.cloud.control_store import ControlError, ControlStore, COOKIE_NAME, cookie_name, require_origin, token_hash, validate_principal, Principal
@@ -174,15 +175,27 @@ def test_bootstrap_claim_race_has_exactly_one_owner(settings):
 
 
 @REAL_PG
-def test_password_alone_never_creates_session_and_totp_replay_rejected(settings, owner):
+def test_password_alone_never_creates_session_and_totp_replay_rejected(settings, owner, monkeypatch):
     owner_client, session, secret = owner
     with new_client(settings) as client:
         r = client.post("/control-api/login",json={"email":"OWNER@example.test","password":"Synthetic-only-password-123"})
         assert r.status_code == 200 and r.json()["mfa_required"] is True
         assert not client.cookies and client.get("/control-api/session").status_code == 401
-        body = {"challenge_token":r.json()["challenge_token"],"code":totp_code(secret,int(time.time())//30)}
+        with psycopg.connect(settings.database_url) as conn:
+            consumed_counter = conn.execute(
+                "SELECT last_totp_counter FROM aislesignals_control.users WHERE id=%s",
+                (session["user"]["id"],),
+            ).fetchone()[0]
+        verification_time = [(consumed_counter - 1) * 30]
+
+        def fixed_verify_totp(secret_value, code, last_counter=-1, *, now=None):
+            return verify_totp(secret_value, code, last_counter, now=verification_time[0])
+
+        monkeypatch.setattr(control_auth, "verify_totp", fixed_verify_totp)
+        body = {"challenge_token":r.json()["challenge_token"],"code":totp_code(secret,consumed_counter)}
         assert client.post("/control-api/login/mfa",json=body).status_code == 401
-        body["code"] = totp_code(secret,int(time.time())//30 + 1)
+        verification_time[0] = (consumed_counter + 1) * 30
+        body["code"] = totp_code(secret,consumed_counter + 1)
         r = client.post("/control-api/login/mfa",json=body)
         assert r.status_code == 200
         assert client.get("/control-api/session").json()["user"]["id"] == session["user"]["id"]
