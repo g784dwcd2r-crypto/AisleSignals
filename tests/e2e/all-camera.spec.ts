@@ -322,6 +322,7 @@ async function openGrid(
   await page
     .getByLabel("Active pharmacy branch")
     .selectOption(installation.north);
+  await keepRuntimeHealthy(page, installation);
   const menu = page.getByRole("button", {
     name: "Open navigation",
     exact: true,
@@ -661,7 +662,6 @@ test("a held model job never queues another camera; layout invalidation cancels 
     if (r.url().endsWith("/cancel")) cancellations++;
   });
   await openGrid(page, installation, "3x2");
-  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const armed = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
@@ -820,7 +820,6 @@ test("fresh camera-labelled alarms require commissioning and share one cooldown;
 }) => {
   test.setTimeout(30000);
   await openGrid(page, installation, "2x2");
-  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const alarm = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
@@ -888,7 +887,6 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
 }) => {
   test.setTimeout(60000);
   await openGrid(page, installation, "2x2");
-  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const alarm = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
