@@ -13,19 +13,28 @@ python3 scripts/release_preflight.py --platform Darwin --update-private-key-file
 [ -d "$app" ] || { echo "The macOS application bundle is missing." >&2; exit 1; }
 [ ! -e "$dmg" ] || { echo "Refusing to replace an existing DMG." >&2; exit 1; }
 
-find "$app/Contents" -type f \( -perm -111 -o -name '*.dylib' -o -name '*.so' \) -print0 |
+stage=$(mktemp -d "${TMPDIR:-/tmp}/aislesignals-release.XXXXXX")
+trap 'rm -rf "$stage"' EXIT HUP INT TERM
+release_app="$stage/AisleSignals.app"
+# Sign a private copy. The reviewed input bundle remains byte-for-byte intact,
+# so a failed notarisation can never turn it into an ambiguous partial output.
+cp -R "$app" "$release_app"
+
+find "$release_app/Contents" -type f \( -perm -111 -o -name '*.dylib' -o -name '*.so' \) -print0 |
   while IFS= read -r -d '' binary; do
     if file "$binary" | grep -q 'Mach-O'; then
       codesign --force --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$binary"
     fi
   done
-codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$app"
-codesign --verify --deep --strict --verbose=2 "$app"
-spctl --assess --type execute --verbose=2 "$app"
+codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$release_app"
+codesign --verify --deep --strict --verbose=2 "$release_app"
+signing_info=$(codesign -dv --verbose=4 "$release_app" 2>&1)
+printf '%s\n' "$signing_info" | grep -Fxq "TeamIdentifier=$AISLESIGNALS_APPLE_TEAM_ID" || {
+  echo "The signed application team does not match AISLESIGNALS_APPLE_TEAM_ID." >&2
+  exit 1
+}
+spctl --assess --type execute --verbose=2 "$release_app"
 
-stage=$(mktemp -d "${TMPDIR:-/tmp}/aislesignals-release.XXXXXX")
-trap 'rm -rf "$stage"' EXIT HUP INT TERM
-cp -R "$app" "$stage/AisleSignals.app"
 ln -s /Applications "$stage/Applications"
 hdiutil create -quiet -volname AisleSignals -srcfolder "$stage" -format UDZO "$dmg"
 codesign --force --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$dmg"

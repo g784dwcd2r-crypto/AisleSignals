@@ -35,7 +35,7 @@ REQUIRED = {
 }
 
 
-def exact_source(root: Path = ROOT) -> str:
+def exact_source(root: Path = ROOT, *, environment=os.environ) -> str:
     try:
         sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
         dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip()
@@ -43,8 +43,10 @@ def exact_source(root: Path = ROOT) -> str:
         raise PreflightError("The exact release source could not be established.") from None
     if not SHA.fullmatch(sha) or dirty:
         raise PreflightError("Production release source must be a clean exact Git commit.")
-    expected = os.environ.get("AISLESIGNALS_RELEASE_SHA")
-    if expected is not None and expected != sha:
+    expected = environment.get("AISLESIGNALS_RELEASE_SHA")
+    if not expected or not SHA.fullmatch(expected):
+        raise PreflightError("AISLESIGNALS_RELEASE_SHA must name the reviewed exact release commit.")
+    if expected != sha:
         raise PreflightError("AISLESIGNALS_RELEASE_SHA does not match the checked-out commit.")
     return sha
 
@@ -71,6 +73,8 @@ def signing(platform_name: str, *, environment=os.environ, which=shutil.which) -
         raise PreflightError("Signing preflight unavailable: " + ", ".join(missing))
     if platform_name == "Windows" and not re.fullmatch(r"[0-9A-Fa-f]{40}", environment["AISLESIGNALS_WINDOWS_CERT_SHA1"]):
         raise PreflightError("The Windows signing certificate thumbprint is invalid.")
+    if platform_name == "Darwin" and not re.fullmatch(r"[A-Z0-9]{10}", environment["AISLESIGNALS_APPLE_TEAM_ID"]):
+        raise PreflightError("The Apple team identifier is invalid.")
     return {"platform": platform_name, "ready": True,
             "environment_names": list(policy["environment"]), "tools": list(policy["tools"])}
 

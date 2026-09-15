@@ -4,7 +4,10 @@ import base64
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import platform
+import subprocess
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -15,7 +18,7 @@ from scripts.package_bundle import deterministic_archive
 from scripts.release_feed import FeedError, _private_key, build_release, sign_release
 from scripts.release_artifact_index import ArtifactIndexError, build_index
 from scripts.release_identity import ReleaseIdentityError, load_identity, validate_repository_versions
-from scripts.release_preflight import PreflightError, signing
+from scripts.release_preflight import PreflightError, exact_source, signing
 
 
 def test_production_identity_is_single_version_source():
@@ -75,6 +78,45 @@ def test_signing_preflight_accepts_names_and_tools_without_returning_values():
     result = signing("Windows", environment=environment, which=lambda name: f"/tools/{name}")
     assert result["ready"] is True
     assert "A" * 40 not in json.dumps(result)
+
+
+def committed_repository(tmp_path):
+    root = tmp_path / "source"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.email", "release@example.invalid"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Release test"], cwd=root, check=True)
+    (root / "source.txt").write_text("reviewed\n")
+    subprocess.run(["git", "add", "source.txt"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "reviewed source"], cwd=root, check=True)
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    return root, sha
+
+
+def test_exact_source_requires_explicit_reviewed_sha(tmp_path):
+    root, sha = committed_repository(tmp_path)
+    with pytest.raises(PreflightError, match="reviewed exact release commit"):
+        exact_source(root, environment={})
+    with pytest.raises(PreflightError, match="does not match"):
+        exact_source(root, environment={"AISLESIGNALS_RELEASE_SHA": "a" * 40})
+    assert exact_source(root, environment={"AISLESIGNALS_RELEASE_SHA": sha}) == sha
+
+
+def test_exact_source_refuses_dirty_reviewed_checkout(tmp_path):
+    root, sha = committed_repository(tmp_path)
+    (root / "source.txt").write_text("changed\n")
+    with pytest.raises(PreflightError, match="clean exact Git commit"):
+        exact_source(root, environment={"AISLESIGNALS_RELEASE_SHA": sha})
+
+
+def test_apple_team_identifier_is_validated_before_signing():
+    environment = {
+        "AISLESIGNALS_APPLE_DEVELOPER_ID": "Developer ID Application: Test",
+        "AISLESIGNALS_APPLE_TEAM_ID": "not-a-team",
+        "AISLESIGNALS_APPLE_NOTARY_PROFILE": "notary-profile",
+    }
+    with pytest.raises(PreflightError, match="team identifier"):
+        signing("Darwin", environment=environment, which=lambda name: f"/tools/{name}")
 
 
 def test_update_feed_is_deterministic_and_matches_runtime_verifier(tmp_path):
@@ -149,6 +191,63 @@ def test_production_windows_installer_uses_stable_identity():
     assert "'/DSignedBuild=1'" in signing_script
     assert "signtool verify /pa /all /v $expectedInstaller" in signing_script
     assert "Refusing to replace an existing signed installer" in signing_script
+
+
+def test_macos_signer_preserves_input_and_checks_signed_team():
+    script = Path("scripts/sign_notarize_macos.sh").read_text()
+    assert 'cp -R "$app" "$release_app"' in script
+    assert 'find "$release_app/Contents"' in script
+    assert 'codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$release_app"' in script
+    assert 'grep -Fxq "TeamIdentifier=$AISLESIGNALS_APPLE_TEAM_ID"' in script
+    assert 'codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$app"' not in script
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="requires the macOS release shell path")
+def test_macos_signer_executes_against_copy_and_leaves_input_unchanged(tmp_path):
+    app = tmp_path / "Reviewed.app"
+    binary = app / "Contents/MacOS/AisleSignals"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    before = hashlib.sha256(binary.read_bytes()).hexdigest()
+    key = tmp_path / "update.pem"
+    key.write_text("synthetic owner-only preflight input\n")
+    key.chmod(0o600)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    log = tmp_path / "codesign.log"
+    helpers = {
+        "codesign": """#!/bin/sh
+if [ "$1" = "-dv" ]; then echo 'TeamIdentifier=TESTTEAM01' >&2; exit 0; fi
+printf '%s\\n' "$*" >> "$AISLESIGNALS_TEST_CODESIGN_LOG"
+""",
+        "xcrun": "#!/bin/sh\nexit 0\n",
+        "spctl": "#!/bin/sh\nexit 0\n",
+        "hdiutil": """#!/bin/sh
+for argument in "$@"; do destination=$argument; done
+: > "$destination"
+""",
+    }
+    for name, content in helpers.items():
+        helper = tools / name
+        helper.write_text(content)
+        helper.chmod(0o755)
+    environment = os.environ.copy()
+    environment.update({
+        "PATH": str(tools) + os.pathsep + environment["PATH"],
+        "AISLESIGNALS_RELEASE_SHA": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "AISLESIGNALS_APPLE_DEVELOPER_ID": "Developer ID Application: Synthetic",
+        "AISLESIGNALS_APPLE_TEAM_ID": "TESTTEAM01",
+        "AISLESIGNALS_APPLE_NOTARY_PROFILE": "synthetic-notary-profile",
+        "AISLESIGNALS_TEST_CODESIGN_LOG": str(log),
+    })
+    destination = tmp_path / "AisleSignals.dmg"
+    completed = subprocess.run(["bash", "scripts/sign_notarize_macos.sh", str(app), str(destination), str(key)],
+                               env=environment, text=True, capture_output=True)
+    assert completed.returncode == 0, completed.stderr
+    assert destination.is_file()
+    assert hashlib.sha256(binary.read_bytes()).hexdigest() == before
+    assert str(app) not in log.read_text()
 
 
 def test_artifact_index_is_order_independent_and_source_bound(tmp_path):

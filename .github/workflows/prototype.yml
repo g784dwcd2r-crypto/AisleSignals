@@ -123,6 +123,8 @@ jobs:
         run: python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke
       - name: Build and verify unsigned macOS production candidate
         if: runner.os == 'macOS'
+        env:
+          AISLESIGNALS_RELEASE_SHA: ${{ github.sha }}
         run: |
           python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke --production --cloud-origin https://aislesignals-control-staging.onrender.com
           candidate=$(find dist -maxdepth 1 -name 'AisleSignals-macOS-*-unsigned.dmg' -print -quit)
@@ -144,6 +146,8 @@ jobs:
       - name: Build unsigned Windows production candidate
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          AISLESIGNALS_RELEASE_SHA: ${{ github.sha }}
         run: |
           $compiler = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
           if (-not $compiler) { $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' }
