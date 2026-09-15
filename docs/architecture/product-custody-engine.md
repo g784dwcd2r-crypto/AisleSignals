@@ -32,8 +32,10 @@ cross-camera continuity. Its response now includes a
 `sampled_window_interpretation` that states this explicitly and shows the one
 correlated model assertion in the desktop UI. It does not expand one model
 answer into independent facts. A single concealment window remains a review
-signal under the existing experimental attention rule; it is never a complete
-custody alarm decision.
+signal in saved review history; audible attention is blocked until the complete
+custody pipeline and branch acceptance tests are validated. Review-only
+candidate windows also remain outside the existing cloud alarm transport so a
+cloud notification cannot accidentally bypass this gate.
 
 ## Required upstream adapters
 
@@ -49,7 +51,9 @@ custody alarm decision.
   ambiguous associations force abstention.
 - Checkout/POS reconciliation must be product-linked. Absence of a checkout
   event is accepted only as an explicit reconciliation fact while the checkout
-  path and custody coverage remained observed.
+  path and custody coverage remained observed. The POS source must report
+  healthy status and a finalized ingestion watermark through the exit time,
+  after a configured grace period.
 
 ## Laptop operating profile
 

@@ -173,7 +173,9 @@ def test_real_scoped_store_evidence_review_delete_and_audit(app):
     client = sign_in(app)
     before = client.get("/api/bootstrap").json()
     item = complete(client)
-    assert item["alarm_eligible"] is True
+    assert item["alarm_eligible"] is False
+    assert item["review_attention_eligible"] is True
+    assert item["attention_policy"] == "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION"
     assert item["camera_calibration_status"] == "READY"
     assert item["camera_calibration"]["shelf_zones_confirmed"] is True
     assert item["validated"] is False and item["historical"] is True

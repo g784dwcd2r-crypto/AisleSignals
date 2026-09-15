@@ -1728,7 +1728,7 @@ export default function InteractionAnalysis({
                 {item.sampled_window_interpretation.limitations.join(" ")}
                 {item.alarm_eligible
                   ? " The separately commissioned experimental candidate-window attention rule may still request staff attention."
-                  : ""}
+                  : " Supported sampled windows remain available for visual staff review."}
               </p>
             </details>
           )}
@@ -1744,11 +1744,25 @@ export default function InteractionAnalysis({
                 Automatic alarm blocked: camera zone calibration required
               </span>
             )}
+            {item.alarm_blocked_reasons?.includes(
+              "CUSTODY_VALIDATION_REQUIRED",
+            ) && (
+              <span>
+                Automatic alarm blocked: complete custody pipeline validation
+                required
+              </span>
+            )}
             {item.evidence_strength && (
               <span title={item.evidence_strength_note}>
                 Evidence rule strength:{" "}
                 {item.evidence_strength.replaceAll("_", " ").toLowerCase()}
                 {" · not a probability"}
+              </span>
+            )}
+            {item.attention_policy ===
+              "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION" && (
+              <span>
+                Audible alarm: blocked pending complete custody validation
               </span>
             )}
             <span>

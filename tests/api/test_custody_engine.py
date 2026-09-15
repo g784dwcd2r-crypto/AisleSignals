@@ -35,10 +35,10 @@ def high_attention_sequence():
         event(3, Fact.HAND_CUSTODY),
         event(4, Fact.CONCEALMENT_TRANSITION),
         event(5, Fact.CAMERA_HANDOFF, camera_id="camera-exit", association="confirmed", source_kind="tracker"),
-        event(6, Fact.CUSTODY_CONTINUOUS_TO_EXIT, camera_id="camera-exit", source_kind="tracker"),
-        event(7, Fact.CHECKOUT_PATH_OBSERVED, camera_id="camera-exit", source_kind="tracker"),
-        event(8, Fact.NO_MATCHED_CHECKOUT_EVENT, camera_id="camera-exit", source_kind="pos_reconciliation", product_linked=True),
-        event(9, Fact.EXIT_CROSSED, camera_id="camera-exit", source_kind="tracker"),
+        event(6, Fact.EXIT_CROSSED, camera_id="camera-exit", source_kind="tracker"),
+        event(7, Fact.CUSTODY_CONTINUOUS_TO_EXIT, camera_id="camera-exit", source_kind="tracker", coverage_start_ms=2_000, coverage_end_ms=6_000),
+        event(8, Fact.CHECKOUT_PATH_OBSERVED, camera_id="camera-exit", source_kind="tracker", coverage_start_ms=2_000, coverage_end_ms=6_000),
+        event(11, Fact.NO_MATCHED_CHECKOUT_EVENT, camera_id="camera-exit", source_kind="pos_reconciliation", source_health="healthy", product_linked=True, finalized_watermark_ms=6_000),
     ]
 
 
@@ -52,7 +52,7 @@ def test_requires_complete_direct_chain_before_high_attention():
         Decision.REVIEW_REQUIRED,
         Decision.REVIEW_REQUIRED,
         Decision.REVIEW_REQUIRED,
-        Decision.REVIEW_REQUIRED,
+        Decision.ABSTAIN,
         Decision.REVIEW_REQUIRED,
         Decision.HIGH_ATTENTION,
     ]
@@ -209,11 +209,110 @@ def test_new_episode_does_not_inherit_old_return_or_checkout_facts():
     assert engine.observe_many(old).decision == Decision.NORMAL_RESOLVED
     fresh = [
         CustodyObservation(
-            **{**item.__dict__, "event_id": "new-" + item.event_id, "episode_id": "episode-2", "at_ms": item.at_ms + 10_000}
+            **{
+                **item.__dict__,
+                "event_id": "new-" + item.event_id,
+                "episode_id": "episode-2",
+                "at_ms": item.at_ms + 10_000,
+                "coverage_start_ms": (
+                    item.coverage_start_ms + 10_000
+                    if item.coverage_start_ms is not None
+                    else None
+                ),
+                "coverage_end_ms": (
+                    item.coverage_end_ms + 10_000
+                    if item.coverage_end_ms is not None
+                    else None
+                ),
+                "finalized_watermark_ms": (
+                    item.finalized_watermark_ms + 10_000
+                    if item.finalized_watermark_ms is not None
+                    else None
+                ),
+            }
         )
         for item in high_attention_sequence()
     ]
     assert engine.observe_many(fresh).decision == Decision.HIGH_ATTENTION
+
+
+def test_high_attention_requires_gap_free_coverage_and_finalized_pos_watermark():
+    cases = []
+    missing_coverage = high_attention_sequence()
+    missing_coverage[6] = event(
+        7,
+        Fact.CUSTODY_CONTINUOUS_TO_EXIT,
+        camera_id="camera-exit",
+        source_kind="tracker",
+        coverage_start_ms=2_000,
+        coverage_end_ms=5_000,
+    )
+    cases.append(missing_coverage)
+    stale_watermark = high_attention_sequence()
+    stale_watermark[-1] = event(
+        11,
+        Fact.NO_MATCHED_CHECKOUT_EVENT,
+        camera_id="camera-exit",
+        source_kind="pos_reconciliation",
+        source_health="healthy",
+        product_linked=True,
+        finalized_watermark_ms=5_999,
+    )
+    cases.append(stale_watermark)
+    unhealthy_pos = high_attention_sequence()
+    unhealthy_pos[-1] = event(
+        11,
+        Fact.NO_MATCHED_CHECKOUT_EVENT,
+        camera_id="camera-exit",
+        source_kind="pos_reconciliation",
+        source_health="degraded",
+        product_linked=True,
+        finalized_watermark_ms=6_000,
+    )
+    cases.append(unhealthy_pos)
+    early_reconciliation = high_attention_sequence()
+    early_reconciliation[-1] = event(
+        10,
+        Fact.NO_MATCHED_CHECKOUT_EVENT,
+        camera_id="camera-exit",
+        source_kind="pos_reconciliation",
+        source_health="healthy",
+        product_linked=True,
+        finalized_watermark_ms=6_000,
+    )
+    cases.append(early_reconciliation)
+    for observations in cases:
+        result = ProductCustodyEngine().observe_many(observations)
+        assert result.decision == Decision.ABSTAIN
+        assert result.alarm_eligible is False
+
+
+def test_episode_duration_is_bounded_and_capacity_recovery_is_explicit():
+    engine = ProductCustodyEngine(max_records=1, max_episode_ms=60_000)
+    engine.observe(event(1, Fact.PERSON_CONFIRMED))
+    expired = engine.observe(
+        CustodyObservation(
+            **{
+                **event(2, Fact.SHELF_DEPARTURE).__dict__,
+                "event_id": "expired",
+                "at_ms": 62_000,
+            }
+        )
+    )
+    assert expired.decision == Decision.ABSTAIN
+    engine.observe(
+        CustodyObservation(
+            **{
+                **event(1, Fact.PERSON_CONFIRMED).__dict__,
+                "event_id": "capacity",
+                "visit_id": "other",
+            }
+        )
+    )
+    assert engine.capacity_degraded is True
+    engine.recover_after_capacity_alarm()
+    assert engine.capacity_degraded is False
+    assert engine.observe(event(1, Fact.PERSON_CONFIRMED)).decision == Decision.OBSERVING
 
 
 def test_records_are_isolated_by_anonymous_visit_and_product():

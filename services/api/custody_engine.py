@@ -61,6 +61,10 @@ class CustodyObservation:
     association: str = "not_applicable"
     product_linked: bool = False
     source_kind: str = "vision"
+    coverage_start_ms: int | None = None
+    coverage_end_ms: int | None = None
+    source_health: str = "unknown"
+    finalized_watermark_ms: int | None = None
     evidence_ref: str = ""
 
     def valid(self) -> bool:
@@ -79,6 +83,16 @@ class CustodyObservation:
             and self.association in {"not_applicable", "confirmed", "ambiguous"}
             and isinstance(self.product_linked, bool)
             and self.source_kind in {"vision", "tracker", "pos_reconciliation"}
+            and self.source_health in {"unknown", "healthy", "degraded"}
+            and all(
+                value is None
+                or (isinstance(value, int) and not isinstance(value, bool) and value >= 0)
+                for value in (
+                    self.coverage_start_ms,
+                    self.coverage_end_ms,
+                    self.finalized_watermark_ms,
+                )
+            )
             and all(
                 len(value) <= 160
                 for value in (
@@ -121,6 +135,7 @@ class CustodyAssessment:
 class _Record:
     state: CustodyState = CustodyState.ON_SHELF
     last_at_ms: int = -1
+    started_at_ms: int = -1
     last_camera: str = ""
     facts: set[Fact] = field(default_factory=set)
     fact_times: dict[Fact, int] = field(default_factory=dict)
@@ -128,6 +143,9 @@ class _Record:
     timeline: list[TimelineEntry] = field(default_factory=list)
     compromised: bool = False
     reasons: list[str] = field(default_factory=list)
+    coverage: dict[Fact, list[tuple[int, int]]] = field(default_factory=dict)
+    finalized_watermark_ms: int = -1
+    source_health: dict[str, str] = field(default_factory=dict)
 
 
 _EXPLANATIONS = {
@@ -159,16 +177,28 @@ class ProductCustodyEngine:
 
     MAX_EVENTS_PER_RECORD = 128
 
-    def __init__(self, *, max_records: int = 256):
-        if max_records < 1:
+    def __init__(
+        self,
+        *,
+        max_records: int = 256,
+        max_episode_ms: int = 2 * 60 * 60 * 1_000,
+        pos_grace_ms: int = 5_000,
+    ):
+        if max_records < 1 or max_episode_ms < 60_000 or pos_grace_ms < 0:
             raise ValueError("Custody bounds must be positive and practical.")
         self.max_records = max_records
+        self.max_episode_ms = max_episode_ms
+        self.pos_grace_ms = pos_grace_ms
         self._records: dict[tuple[str, str, str], _Record] = {}
         self.capacity_degraded = False
 
     def reset(self) -> None:
         self._records.clear()
         self.capacity_degraded = False
+
+    def recover_after_capacity_alarm(self) -> None:
+        """Supervised recovery starts a fresh run; old custody is never reused."""
+        self.reset()
 
     def observe(self, observation: CustodyObservation) -> CustodyAssessment:
         if not observation.valid():
@@ -193,6 +223,10 @@ class ProductCustodyEngine:
             observation.association,
             observation.product_linked,
             observation.source_kind,
+            observation.coverage_start_ms,
+            observation.coverage_end_ms,
+            observation.source_health,
+            observation.finalized_watermark_ms,
             observation.evidence_ref,
         )
         if observation.event_id in record.event_ids:
@@ -205,6 +239,11 @@ class ProductCustodyEngine:
             self._reason(record, "Observation time moved backwards or was duplicated.")
             return self._assessment(observation, record)
         record.last_at_ms = observation.at_ms
+        if record.started_at_ms < 0:
+            record.started_at_ms = observation.at_ms
+        elif observation.at_ms - record.started_at_ms > self.max_episode_ms:
+            record.compromised = True
+            self._reason(record, "The custody episode exceeded its maximum duration.")
         record.event_ids[observation.event_id] = signature
         if record.last_camera and observation.camera_id != record.last_camera:
             if observation.fact != Fact.CAMERA_HANDOFF:
@@ -229,6 +268,19 @@ class ProductCustodyEngine:
             self._reason(record, _EXPLANATIONS[observation.fact])
         record.facts.add(observation.fact)
         record.fact_times[observation.fact] = observation.at_ms
+        record.source_health[observation.source_kind] = observation.source_health
+        if observation.fact in {
+            Fact.CUSTODY_CONTINUOUS_TO_EXIT,
+            Fact.CHECKOUT_PATH_OBSERVED,
+        }:
+            start, end = observation.coverage_start_ms, observation.coverage_end_ms
+            if start is None or end is None or end < start:
+                record.compromised = True
+                self._reason(record, "A coverage fact omitted a valid observed interval.")
+            else:
+                record.coverage.setdefault(observation.fact, []).append((start, end))
+        if observation.fact == Fact.NO_MATCHED_CHECKOUT_EVENT:
+            record.finalized_watermark_ms = observation.finalized_watermark_ms or -1
         record.timeline.append(
             TimelineEntry(
                 event_id=observation.event_id,
@@ -294,7 +346,11 @@ class ProductCustodyEngine:
             ):
                 record.compromised = True
                 self._reason(record, "Checkout was not linked to this product custody episode.")
-            if record.state not in {CustodyState.IN_HAND, CustodyState.IN_BASKET}:
+            if record.state not in {
+                CustodyState.IN_HAND,
+                CustodyState.IN_BASKET,
+                CustodyState.CONCEALED_OBSERVED,
+            }:
                 record.compromised = True
                 self._reason(record, "Checkout was reported without active product custody.")
             record.state = CustodyState.PURCHASED
@@ -310,9 +366,18 @@ class ProductCustodyEngine:
                 record.compromised = True
                 self._reason(record, "Checkout-path coverage was not supplied by the calibrated tracker.")
         elif fact == Fact.NO_MATCHED_CHECKOUT_EVENT:
-            if observation.source_kind != "pos_reconciliation" or not observation.product_linked:
+            exit_at = record.fact_times.get(Fact.EXIT_CROSSED, -1)
+            if (
+                observation.source_kind != "pos_reconciliation"
+                or not observation.product_linked
+                or observation.source_health != "healthy"
+                or exit_at < 0
+                or observation.at_ms < exit_at + self.pos_grace_ms
+                or observation.finalized_watermark_ms is None
+                or observation.finalized_watermark_ms < exit_at
+            ):
                 record.compromised = True
-                self._reason(record, "The missing checkout event was not product-linked by a reconciliation source.")
+                self._reason(record, "The missing checkout event was not finalized by a healthy product-linked reconciliation source after the exit grace period.")
         elif fact == Fact.EXIT_CROSSED and observation.source_kind != "tracker":
             record.compromised = True
             self._reason(record, "The exit crossing did not come from the calibrated local tracker.")
@@ -339,31 +404,60 @@ class ProductCustodyEngine:
         else:
             decision = Decision.OBSERVING
 
-        high_chain = (
+        core_chain = (
             Fact.PERSON_CONFIRMED,
             Fact.SHELF_DEPARTURE,
             Fact.HAND_CUSTODY,
             Fact.CONCEALMENT_TRANSITION,
-            Fact.CUSTODY_CONTINUOUS_TO_EXIT,
-            Fact.CHECKOUT_PATH_OBSERVED,
-            Fact.NO_MATCHED_CHECKOUT_EVENT,
             Fact.EXIT_CROSSED,
         )
         ordered_chain = all(
             left < right
             for left, right in zip(
-                (record.fact_times.get(fact, -1) for fact in high_chain),
-                (record.fact_times.get(fact, -1) for fact in high_chain[1:]),
+                (record.fact_times.get(fact, -1) for fact in core_chain),
+                (record.fact_times.get(fact, -1) for fact in core_chain[1:]),
             )
         )
+        required_facts = set(core_chain) | {
+            Fact.CUSTODY_CONTINUOUS_TO_EXIT,
+            Fact.CHECKOUT_PATH_OBSERVED,
+            Fact.NO_MATCHED_CHECKOUT_EVENT,
+        }
+        shelf_at = record.fact_times.get(Fact.SHELF_DEPARTURE, -1)
+        exit_at = record.fact_times.get(Fact.EXIT_CROSSED, -1)
+        coverage_complete = shelf_at >= 0 and exit_at >= shelf_at and all(
+            self._covers(record.coverage.get(fact, ()), shelf_at, exit_at)
+            for fact in (
+                Fact.CUSTODY_CONTINUOUS_TO_EXIT,
+                Fact.CHECKOUT_PATH_OBSERVED,
+            )
+        )
+        pos_finalized = (
+            record.source_health.get("pos_reconciliation") == "healthy"
+            and record.finalized_watermark_ms >= exit_at >= 0
+            and record.fact_times.get(Fact.NO_MATCHED_CHECKOUT_EVENT, -1)
+            >= exit_at + self.pos_grace_ms
+        )
+        if (
+            Fact.EXIT_CROSSED in facts
+            and facts.intersection(
+                {Fact.CUSTODY_CONTINUOUS_TO_EXIT, Fact.CHECKOUT_PATH_OBSERVED}
+            )
+            and not coverage_complete
+        ):
+            decision = Decision.ABSTAIN
+            reasons.append("The declared tracker coverage leaves part of the custody or checkout path unobserved.")
         resolved_at = max(
             record.fact_times.get(Fact.CHECKOUT_COMPLETED, -1),
             record.fact_times.get(Fact.RETURN_TO_SHELF, -1),
         )
         if (
             not record.compromised
-            and set(high_chain).issubset(facts)
+            and not self.capacity_degraded
+            and required_facts.issubset(facts)
             and ordered_chain
+            and coverage_complete
+            and pos_finalized
             and resolved_at < record.fact_times[Fact.SHELF_DEPARTURE]
         ):
             decision = Decision.HIGH_ATTENTION
@@ -387,6 +481,19 @@ class ProductCustodyEngine:
             reasons=tuple(dict.fromkeys(reasons)),
             timeline=tuple(record.timeline),
         )
+
+    @staticmethod
+    def _covers(intervals: Iterable[tuple[int, int]], start: int, end: int) -> bool:
+        cursor = start
+        for left, right in sorted(intervals):
+            if right < cursor:
+                continue
+            if left > cursor:
+                return False
+            cursor = max(cursor, right)
+            if cursor >= end:
+                return True
+        return cursor >= end
 
 
 def sampled_window_interpretation(
@@ -458,6 +565,6 @@ def sampled_window_interpretation(
             "No cross-window anonymous visit continuity.",
             "No cross-camera product token continuity.",
             "No checkout-to-exit chain in this sampled window.",
-            "The existing experimental attention eligibility is a separate candidate-window rule.",
+            "A supported window may enter review history, but it cannot request an audible alarm.",
         ],
     }

@@ -414,9 +414,17 @@ class InteractionService:
                     result = dict(result)
                     calibrated = current.get("camera_calibration") is not None
                     result["camera_calibration_status"] = "READY" if calibrated else "MISSING"
-                    if result.get("alarm_eligible") is True and not calibrated:
+                    if not calibrated:
                         result["alarm_eligible"] = False
                         result["alarm_blocked_reason"] = "CAMERA_CALIBRATION_REQUIRED"
+                        result["alarm_blocked_reasons"] = list(
+                            dict.fromkeys(
+                                [
+                                    *result.get("alarm_blocked_reasons", []),
+                                    "CAMERA_CALIBRATION_REQUIRED",
+                                ]
+                            )
+                        )
                     current["status"] = "completed"
                     current["result"] = result
                     self.store.audit(

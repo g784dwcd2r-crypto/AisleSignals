@@ -27,7 +27,11 @@ export type SavedInteraction = {
   camera_label?: string;
   camera_calibration?: CameraCalibration;
   camera_calibration_status?: "READY" | "MISSING";
-  alarm_blocked_reason?: "CAMERA_CALIBRATION_REQUIRED";
+  alarm_blocked_reason?:
+    "CAMERA_CALIBRATION_REQUIRED" | "CUSTODY_VALIDATION_REQUIRED";
+  alarm_blocked_reasons?: (
+    "CAMERA_CALIBRATION_REQUIRED" | "CUSTODY_VALIDATION_REQUIRED"
+  )[];
   created_at: string;
   expires_at: string;
   model: string;
@@ -39,6 +43,8 @@ export type SavedInteraction = {
   reason: string;
   evidence_frame_indices: number[];
   alarm_eligible: boolean;
+  review_attention_eligible?: boolean;
+  attention_policy?: "REVIEW_ONLY_PENDING_CUSTODY_VALIDATION";
   evidence_strength?:
     "STRONG_RULE_MATCH" | "PARTIAL_RULE_MATCH" | "INSUFFICIENT_RULE_MATCH";
   evidence_strength_note?: string;

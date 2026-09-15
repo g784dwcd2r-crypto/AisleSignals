@@ -197,6 +197,17 @@ def test_requires_exact_server_boolean_alarm_eligibility(eligible):
     assert mapped(item) is Exclusion.ALARM_INELIGIBLE
 
 
+def test_review_only_candidate_does_not_enter_the_alarm_transport():
+    item = interaction(
+        result={
+            "action": "POSSIBLE_CONCEALMENT",
+            "alarm_eligible": False,
+            "review_attention_eligible": True,
+        }
+    )
+    assert mapped(item) is Exclusion.ALARM_INELIGIBLE
+
+
 @pytest.mark.parametrize("code", ["REPEATED_HAND_TO_WAIST", "RESTRICTED_ZONE_ENTRY"])
 def test_pose_opt_in_is_per_allowlisted_code_and_excludes_recordings(code):
     item = live_event(event_code=code)
