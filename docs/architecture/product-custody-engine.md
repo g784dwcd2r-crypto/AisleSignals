@@ -59,6 +59,35 @@ only after activity in a calibrated shelf region. The custody state machine has
 negligible cost compared with visual inference; run
 `python scripts/benchmark_custody_engine.py` to measure it on the target laptop.
 
+## Target overlay mapped from reference footage
+
+The `qIU-1xKLSfA` reference shows the useful presentation target: one box for a
+whole person, an optional pose or body segmentation overlay, action labels on a
+stable track, and a separate small/distant-person track. AisleSignals must build
+that presentation from these explicit layers:
+
+1. A real person detector creates a box. Pose and body segmentation may run only
+   inside that verified box. The prerequisite geometric gate reduces obvious
+   false poses, but a dedicated detector remains required.
+2. A random, visit-scoped track ID owns a short local temporal buffer. Tracking
+   hysteresis should tolerate brief occlusion; an uncertain association or ID
+   switch emits a gap and forces custody abstention.
+3. An action label is a model interpretation over that person's temporal
+   buffer. The interface must label it as model output and must not display a
+   percentage as confidence until pharmacy evaluation calibrates it.
+4. A hand-to-pocket or hand-to-bag movement is only body-zone context. It becomes
+   a custody fact only when an independently detected product is continuously
+   visible from a shelf change, through hand custody, into that zone.
+5. Shelf change, hand-object transition, tracker continuity, checkout-path
+   coverage, product-linked POS reconciliation and exit crossing remain separate
+   evidence sources in the timeline. The overlay should visually distinguish
+   observed facts from the sampled-window VLM interpretation.
+
+This increment implements the reasoning contract and the honest sampled-window
+display. Person detection, temporal clip adapters and calibrated action models
+remain upstream work; the third-party percentages and labels in the reference
+video are presentation examples, not AisleSignals validation evidence.
+
 ## Validation
 
 Synthetic unit tests validate ordering, isolation, abstention and duplicate
