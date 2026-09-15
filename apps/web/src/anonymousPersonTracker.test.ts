@@ -42,10 +42,7 @@ describe("camera-local anonymous person tracking", () => {
     const tracker = new AnonymousPersonTracker();
     tracker.update([person(0.3)], 0);
     const split = tracker.update([person(0.29), person(0.31)], 250);
-    expect(split.map((item) => item.state)).toEqual([
-      "ambiguous",
-      "ambiguous",
-    ]);
+    expect(split.map((item) => item.state)).toEqual(["ambiguous", "ambiguous"]);
     expect(split.every((item) => item.trackId !== 1)).toBe(true);
     expect(tracker.invalidatedTrackIds()).toEqual([1]);
   });
