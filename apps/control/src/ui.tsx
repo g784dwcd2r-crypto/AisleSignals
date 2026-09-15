@@ -111,7 +111,7 @@ export function Empty({
       <span className="empty-icon">
         <Inbox size={25} />
       </span>
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       <p>{children}</p>
       {action}
     </div>
