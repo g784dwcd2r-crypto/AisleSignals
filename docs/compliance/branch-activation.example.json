@@ -1,0 +1,52 @@
+{
+  "record_version": 1,
+  "organisation_id": "synthetic-demo-organisation",
+  "site_id": "synthetic-demo-branch",
+  "mode_requested": "EVIDENCE",
+  "controller": {
+    "legal_name": "REPLACE_ME",
+    "privacy_contact": "REPLACE_ME",
+    "approval_status": "PENDING",
+    "approved_at": null
+  },
+  "assessment": {
+    "dpia_status": "DRAFT",
+    "lawful_basis_status": "PENDING",
+    "offence_data_assessment_status": "PENDING",
+    "residual_high_risk": true,
+    "privacy_review_status": "PENDING",
+    "reviewed_at": null,
+    "next_review_at": null
+  },
+  "transparency": {
+    "entrance_sign_verified": false,
+    "full_notice_published": false,
+    "notice_version": "REPLACE_ME"
+  },
+  "processing": {
+    "processor_terms_status": "PENDING",
+    "subprocessors_recorded": false,
+    "transfer_assessment_status": "PENDING",
+    "audio_disabled": true,
+    "biometric_recognition_disabled": true,
+    "autonomous_alarm_disabled": true
+  },
+  "retention": {
+    "schedule_status": "PENDING",
+    "automated_deletion_verified": false,
+    "backup_expiry_recorded": false,
+    "rights_procedure_status": "PENDING",
+    "disclosure_procedure_status": "PENDING"
+  },
+  "commissioning": {
+    "camera_scope_approved": false,
+    "privacy_masks_verified": false,
+    "authorised_reviewers_assigned": false,
+    "staff_training_completed": false
+  },
+  "approvals": {
+    "controller_signoff_reference": "REPLACE_ME",
+    "privacy_signoff_reference": "REPLACE_ME"
+  }
+}
+

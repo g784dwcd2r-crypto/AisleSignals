@@ -16,6 +16,10 @@ This version runs locally with a dedicated **LIVE DETECTION** tab: explicitly se
 
 Begin with the consolidated [master production plan](docs/release/master-production-plan.md). It combines [Plan U](docs/release/plan-u.md), [Plan B for central pharmacy monitoring](docs/release/plan-b.md), Plans X and Z, and the remaining security, compliance, commercial and rollout work. Also read the [six-pharmacy release plan](docs/release/tuesday-release-plan.md), [installation guide](deployment/README.md), [named account setup](docs/release/pilot-identity.md) and [platform support record](docs/release/platform-support.md). Start with a separate pilot database; changing an environment variable cannot convert demonstration data into client data.
 
+Before enabling real evidence processing for any branch, complete the
+[privacy and compliance pack](docs/compliance/README.md) and validate its
+private branch activation record.
+
 From a prepared source checkout:
 
 ```sh
