@@ -98,6 +98,9 @@ describe("layout calibration observation boundary", () => {
       { x: 0.2, y: 0.3 },
     );
     expect(pointInPolygon({ x: 0.5, y: 0.5 }, zone.points)).toBe(true);
+    expect(pointInPolygon({ x: 0.2, y: 0.5 }, zone.points)).toBe(true);
+    expect(pointInPolygon({ x: 0.8, y: 0.9 }, zone.points)).toBe(true);
+    expect(pointInPolygon({ x: 0.199, y: 0.5 }, zone.points)).toBe(false);
     expect(() =>
       rectangularZone(
         "x",
@@ -107,5 +110,14 @@ describe("layout calibration observation boundary", () => {
         { x: 0.11, y: 0.5 },
       ),
     ).toThrow(/2%/);
+  });
+  it("suppresses pose evidence when the person's ground point is exactly on a mask edge", () => {
+    const [edge] = applyLayoutObservationGuard(
+      [person(0.3, 0.1)],
+      calibration,
+      1,
+    );
+    expect(edge.box.x + edge.box.width / 2).toBe(0.4);
+    expect(edge.landmarks).toBeNull();
   });
 });

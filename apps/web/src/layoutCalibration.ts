@@ -47,6 +47,16 @@ export function pointInPolygon(point: LayoutPoint, polygon: LayoutPoint[]) {
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const a = polygon[i],
       b = polygon[j];
+    const cross = (point.x - a.x) * (b.y - a.y) - (point.y - a.y) * (b.x - a.x);
+    const edgeScale = Math.max(1, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    if (
+      Math.abs(cross) <= 1e-9 * edgeScale &&
+      point.x >= Math.min(a.x, b.x) - 1e-9 &&
+      point.x <= Math.max(a.x, b.x) + 1e-9 &&
+      point.y >= Math.min(a.y, b.y) - 1e-9 &&
+      point.y <= Math.max(a.y, b.y) + 1e-9
+    )
+      return true;
     if (
       a.y > point.y !== b.y > point.y &&
       point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x

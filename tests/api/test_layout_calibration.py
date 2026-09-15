@@ -4,7 +4,9 @@ from copy import deepcopy
 
 import pytest
 
-from services.api.pilot_identity import add_site, add_user
+from services.api.app import create_app
+from services.api.pilot_identity import _new_site, _new_user, add_site, add_user
+from services.api.store import ident
 from test_pilot_identity import PASSWORD, client_for, pilot
 
 
@@ -106,3 +108,47 @@ def test_reviewer_can_read_but_not_change_and_branches_are_isolated(pilot):
     forged = deepcopy(payload(expected=1))
     forged["site_id"] = initial["site"]["id"]
     assert outsider.put("/api/layout-calibration", json=forged).status_code == 422
+
+
+def test_saved_calibration_survives_service_restart(pilot):
+    app, _ = pilot
+    manager = client_for(app)
+    saved = manager.put("/api/layout-calibration", json=payload()).json()
+    database = app.state.store.path
+    app.state.interactions.close()
+    restarted = create_app(database, mode="pilot")
+    try:
+        reopened = client_for(restarted).get("/api/layout-calibration")
+        assert reopened.status_code == 200
+        assert reopened.json() == saved
+        assert reopened.json()["readiness"]["alarm_authority"] is False
+    finally:
+        restarted.state.interactions.close()
+
+
+def test_separate_organisations_cannot_read_or_overwrite_each_others_map(pilot):
+    app, first = pilot
+    first_manager = client_for(app)
+    assert first_manager.put("/api/layout-calibration", json=payload()).status_code == 200
+    second_organisation = ident()
+    with app.state.store.transaction() as conn:
+        second_site = _new_site(conn, app.state.store, second_organisation,
+                                "Synthetic Separate Group", "Synthetic Separate Branch")
+        _new_user(conn, app.state.store, "layout.separate@example.test",
+                  "Synthetic Separate Manager", PASSWORD, [second_site["id"]], "MANAGER")
+    second_manager = client_for(app, "layout.separate@example.test")
+    assert second_manager.get("/api/layout-calibration").json()["version"] == 0
+    second_saved = second_manager.put("/api/layout-calibration", json={
+        **payload(), "source_label": "Separate organisation monitor",
+    })
+    assert second_saved.status_code == 200
+    assert second_saved.json()["source_label"] == "Separate organisation monitor"
+    assert first_manager.get("/api/layout-calibration").json()["source_label"] == "Synthetic CCTV monitor"
+    with app.state.store.transaction() as conn:
+        rows = conn.execute(
+            "SELECT organisation_id,site_id FROM entities WHERE kind='layout_calibration' ORDER BY organisation_id"
+        ).fetchall()
+        assert {(row["organisation_id"], row["site_id"]) for row in rows} == {
+            (first["site"]["organisation_id"], first["site"]["id"]),
+            (second_organisation, second_site["id"]),
+        }
