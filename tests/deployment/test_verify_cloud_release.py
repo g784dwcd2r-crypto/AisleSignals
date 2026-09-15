@@ -111,11 +111,13 @@ def test_audit_requires_named_owner_when_requested(tmp_path, monkeypatch):
               require_configured=True, opener=Opener(files, pending))
 
 
-def test_audit_rejects_impossible_setup_state(tmp_path):
+@pytest.mark.parametrize("state", [
+    b'{"configured":false,"needs_setup":false}',
+    b'{"configured":false,"needs_setup":true}',
+])
+def test_audit_rejects_unusable_setup_state(tmp_path, state):
     root, files = fixture(tmp_path)
-    impossible = {"/control-api/setup/status": (
-        200, b'{"configured":false,"needs_setup":true}'
-    )}
+    impossible = {"/control-api/setup/status": (200, state)}
     with pytest.raises(AuditFailure, match="invalid shape"):
         audit("https://control.example.test", root, opener=Opener(files, impossible))
 

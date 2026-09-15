@@ -142,7 +142,7 @@ def audit(base_url: str, web_dist: Path, *, expected_sha: str | None = None,
     if (status != 200 or type(setup) is not dict or set(setup) != {"configured", "needs_setup"}
             or type(setup.get("configured")) is not bool
             or type(setup.get("needs_setup")) is not bool
-            or (setup["needs_setup"] and not setup["configured"])):
+            or not setup["configured"]):
         raise AuditFailure("Deployment setup status has an invalid shape.")
     if require_configured and setup != {"configured": True, "needs_setup": False}:
         raise AuditFailure("Deployment has not completed named-owner setup.")
