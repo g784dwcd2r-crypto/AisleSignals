@@ -324,6 +324,10 @@ test("real first-owner setup, MFA login and scoped invitation remain secret-free
     "browser.reviewer@example.test",
     north.name,
   );
+  await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible();
+  const pendingRow = page.getByRole("row").filter({ hasText: "browser.reviewer@example.test" });
+  await expect(pendingRow).toContainText("Pending");
+  await expect(pendingRow).toContainText("Synthetic Reviewer");
   const other = await browser.newContext();
   const invite = await other.newPage();
   await invite.goto(
@@ -348,6 +352,9 @@ test("real first-owner setup, MFA login and scoped invitation remain secret-free
     invite.getByRole("img", { name: "Authenticator setup QR code" }),
   ).toBeVisible();
   await verify(invite, challenge.totp_secret);
+  await page.reload();
+  await navigate(page, "Team & access");
+  await expect(pendingRow).toHaveCount(0);
   await navigate(invite, "Pharmacies");
   await expect(invite.locator("main")).toContainText(north.name);
   await expect(invite.locator("main")).not.toContainText("Synthetic South");
