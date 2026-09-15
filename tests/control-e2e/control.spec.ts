@@ -1089,7 +1089,16 @@ test("download centre exposes the verified connection utility and secure pairing
     }),
   ).toHaveAttribute(
     "href",
-    "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-macos-v0.1.0/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg",
+    "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-v0.1.0-c9d34fd1/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg",
+  );
+  await expect(
+    page.getByRole("link", {
+      name: "Download Windows pilot (.exe)",
+      exact: true,
+    }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-v0.1.0-c9d34fd1/AisleSignalsPilot-Windows-x86_64-v0.1.0-unsigned-pilot-setup.exe",
   );
   await expect(
     page.getByRole("heading", {
