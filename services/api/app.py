@@ -510,6 +510,9 @@ def create_app(db_path=None, web_dist=None, mode=None):
     from .pilot_admin import install_pilot_admin
     install_pilot_admin(application, context, problem)
 
+    from .xai_verifier import install_xai_verifier
+    install_xai_verifier(application, context, problem)
+
     @application.exception_handler(Problem)
     async def handle_problem(request, exc):
         return JSONResponse({"error": exc.error}, status_code=exc.status)
