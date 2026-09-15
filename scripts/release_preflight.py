@@ -12,6 +12,9 @@ import stat
 import subprocess
 import sys
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 try:
     from release_identity import ROOT, SHA, ReleaseIdentityError, load_identity, validate_repository_versions
 except ModuleNotFoundError:
@@ -61,6 +64,12 @@ def private_update_key(path: Path) -> None:
         raise PreflightError("The update signing key must be a bounded regular file.")
     if os.name != "nt" and info.st_mode & 0o077:
         raise PreflightError("The update signing key must be owner-only.")
+    try:
+        key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    except (OSError, ValueError, TypeError):
+        raise PreflightError("The update signing key must be an unencrypted Ed25519 PEM key.") from None
+    if not isinstance(key, Ed25519PrivateKey):
+        raise PreflightError("The update signing key must be an unencrypted Ed25519 PEM key.")
 
 
 def signing(platform_name: str, *, environment=os.environ, which=shutil.which) -> dict:

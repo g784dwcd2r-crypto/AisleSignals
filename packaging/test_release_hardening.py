@@ -18,7 +18,7 @@ from scripts.package_bundle import deterministic_archive
 from scripts.release_feed import FeedError, _private_key, build_release, sign_release
 from scripts.release_artifact_index import ArtifactIndexError, build_index
 from scripts.release_identity import ReleaseIdentityError, load_identity, validate_repository_versions
-from scripts.release_preflight import PreflightError, exact_source, signing
+from scripts.release_preflight import PreflightError, exact_source, private_update_key, signing
 
 
 def test_production_identity_is_single_version_source():
@@ -176,6 +176,15 @@ def test_update_private_key_must_be_owner_only(tmp_path):
         _private_key(path)
     path.chmod(0o600)
     assert isinstance(_private_key(path), Ed25519PrivateKey)
+    private_update_key(path)
+
+
+def test_signing_preflight_refuses_non_ed25519_key_bytes(tmp_path):
+    path = tmp_path / "update-key.pem"
+    path.write_text("not a signing key\n")
+    path.chmod(0o600)
+    with pytest.raises(PreflightError, match="Ed25519 PEM"):
+        private_update_key(path)
 
 
 def test_production_windows_installer_uses_stable_identity():
@@ -212,7 +221,8 @@ def test_macos_signer_executes_against_copy_and_leaves_input_unchanged(tmp_path)
     binary.chmod(0o755)
     before = hashlib.sha256(binary.read_bytes()).hexdigest()
     key = tmp_path / "update.pem"
-    key.write_text("synthetic owner-only preflight input\n")
+    key.write_bytes(Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
     key.chmod(0o600)
     tools = tmp_path / "tools"
     tools.mkdir()
