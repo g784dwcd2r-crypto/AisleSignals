@@ -769,15 +769,22 @@ for (const change of [
     });
     await openGrid(page, installation, "2x2");
     await begin(page);
-    await page
-      .getByRole("button", { name: "Test all-camera alarm sound", exact: true })
-      .click();
-    await page
-      .getByRole("button", {
-        name: "I heard the all-camera test tone",
-        exact: true,
-      })
-      .click();
+    const soundTest = page.getByRole("button", {
+      name: "Test all-camera alarm sound",
+      exact: true,
+    });
+    await expect(soundTest).toBeEnabled();
+    // The runtime heartbeat can re-render this region while Playwright is
+    // performing its comparatively slow scroll/stability checks on Windows.
+    // Dispatch on the current enabled button; mouse actionability is covered
+    // by the dedicated commissioning journey above.
+    await soundTest.dispatchEvent("click");
+    const heard = page.getByRole("button", {
+      name: "I heard the all-camera test tone",
+      exact: true,
+    });
+    await expect(heard).toBeEnabled();
+    await heard.dispatchEvent("click");
     await page
       .getByLabel("Experimental attention alarm for all confirmed cameras", {
         exact: true,
