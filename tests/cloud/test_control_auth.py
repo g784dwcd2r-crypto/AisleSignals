@@ -266,6 +266,7 @@ def test_invite_enforces_mfa_single_use_and_scoped_authority(settings, owner):
         assert [p["id"] for p in session["pharmacies"]] == [harbour["id"]]
         assert [p["id"] for p in reviewer.get("/control-api/pharmacies").json()["items"]] == [harbour["id"]]
         assert reviewer.get("/control-api/users").status_code == 403
+        assert reviewer.get("/control-api/invitations").status_code == 403
         assert reviewer.post("/control-api/pharmacies",json={"name":"No"}).status_code == 403
         assert reviewer.patch("/control-api/users/"+session["user"]["id"],json={"expected_version":1,"role":"OWNER","pharmacy_ids":[]}).status_code == 403
         assert reviewer.post("/control-api/invitations/begin",json={"token":invitation["token"],"name":"No","password":"Synthetic password 123"}).status_code == 400
@@ -273,6 +274,35 @@ def test_invite_enforces_mfa_single_use_and_scoped_authority(settings, owner):
         stored = conn.execute("SELECT token_hash,consumed_at FROM aislesignals_control.invitations").fetchone()
         assert stored[0] == token_hash(invitation["token"]) and stored[1] is not None
         assert invitation["token"] not in stored[0]
+
+
+@REAL_PG
+def test_owner_can_list_and_revoke_pending_invitation_without_exposing_token(settings, owner):
+    client,_,_ = owner
+    branch = pharmacy(client)
+    invitation = client.post("/control-api/invitations", json={
+        "email": "pending-visible@example.test", "name": "Pending Visible",
+        "role": "REVIEWER", "pharmacy_ids": [branch["id"]],
+    }).json()
+    listed = client.get("/control-api/invitations")
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    assert len(items) == 1
+    assert items[0]["email"] == "pending-visible@example.test"
+    assert items[0]["pharmacy_ids"] == [branch["id"]]
+    assert "token" not in repr(items) and invitation["token"] not in repr(items)
+
+    invitation_id = items[0]["id"]
+    response = client.delete(f"/control-api/invitations/{invitation_id}")
+    assert response.status_code == 200 and response.json() == {"status": "revoked"}
+    assert client.get("/control-api/invitations").json() == {"items": []}
+    with new_client(settings) as anonymous:
+        rejected = anonymous.post("/control-api/invitations/begin", json={
+            "token": invitation["token"], "name": "Pending Visible",
+            "password": "Synthetic password 123",
+        })
+        assert rejected.status_code == 400
+    assert client.delete(f"/control-api/invitations/{invitation_id}").status_code == 404
 
 
 @REAL_PG

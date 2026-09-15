@@ -108,6 +108,15 @@ export type Dashboard = {
 };
 export type Collection<T> = { items: T[] };
 export type OneTimeToken = { token: string; expires_at: string };
+export type PendingInvitation = {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  pharmacy_ids: string[];
+  expires_at: string;
+  created_at: string;
+};
 export type Page =
   | "overview"
   | "pharmacies"

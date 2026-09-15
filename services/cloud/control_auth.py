@@ -340,6 +340,19 @@ def create_auth_router(settings: CloudSettings, store: ControlStore | None = Non
             ids = conn.execute("SELECT id FROM aislesignals_control.users WHERE organisation_id=%s ORDER BY lower(name),id LIMIT 200", (principal.organisation_id,)).fetchall()
             return {"items": [_user(conn, str(row["id"])) for row in ids]}
 
+    @router.get("/invitations")
+    def invitations(principal: Principal = Depends(require_owner)):
+        with store.transaction() as conn:
+            principal = validate_principal(conn, principal)
+            if principal.role != "OWNER":
+                raise forbidden()
+            rows = conn.execute("""SELECT id,name,email,role,pharmacy_ids,expires_at,created_at
+                FROM aislesignals_control.invitations
+                WHERE organisation_id=%s AND consumed_at IS NULL AND revoked_at IS NULL
+                AND expires_at>CURRENT_TIMESTAMP
+                ORDER BY created_at DESC,id DESC LIMIT 200""", (principal.organisation_id,)).fetchall()
+            return {"items": rows}
+
     @router.post("/invitations", status_code=201)
     def invite(body: InvitationCreate, principal: Principal = Depends(require_owner)):
         with owner_transaction(store, principal) as (conn, principal):
@@ -359,6 +372,22 @@ def create_auth_router(settings: CloudSettings, store: ControlStore | None = Non
                 (invite_id, principal.organisation_id, principal.user_id, token_hash(token), body.email, body.name, body.role, body.pharmacy_ids)).fetchone()
             audit(conn, principal, "USER_INVITED", invite_id)
             return {"token": token, "expires_at": row["expires_at"]}
+
+    @router.delete("/invitations/{invitation_id}")
+    def revoke_invitation(invitation_id: UUID, principal: Principal = Depends(require_owner)):
+        with owner_transaction(store, principal) as (conn, principal):
+            row = conn.execute("""UPDATE aislesignals_control.invitations
+                SET revoked_at=CURRENT_TIMESTAMP
+                WHERE id=%s AND organisation_id=%s AND consumed_at IS NULL
+                AND revoked_at IS NULL AND expires_at>CURRENT_TIMESTAMP
+                RETURNING id""", (invitation_id, principal.organisation_id)).fetchone()
+            if not row:
+                raise ControlError(404, "NOT_FOUND", "The pending invitation was not found.")
+            conn.execute("""UPDATE aislesignals_control.auth_challenges
+                SET consumed_at=CURRENT_TIMESTAMP,payload_encrypted=NULL
+                WHERE invitation_id=%s AND consumed_at IS NULL""", (invitation_id,))
+            audit(conn, principal, "USER_INVITATION_REVOKED", str(invitation_id))
+            return {"status": "revoked"}
 
     def invitation_valid(conn, hashed: str):
         return conn.execute("""SELECT i.* FROM aislesignals_control.invitations i
