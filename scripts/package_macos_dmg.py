@@ -16,8 +16,12 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit
 
+try:
+    from release_identity import load_identity, validate_repository_versions
+except ModuleNotFoundError:
+    from scripts.release_identity import load_identity, validate_repository_versions
 
-APP_NAME = "AisleSignals Pilot.app"
+
 EXECUTABLE = "AisleSignalsPilot"
 STAGING_CLOUD_ORIGIN = "https://aislesignals-control-staging.onrender.com"
 
@@ -82,7 +86,11 @@ def cloud_origin(value: str) -> str:
 
 
 def build_app(source: Path, destination: Path, version: str, *, sdk: Path | None = None,
-              cloud: str = STAGING_CLOUD_ORIGIN) -> Path:
+              cloud: str = STAGING_CLOUD_ORIGIN, production: bool = False) -> Path:
+    identity = load_identity()
+    validate_repository_versions(identity)
+    if version != identity.version:
+        raise SystemExit("The macOS application version must match release-identity.json.")
     executable = source / EXECUTABLE
     manifest = source / "release-manifest.json"
     if not source.is_dir() or not executable.is_file() or not os.access(executable, os.X_OK):
@@ -93,13 +101,15 @@ def build_app(source: Path, destination: Path, version: str, *, sdk: Path | None
     if release.get("bundle") != "AisleSignalsPilot" or release.get("platform") != "Darwin":
         raise SystemExit("The release manifest is not a macOS pilot bundle.")
 
-    app = destination / APP_NAME
+    display_name = identity.product if production else "AisleSignals Pilot"
+    wrapper_executable = identity.product.replace(" ", "") if production else EXECUTABLE
+    app = destination / (display_name + ".app")
     macos = app / "Contents" / "MacOS"
     resources = app / "Contents" / "Resources"
     runtime = resources / "AisleSignalsPilot"
     macos.mkdir(parents=True)
     shutil.copytree(source, runtime, symlinks=True)
-    launcher = macos / EXECUTABLE
+    launcher = macos / wrapper_executable
     desktop_source = Path(__file__).resolve().parents[1] / "packaging" / "macos" / "AisleSignalsDesktop.m"
     subprocess.run(
         [
@@ -110,17 +120,17 @@ def build_app(source: Path, destination: Path, version: str, *, sdk: Path | None
     )
     info = {
         "CFBundleDevelopmentRegion": "en",
-        "CFBundleDisplayName": "AisleSignals Pilot",
-        "CFBundleExecutable": EXECUTABLE,
-        "CFBundleIdentifier": "ie.aislesignals.pilot",
+        "CFBundleDisplayName": display_name,
+        "CFBundleExecutable": wrapper_executable,
+        "CFBundleIdentifier": identity.mac_bundle_identifier if production else "ie.aislesignals.pilot",
         "CFBundleInfoDictionaryVersion": "6.0",
-        "CFBundleName": "AisleSignals Pilot",
+        "CFBundleName": display_name,
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
         "AisleSignalsCloudOrigin": cloud_origin(cloud),
-        "LSMinimumSystemVersion": "13.0",
-        "LSArchitecturePriority": ["arm64"],
+        "LSMinimumSystemVersion": identity.mac_minimum_version,
+        "LSArchitecturePriority": list(identity.mac_architectures),
         "NSCameraUsageDescription": (
             "AisleSignals uses a camera only after an authorised pharmacy operator selects it for local monitoring."
         ),
@@ -134,18 +144,19 @@ def build_app(source: Path, destination: Path, version: str, *, sdk: Path | None
 
 
 def create_dmg(source: Path, output_dir: Path, version: str, smoke: bool, *, sdk: Path | None = None,
-               cloud: str = STAGING_CLOUD_ORIGIN) -> Path:
+               cloud: str = STAGING_CLOUD_ORIGIN, production: bool = False) -> Path:
     require_macos()
     output_dir.mkdir(parents=True, exist_ok=True)
     architecture = platform.machine().lower()
-    filename = f"AisleSignalsPilot-macOS-{architecture}-v{version}-unsigned.dmg"
+    product = "AisleSignals" if production else "AisleSignalsPilot"
+    filename = f"{product}-macOS-{architecture}-v{version}-unsigned.dmg"
     destination = output_dir / filename
     if destination.exists():
         raise SystemExit(f"Refusing to replace existing output: {destination}")
     with tempfile.TemporaryDirectory(prefix="aislesignals-dmg-") as directory:
-        staging = Path(directory) / "AisleSignals Pilot"
+        staging = Path(directory) / ("AisleSignals" if production else "AisleSignals Pilot")
         staging.mkdir()
-        app = build_app(source, staging, version, sdk=sdk, cloud=cloud)
+        app = build_app(source, staging, version, sdk=sdk, cloud=cloud, production=production)
         (staging / "Applications").symlink_to("/Applications")
         readme = source / "READ-ME.txt"
         if readme.is_file():
@@ -156,7 +167,7 @@ def create_dmg(source: Path, output_dir: Path, version: str, smoke: bool, *, sdk
                 "create",
                 "-quiet",
                 "-volname",
-                "AisleSignals Pilot",
+                "AisleSignals" if production else "AisleSignals Pilot",
                 "-srcfolder",
                 str(staging),
                 "-format",
@@ -166,7 +177,8 @@ def create_dmg(source: Path, output_dir: Path, version: str, smoke: bool, *, sdk
             check=True,
         )
         if smoke:
-            subprocess.run([str(app / "Contents" / "MacOS" / EXECUTABLE), "--help"], check=True)
+            executable = load_identity().product.replace(" ", "") if production else EXECUTABLE
+            subprocess.run([str(app / "Contents" / "MacOS" / executable), "--help"], check=True)
     subprocess.run(["hdiutil", "verify", str(destination)], check=True)
     checksum = destination.with_name(destination.name + ".sha256")
     checksum.write_text(f"{digest(destination)}  {destination.name}\n", encoding="ascii")
@@ -181,15 +193,20 @@ def main() -> None:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--sdk", type=Path, default=None,
                         help="Explicit installed macOS SDK; otherwise select a host-compatible xcrun SDK")
-    parser.add_argument("--cloud-origin", default=STAGING_CLOUD_ORIGIN,
+    parser.add_argument("--cloud-origin", default=None,
                         help="Path-free HTTPS cloud workspace origin embedded in the application")
+    parser.add_argument("--production", action="store_true",
+                        help="Use the stable production product name and bundle identifier")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    if args.production and args.cloud_origin is None:
+        raise SystemExit("Production packaging requires an explicit --cloud-origin.")
+    selected_cloud = args.cloud_origin or STAGING_CLOUD_ORIGIN
     version = args.version or json.loads((root / "package.json").read_text(encoding="utf-8"))["version"]
     if not isinstance(version, str) or not version or any(character not in "0123456789." for character in version):
         raise SystemExit("Use a numeric dotted application version.")
     result = create_dmg(args.bundle.resolve(), args.output_dir.resolve(), version, args.smoke,
-                        sdk=args.sdk, cloud=args.cloud_origin)
+                        sdk=args.sdk, cloud=selected_cloud, production=args.production)
     print(result)
     print(result.with_name(result.name + ".sha256"))
 

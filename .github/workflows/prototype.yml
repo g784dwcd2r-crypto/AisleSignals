@@ -121,6 +121,12 @@ jobs:
       - name: Build and verify macOS pilot DMG
         if: runner.os == 'macOS'
         run: python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke
+      - name: Build and verify unsigned macOS production candidate
+        if: runner.os == 'macOS'
+        run: |
+          python scripts/package_macos_dmg.py --bundle dist/AisleSignalsPilot --output-dir dist --smoke --production --cloud-origin https://aislesignals-control-staging.onrender.com
+          candidate=$(find dist -maxdepth 1 -name 'AisleSignals-macOS-*-unsigned.dmg' -print -quit)
+          python scripts/release_artifact_index.py --artifact "$candidate" --output dist/AisleSignals-macOS-release-index.json --platform Darwin --architecture "$(uname -m)"
       - name: Build unsigned Windows pilot installer
         if: runner.os == 'Windows'
         shell: pwsh
@@ -135,6 +141,23 @@ jobs:
           $setup = Get-Item dist/AisleSignalsPilot-Windows-*-unsigned-pilot-setup.exe
           $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
           "$hash  $($setup.Name)" | Set-Content -Encoding ascii "$($setup.FullName).sha256"
+      - name: Build unsigned Windows production candidate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+          if (-not $compiler) { $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' }
+          if (-not (Test-Path $compiler)) { throw 'The pinned GitHub Windows image does not provide Inno Setup 6.' }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $source = (Resolve-Path dist/AisleSignalsPilot).Path
+          $output = (Resolve-Path dist).Path
+          & $compiler "/DMyAppVersion=$version" "/DSourceDir=$source" "/DOutputDir=$output" packaging/windows/AisleSignalsProduction.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Windows production candidate compilation failed.' }
+          $setup = Get-Item dist/AisleSignals-Windows-*-unsigned.exe
+          if ((Get-AuthenticodeSignature $setup).Status -ne 'NotSigned') { throw 'Production candidate was expected to remain unsigned.' }
+          $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLowerInvariant()
+          "$hash  $($setup.Name)" | Set-Content -Encoding ascii "$($setup.FullName).sha256"
+          python scripts/release_artifact_index.py --artifact $setup.FullName --output dist/AisleSignals-Windows-release-index.json --platform Windows --architecture x86_64
       - name: Smoke-check unsigned Windows pilot install and uninstall
         if: runner.os == 'Windows'
         shell: pwsh
@@ -158,6 +181,27 @@ jobs:
           $uninstall = Get-Item "$install\unins*.exe"
           $process = Start-Process $uninstall.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Unsigned pilot uninstall failed with exit code $($process.ExitCode)." }
+      - name: Smoke-check unsigned Windows production candidate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-Item dist/AisleSignals-Windows-*-unsigned.exe
+          $install = Join-Path $env:RUNNER_TEMP 'AisleSignals production candidate smoke'
+          $process = Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=`"$install`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Production candidate install failed with exit code $($process.ExitCode)." }
+          & "$install\AisleSignals.exe" connect --help
+          if ($LASTEXITCODE -ne 0) { throw 'Installed production candidate is missing the secure pairing command.' }
+          & "$install\AisleSignals.exe" startup enable
+          if ($LASTEXITCODE -ne 0) { throw 'Installed production candidate could not enable startup.' }
+          try {
+            $startup = & "$install\AisleSignals.exe" startup status
+            if ($LASTEXITCODE -ne 0 -or $startup.Trim() -ne 'enabled') { throw 'Production candidate startup state is inconsistent.' }
+          } finally {
+            & "$install\AisleSignals.exe" startup disable
+          }
+          $uninstall = Get-Item "$install\unins*.exe"
+          $process = Start-Process $uninstall.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Production candidate uninstall failed with exit code $($process.ExitCode)." }
       - uses: actions/upload-artifact@v4
         with:
           name: AisleSignalsPrototype-${{ runner.os }}-${{ runner.arch }}-unsigned
@@ -176,5 +220,17 @@ jobs:
             dist/AisleSignalsPilot-*-unsigned-pilot-setup.exe
             dist/AisleSignalsPilot-*-unsigned-pilot-setup.exe.sha256
             dist/AisleSignalsPilot-*.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AisleSignals-${{ runner.os }}-${{ runner.arch }}-unsigned-production-candidate
+          path: |
+            dist/AisleSignals-macOS-*-unsigned.dmg
+            dist/AisleSignals-macOS-*-unsigned.dmg.sha256
+            dist/AisleSignals-macOS-release-index.json
+            dist/AisleSignals-Windows-*-unsigned.exe
+            dist/AisleSignals-Windows-*-unsigned.exe.sha256
+            dist/AisleSignals-Windows-release-index.json
           if-no-files-found: error
           retention-days: 14

@@ -116,7 +116,7 @@ def main() -> None:
                 "request_sent": False, "child_reaped": True,
             }, "Packaged sender did not confirm its real READY and bounded child exit"
             assert not list(Path(data_dir).iterdir()), "Sender smoke unexpectedly created local state"
-            for subcommand in ("accounts", "model-setup", "backup", "rollout", "startup", "update"):
+            for subcommand in ("accounts", "model-setup", "backup", "rollout", "startup", "update", "connect"):
                 check = subprocess.run([str(executable), subcommand, "--help"],
                                        capture_output=True, timeout=30)
                 assert check.returncode == 0, f"Packaged {subcommand} command is missing"

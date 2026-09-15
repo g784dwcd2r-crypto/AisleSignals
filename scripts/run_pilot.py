@@ -409,6 +409,12 @@ def main() -> int:
         except ModuleNotFoundError:
             from scripts.desktop_update import main as update_main
         return update_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "connect":
+        try:
+            from cloud_companion import main as connection_main
+        except ModuleNotFoundError:
+            from scripts.cloud_companion import main as connection_main
+        return connection_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "backup":
         sys.path.insert(0, str(source_root()))
         from scripts.pilot_backup import main as backup_main
@@ -437,7 +443,7 @@ def main() -> int:
         except (OSError, ValueError):
             print("Model setup failed. Check disk space, connectivity and the selected private runtime directory. Existing mismatched files are preserved; review them or choose an empty runtime directory.", file=sys.stderr)
             return 1
-    parser = argparse.ArgumentParser(description=__doc__, epilog="Account management: accounts --help. Optional model download: model-setup --help. Offline recovery: backup --help. Windows login startup: startup --help. Signed update checks: update --help. Six-branch readiness: rollout --help.")
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Laptop pairing: connect --help. Account management: accounts --help. Optional model download: model-setup --help. Offline recovery: backup --help. Windows login startup: startup --help. Signed update checks: update --help. Six-branch readiness: rollout --help.")
     add_storage_arguments(parser)
     parser.add_argument("--check", action="store_true", help="Read-only readiness report; do not start services")
     parser.add_argument("--report", type=Path, help="Write privacy-minimised readiness JSON")

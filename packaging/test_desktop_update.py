@@ -12,7 +12,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from scripts.desktop_update import (UpdateError, canonical, check_update, download_release,
+from scripts.desktop_update import (PRODUCT, UpdateError, canonical, check_update, download_release,
                                     verify_envelope)
 
 
@@ -44,7 +44,7 @@ def signed(artifact: bytes = b"verified update bytes", **changes):
     public = base64.b64encode(raw).decode()
     release = {
         "schema_version": 1,
-        "product": "AisleSignalsPilot",
+        "product": PRODUCT,
         "platform": "Darwin",
         "architecture": "arm64",
         "version": "0.2.0",

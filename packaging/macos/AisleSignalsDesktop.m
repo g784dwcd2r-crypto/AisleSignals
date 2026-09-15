@@ -83,9 +83,10 @@ static NSString *ASCloudURL(void) {
 }
 
 - (void)configureApplicationMenu {
+    NSString *applicationName = NSBundle.mainBundle.infoDictionary[@"CFBundleName"] ?: @"AisleSignals";
     NSMenu *main = [[NSMenu alloc] initWithTitle:@""];
-    NSMenuItem *applicationItem = [[NSMenuItem alloc] initWithTitle:@"AisleSignals Pilot" action:nil keyEquivalent:@""];
-    NSMenu *applicationMenu = [[NSMenu alloc] initWithTitle:@"AisleSignals Pilot"];
+    NSMenuItem *applicationItem = [[NSMenuItem alloc] initWithTitle:applicationName action:nil keyEquivalent:@""];
+    NSMenu *applicationMenu = [[NSMenu alloc] initWithTitle:applicationName];
     self.startAtLoginItem = [[NSMenuItem alloc] initWithTitle:@"Start at Login"
                                                       action:@selector(toggleStartAtLogin:)
                                                keyEquivalent:@""];
