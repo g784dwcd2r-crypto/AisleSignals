@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an attended local pilot. No install, downloads, camera access or service registration."""
+"""Run an attended local pilot; maintenance actions require explicit subcommands."""
 from __future__ import annotations
 
 import argparse
@@ -397,6 +397,18 @@ def main() -> int:
         sys.path.insert(0, str(source_root()))
         from scripts.coordinate_rollout import main as rollout_main
         return rollout_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "startup":
+        try:
+            from desktop_startup import main as startup_main
+        except ModuleNotFoundError:
+            from scripts.desktop_startup import main as startup_main
+        return startup_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "update":
+        try:
+            from desktop_update import main as update_main
+        except ModuleNotFoundError:
+            from scripts.desktop_update import main as update_main
+        return update_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "backup":
         sys.path.insert(0, str(source_root()))
         from scripts.pilot_backup import main as backup_main
@@ -425,18 +437,21 @@ def main() -> int:
         except (OSError, ValueError):
             print("Model setup failed. Check disk space, connectivity and the selected private runtime directory. Existing mismatched files are preserved; review them or choose an empty runtime directory.", file=sys.stderr)
             return 1
-    parser = argparse.ArgumentParser(description=__doc__, epilog="Account management: accounts --help. Optional model download: model-setup --help. Offline recovery: backup --help. Six-branch readiness: rollout --help.")
+    parser = argparse.ArgumentParser(description=__doc__, epilog="Account management: accounts --help. Optional model download: model-setup --help. Offline recovery: backup --help. Windows login startup: startup --help. Signed update checks: update --help. Six-branch readiness: rollout --help.")
     add_storage_arguments(parser)
     parser.add_argument("--check", action="store_true", help="Read-only readiness report; do not start services")
     parser.add_argument("--report", type=Path, help="Write privacy-minimised readiness JSON")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--port", type=int)
     parser.add_argument("--casework-only", action="store_true", help="Disable product interaction analysis for this launch")
+    parser.add_argument("--owner-pid", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--startup-launch", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--api-child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.api_child:
         return run_api_child()
     supervisor = None
+    owner_watchdog = None
     try:
         root = source_root()
         config = resolve_config(args.config, root=root, data_dir=args.data_dir, runtime_dir=args.runtime_dir)
@@ -470,6 +485,14 @@ def main() -> int:
         token_path = ensure_token(config) if config.vision_enabled else None
         env = service_environment(config, token_path)
         supervisor = Supervisor(config, env)
+        try:
+            from desktop_owner import DesktopOwnerError, start_watchdog
+        except ModuleNotFoundError:
+            from scripts.desktop_owner import DesktopOwnerError, start_watchdog
+        try:
+            owner_watchdog = start_watchdog(args.owner_pid, supervisor.stop_event)
+        except DesktopOwnerError as error:
+            raise ConfigurationError(str(error)) from None
         shutdown_signals = [signal.SIGINT, signal.SIGTERM]
         if os.name != "nt" and hasattr(signal, "SIGHUP"):
             shutdown_signals.append(signal.SIGHUP)
@@ -519,6 +542,8 @@ def main() -> int:
     finally:
         if supervisor is not None:
             supervisor.shutdown()
+            if owner_watchdog is not None:
+                owner_watchdog.join(timeout=1)
             try:
                 supervisor.status("FAILED" if supervisor.last_state == "FAILED" else "REARM_REQUIRED" if supervisor.rearm_required else "STOPPED", "Launcher stopped its owned services. Reopen it and explicitly select the CCTV source to resume.")
             except OSError:
