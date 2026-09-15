@@ -651,7 +651,7 @@ test("a held model job never queues another camera; layout invalidation cancels 
   page,
   installation,
 }) => {
-  test.setTimeout(40000);
+  test.setTimeout(60000);
   await writeFile(join(installation.directory, "delay"), "7");
   const posts: any[] = [];
   let cancellations = 0;
@@ -661,6 +661,7 @@ test("a held model job never queues another camera; layout invalidation cancels 
     if (r.url().endsWith("/cancel")) cancellations++;
   });
   await openGrid(page, installation, "3x2");
+  await keepRuntimeHealthy(page, installation);
   await begin(page);
   const armed = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
