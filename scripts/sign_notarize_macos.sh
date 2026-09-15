@@ -6,10 +6,11 @@ usage() { echo "usage: sign_notarize_macos.sh APP DMG_OUTPUT UPDATE_PRIVATE_KEY"
 app=$1
 dmg=$2
 update_key=$3
+release_python=${AISLESIGNALS_RELEASE_PYTHON:-python3}
 
 # The Python preflight checks every credential and tool before this script can
 # mutate the application or create an artifact. Values are never echoed.
-python3 scripts/release_preflight.py --platform Darwin --update-private-key-file "$update_key"
+"$release_python" scripts/release_preflight.py --platform Darwin --update-private-key-file "$update_key"
 [ -d "$app" ] || { echo "The macOS application bundle is missing." >&2; exit 1; }
 [ ! -e "$dmg" ] || { echo "Refusing to replace an existing DMG." >&2; exit 1; }
 

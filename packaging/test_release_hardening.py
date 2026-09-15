@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -251,6 +252,7 @@ for argument in "$@"; do destination=$argument; done
         "AISLESIGNALS_APPLE_TEAM_ID": "TESTTEAM01",
         "AISLESIGNALS_APPLE_NOTARY_PROFILE": "synthetic-notary-profile",
         "AISLESIGNALS_TEST_CODESIGN_LOG": str(log),
+        "AISLESIGNALS_RELEASE_PYTHON": sys.executable,
     })
     destination = tmp_path / "AisleSignals.dmg"
     completed = subprocess.run(["bash", "scripts/sign_notarize_macos.sh", str(app), str(destination), str(key)],

@@ -45,7 +45,7 @@ Set `AISLESIGNALS_RELEASE_SHA` to the reviewed 40-character release commit. The 
 - an `xcrun notarytool` keychain profile and its name in `AISLESIGNALS_APPLE_NOTARY_PROFILE`
 - current `codesign`, `xcrun`, `hdiutil`, and `spctl` tools
 
-Build the production app with `scripts/build_macos_app.py` and an explicit reviewed production `--cloud-origin`, then run `scripts/sign_notarize_macos.sh APP DMG UPDATE_KEY`. Production packaging refuses an implicit cloud destination. The script preflights before mutation, signs Mach-O contents with hardened runtime and a secure timestamp, signs the app, creates and signs the DMG, waits for Apple notarisation, staples the ticket, and verifies both Gatekeeper assessments. A failed step leaves no publishable result.
+Build the production app with `scripts/build_macos_app.py` and an explicit reviewed production `--cloud-origin`, then run `scripts/sign_notarize_macos.sh APP DMG UPDATE_KEY` from the installed release Python environment. Set `AISLESIGNALS_RELEASE_PYTHON` to that interpreter when it is not `python3`. Production packaging refuses an implicit cloud destination. The script preflights before mutation, signs Mach-O contents with hardened runtime and a secure timestamp, signs the app, creates and signs the DMG, waits for Apple notarisation, staples the ticket, and verifies both Gatekeeper assessments. A failed step leaves no publishable result.
 
 ### Windows
 
