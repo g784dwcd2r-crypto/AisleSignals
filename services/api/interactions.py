@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -878,17 +878,29 @@ def install_interactions(app, context, problem, new_incident, idempotent):
                     read_frame(service.evidence_root, current, index, service.cipher, MAX_JPEG_BYTES)
             except (OSError, ValueError, VisionError):
                 state = "unavailable"
+        # Give each authorised status read a new browser resource identity so an
+        # operator retry cannot coalesce with a stuck image request. This value
+        # grants no access; the incident, branch, expiry and manifest checks in
+        # case_evidence remain authoritative.
+        view_id = uuid4()
         return {"source": source, "evidence_status": state, "frames": [
             {
                 "at_seconds": frame["at_seconds"],
-                "url": f"/api/incidents/{incident_id}/interaction-source/frames/{index}",
+                "url": f"/api/incidents/{incident_id}/interaction-source/frames/{index}/views/{view_id}",
             }
             for index, frame in enumerate(source["frames"])
         ] if state == "available" else []}
 
     @app.get("/api/incidents/{incident_id}/interaction-source/frames/{index}")
+    @app.get(
+        "/api/incidents/{incident_id}/interaction-source/frames/{index}/views/{view_id}"
+    )
     def case_evidence(
-        incident_id: UUID, index: int, request: Request, ctx=Depends(context)
+        incident_id: UUID,
+        index: int,
+        request: Request,
+        view_id: UUID | None = None,
+        ctx=Depends(context),
     ):
         if request.url.query:
             problem(

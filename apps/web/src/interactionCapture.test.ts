@@ -420,12 +420,15 @@ describe("authenticated sampled frame URLs", () => {
       safeInteractionFrameUrl(`/api/interactions/${id}/frames/3`, id),
     ).toBe(`/api/interactions/${id}/frames/3`);
     const incidentId = "ed25eb7d-55d7-4aad-bd87-066a935f7244";
+    const viewId = "ed25eb7d-55d7-4aad-bd87-066a935f7243";
     expect(
       safeIncidentFrameUrl(
-        `/api/incidents/${incidentId}/interaction-source/frames/3`,
+        `/api/incidents/${incidentId}/interaction-source/frames/3/views/${viewId}`,
         incidentId,
       ),
-    ).toBe(`/api/incidents/${incidentId}/interaction-source/frames/3`);
+    ).toBe(
+      `/api/incidents/${incidentId}/interaction-source/frames/3/views/${viewId}`,
+    );
     for (const path of [
       `https://example.com/${id}`,
       `/api/interactions/${id}/frames/6`,
@@ -439,13 +442,16 @@ describe("authenticated sampled frame URLs", () => {
 
   it("allows only the current incident's bounded linked frame route", () => {
     const incidentId = "ed25eb7d-55d7-4aad-bd87-066a935f7244";
-    const allowed = `/api/incidents/${incidentId}/interaction-source/frames/3`;
+    const viewId = "ed25eb7d-55d7-4aad-bd87-066a935f7243";
+    const allowed = `/api/incidents/${incidentId}/interaction-source/frames/3/views/${viewId}`;
     expect(safeIncidentFrameUrl(allowed, incidentId)).toBe(allowed);
     for (const path of [
       `https://example.com/${incidentId}`,
-      `/api/incidents/${incidentId}/interaction-source/frames/6`,
-      `/api/incidents/${incidentId}/interaction-source/frames/0?download=1`,
-      `/api/incidents/ed25eb7d-55d7-4aad-bd87-066a935f7245/interaction-source/frames/0`,
+      `/api/incidents/${incidentId}/interaction-source/frames/6/views/${viewId}`,
+      `/api/incidents/${incidentId}/interaction-source/frames/0/views/${viewId}?download=1`,
+      `/api/incidents/${incidentId}/interaction-source/frames/0`,
+      `/api/incidents/${incidentId}/interaction-source/frames/0/views/not-a-view-id`,
+      `/api/incidents/ed25eb7d-55d7-4aad-bd87-066a935f7245/interaction-source/frames/0/views/${viewId}`,
       `/api/interactions/${id}/frames/0`,
       "data:image/png;base64,aA==",
     ])
