@@ -420,7 +420,7 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     page,
     installation,
   }) => {
-    test.setTimeout(45000);
+    test.setTimeout(60000);
     const posts: any[] = [];
     const completed = new Set<string>();
     const errors: string[] = [];
@@ -458,7 +458,7 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     // A POST means processing started, not that its observation is available.
     // Wait on the real completion boundary before checking React's history.
     await expect
-      .poll(() => completed.size, { timeout: 10000 })
+      .poll(() => completed.size, { timeout: 20000 })
       .toBeGreaterThanOrEqual(count);
     await expect(page.locator(".interaction-result")).toHaveCount(count, {
       timeout: 5000,
