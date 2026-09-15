@@ -73,6 +73,13 @@ def test_reviewed_observation_creates_unassessed_case_and_preserves_provenance(p
     assert [response.status_code for response in responses] == [200] * 3
     assert all(response.headers["content-type"] == "image/jpeg" for response in responses)
     assert all(response.headers["cache-control"] == "no-store" for response in responses)
+    refreshed = client.get(f"/api/incidents/{case['id']}/interaction-source").json()
+    assert [frame["url"] for frame in refreshed["frames"]] != [
+        frame["url"] for frame in result["frames"]
+    ]
+    assert [client.get(frame["url"]).status_code for frame in refreshed["frames"]] == [
+        200
+    ] * 3
     assert client.get(f"{result['frames'][0]['url']}?token=forbidden").status_code == 400
     assert client.get(f"/api/incidents/{case['id']}/interaction-source/frames/3").status_code == 404
     edited = client.patch(f"/api/incidents/{case['id']}", json={"expected_version": 1, "classification": "BENIGN", "outcome": "NO_LOSS_ESTABLISHED"})
@@ -148,14 +155,19 @@ def test_reviewer_permission_branch_scope_csrf_and_revocation(pilot):
     wrong_site = reviewer.post(f"/api/interactions/{item['id']}/case", headers={"X-AisleSignals-Site": str(uuid4())}, json={"expected_version": 2, "title": "Test", "notes": "Synthetic notes"})
     assert wrong_site.status_code == 409
     case = link(reviewer, item).json()["incident"]
+    frame_url = reviewer.get(
+        f"/api/incidents/{case['id']}/interaction-source"
+    ).json()["frames"][0]["url"]
     other = add_site(app.state.store, initial["site"]["organisation_id"], "Synthetic Other Branch")
     add_user(app.state.store, "other.reviewer@example.test", "Other Reviewer", PASSWORD, [other["id"]], "REVIEWER")
     outsider = client_for(app, "other.reviewer@example.test")
     assert link(outsider, item).status_code == 404
     assert outsider.get(f"/api/incidents/{case['id']}/interaction-source").status_code == 404
+    assert outsider.get(frame_url).status_code == 404
     assert outsider.get(f"/api/incidents/{case['id']}/interaction-source/frames/0").status_code == 404
     assert outsider.get(item["frames"][0]["url"]).status_code == 404
     disable_user(app.state.store, reviewer_email)
+    assert reviewer.get(frame_url).status_code == 401
     assert link(reviewer, item).status_code == 401
     anonymous = TestClient(app, base_url=BASE, headers={"Origin": BASE})
     assert link(anonymous, item).status_code == 401

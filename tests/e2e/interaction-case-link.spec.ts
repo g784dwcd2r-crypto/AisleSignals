@@ -260,6 +260,13 @@ test("staff review creates one unassessed linked case, opens its real evidence a
     "Synthetic source follow-up",
   );
   await page.unrouteAll({ behavior: "wait" });
+  // A refresh that races navigation may leave Chromium's first image requests
+  // pending even after the case metadata wins. Exercise the visible recovery
+  // action after removing the synthetic route hold so every frame gets a fresh,
+  // incident-scoped request.
+  await page
+    .getByRole("button", { name: "Refresh linked evidence", exact: true })
+    .click();
   const source = page.getByRole("region", {
     name: "Linked product observation",
     exact: true,

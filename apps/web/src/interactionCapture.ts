@@ -379,7 +379,7 @@ export function safeIncidentFrameUrl(
   const escapedId = incidentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return /^[a-f0-9-]{36}$/i.test(incidentId) &&
     new RegExp(
-      `^/api/incidents/${escapedId}/interaction-source/frames/[0-5]$`,
+      `^/api/incidents/${escapedId}/interaction-source/frames/[0-5]/views/[a-f0-9-]{36}$`,
       "i",
     ).test(value)
     ? value
