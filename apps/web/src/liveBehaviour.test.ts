@@ -170,6 +170,25 @@ describe("observable live pose rules", () => {
     expect(new LiveBehaviourEngine().update([[]], 0).tracks).toEqual([]);
   });
 
+  it("rejects confident product-shaped landmarks without human torso and arm geometry", () => {
+    const flatTorso = pose();
+    for (const index of [23, 24]) flatTorso[index].y = 0.35;
+    expect(new LiveBehaviourEngine().update([flatTorso], 0)).toEqual({
+      tracks: [],
+      events: [],
+    });
+
+    const noArms = pose();
+    for (const index of [13, 14, 15, 16]) {
+      noArms[index].visibility = 0.2;
+      noArms[index].presence = 0.2;
+    }
+    expect(new LiveBehaviourEngine().update([noArms], 0)).toEqual({
+      tracks: [],
+      events: [],
+    });
+  });
+
   it("resets partial evidence on occlusion, dropped frames, seeks and duplicate timestamps", () => {
     for (const discontinuity of [
       "occlusion",

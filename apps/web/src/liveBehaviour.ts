@@ -37,6 +37,10 @@ const COOLDOWN_MS = 20_000;
 const ALERT_DISPLAY_MS = 4_000;
 const MAX_POSES = 12;
 const TORSO = [11, 12, 23, 24] as const;
+const ARM_CHAINS = [
+  [11, 13, 15],
+  [12, 14, 16],
+] as const;
 
 type Point = { x: number; y: number };
 type Observation = {
@@ -106,10 +110,45 @@ function observe(
   if (torsoQuality.some((value) => value < MIN_VISIBILITY)) return null;
   const shoulders = midpoint(landmarks[11], landmarks[12]);
   const hips = midpoint(landmarks[23], landmarks[24]);
-  const scale = Math.max(
-    distance(shoulders, hips, aspectRatio),
-    distance(landmarks[11], landmarks[12], aspectRatio),
-  );
+  const torsoHeight = distance(shoulders, hips, aspectRatio);
+  const shoulderWidth = distance(landmarks[11], landmarks[12], aspectRatio);
+  const hipWidth = distance(landmarks[23], landmarks[24], aspectRatio);
+  const verticalTorso = hips.y - shoulders.y;
+
+  // PoseLandmarker can occasionally fit high-confidence landmarks to shelving,
+  // products or screen furniture. Require a coherent upright torso and at
+  // least one observed arm before presenting a result as a person. This is a
+  // conservative person gate, not an identity or intent classifier.
+  if (
+    torsoHeight < 0.045 ||
+    torsoHeight > 0.65 ||
+    verticalTorso < torsoHeight * 0.55 ||
+    Math.abs(landmarks[11].y - landmarks[12].y) > torsoHeight * 0.35 ||
+    Math.abs(landmarks[23].y - landmarks[24].y) > torsoHeight * 0.35 ||
+    shoulderWidth < torsoHeight * 0.22 ||
+    shoulderWidth > torsoHeight * 1.5 ||
+    hipWidth < torsoHeight * 0.14 ||
+    hipWidth > torsoHeight * 1.35
+  )
+    return null;
+  const coherentArm = ARM_CHAINS.some(([shoulder, elbow, wrist]) => {
+    if (
+      [shoulder, elbow, wrist].some(
+        (index) => quality(landmarks[index]) < MIN_VISIBILITY,
+      )
+    )
+      return false;
+    const upper = distance(landmarks[shoulder], landmarks[elbow], aspectRatio);
+    const lower = distance(landmarks[elbow], landmarks[wrist], aspectRatio);
+    return (
+      upper >= torsoHeight * 0.12 &&
+      upper <= torsoHeight * 1.45 &&
+      lower >= torsoHeight * 0.12 &&
+      lower <= torsoHeight * 1.45
+    );
+  });
+  if (!coherentArm) return null;
+  const scale = Math.max(torsoHeight, shoulderWidth);
   // Very small/degenerate poses cannot support reliable hand-to-body geometry.
   if (scale < 0.045 || scale > 0.7) return null;
   const accepted = landmarks
