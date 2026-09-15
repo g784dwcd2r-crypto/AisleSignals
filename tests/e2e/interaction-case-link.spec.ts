@@ -268,12 +268,20 @@ test("staff review creates one unassessed linked case, opens its real evidence a
   await expect(source).toContainText("Recorded-video test");
   await expect(source.getByRole("img")).toHaveCount(4);
   await expect
-    .poll(() =>
-      source
-        .getByRole("img")
-        .evaluateAll((images) =>
-          images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
-        ),
+    .poll(
+      () =>
+        source
+          .getByRole("img")
+          .evaluateAll(
+            (images) =>
+              images.length === 4 &&
+              images.every(
+                (image) =>
+                  (image as HTMLImageElement).complete &&
+                  (image as HTMLImageElement).naturalWidth > 0,
+              ),
+          ),
+      { timeout: 15000 },
     )
     .toBe(true);
   expect(linked.incident.classification).toBe("UNASSESSED");

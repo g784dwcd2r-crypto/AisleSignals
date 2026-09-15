@@ -120,6 +120,7 @@ async function openGrid(
         occludedCamera: null as number | null,
         occludedFrames: [] as number[],
         sound: 0,
+        soundAttempts: 0,
         ended: false,
       });
       class SilentNode {
@@ -139,6 +140,7 @@ async function openGrid(
         }
         disconnect() {}
         start() {
+          state.soundAttempts++;
           if (state.failSound) throw new Error("synthetic audio failure");
           state.sound++;
         }
@@ -420,7 +422,7 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     page,
     installation,
   }) => {
-    test.setTimeout(60000);
+    test.setTimeout(90000);
     const posts: any[] = [];
     const completed = new Set<string>();
     const errors: string[] = [];
@@ -452,16 +454,14 @@ for (const layout of ["2x2", "3x2", "2x3"] as const)
     }
     await begin(page);
     const count = layout === "2x2" ? 4 : 6;
-    await expect
-      .poll(() => posts.length, { timeout: 22000 })
-      .toBeGreaterThanOrEqual(count);
     // A POST means processing started, not that its observation is available.
-    // Wait on the real completion boundary before checking React's history.
+    // Wait on the real completion boundary with room for a cold Windows API.
     await expect
-      .poll(() => completed.size, { timeout: 20000 })
+      .poll(() => completed.size, { timeout: 50000 })
       .toBeGreaterThanOrEqual(count);
+    expect(posts.length).toBeGreaterThanOrEqual(count);
     await expect(page.locator(".interaction-result")).toHaveCount(count, {
-      timeout: 5000,
+      timeout: 10000,
     });
     await page
       .getByLabel("Analyse all cameras automatically", { exact: true })
@@ -866,8 +866,24 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
   page,
   installation,
 }) => {
-  test.setTimeout(30000);
+  test.setTimeout(60000);
   await openGrid(page, installation, "2x2");
+  const health = await (
+    await page.request.get(`${installation.url}/api/runtime/health`)
+  ).json();
+  let healthRouted!: () => void;
+  const firstRoutedHealth = new Promise<void>((resolve) => {
+    healthRouted = resolve;
+  });
+  await page.route("**/api/runtime/health", async (route) => {
+    healthRouted();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(health),
+    });
+  });
+  await firstRoutedHealth;
   await begin(page);
   const alarm = page.getByLabel(
     "Experimental attention alarm for all confirmed cameras",
@@ -882,11 +898,16 @@ test("all-camera playback failure disarms sound and pauses automatic submissions
       exact: true,
     })
     .click();
-  await alarm.check();
   await page.evaluate(() => ((window as any).__all.failSound = true));
+  await alarm.check();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__all.soundAttempts), {
+      timeout: 30000,
+    })
+    .toBe(2);
   await expect(
     page.getByLabel("Analyse all cameras automatically", { exact: true }),
-  ).not.toBeChecked({ timeout: 12000 });
+  ).not.toBeChecked();
   await expect(alarm).not.toBeChecked();
   await expect(
     page.getByText(/sound failed and automatic submissions are paused/i),
