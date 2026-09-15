@@ -84,7 +84,9 @@ def test_revocation_and_branch_switch_cancel_background_publication(pilot_eviden
     provider.release.clear()
     response = submit(client)
     assert response.status_code == 202
-    assert provider.started.wait(2)
+    # A saturated Windows CI runner can take several seconds to schedule the
+    # background worker even though the API has already accepted the job.
+    assert provider.started.wait(10)
     switched = client.post("/api/session/site", json={"site_id": branch["id"]})
     assert switched.status_code == 200
     update_headers(client, switched.json())
