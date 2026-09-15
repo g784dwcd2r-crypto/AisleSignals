@@ -8,6 +8,9 @@ identity. It does not inspect Render billing, backups or secrets, and performs n
 deployment.
 The separate [production operations runbook](../docs/release/production-operations.md)
 covers the manual paid Render release path, pre-deploy migration and rollback.
+Desktop production identity, unsigned installation candidates, signing,
+notarisation and signed update publishing are covered by the
+[desktop production release runbook](../docs/release/desktop-production-release.md).
 The separate [domain checklist](../docs/release/production-domain-cloudflare.md)
 covers the custom production hostname and Cloudflare cutover without creating it.
 

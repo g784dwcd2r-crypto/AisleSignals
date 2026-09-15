@@ -23,10 +23,15 @@ from urllib.parse import urlsplit
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+try:
+    from release_identity import load_identity
+except ModuleNotFoundError:
+    from scripts.release_identity import load_identity
+
 
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_ARTIFACT_BYTES = 1024 * 1024 * 1024
-PRODUCT = "AisleSignalsPilot"
+PRODUCT = load_identity().update_product
 
 
 class UpdateError(RuntimeError):
@@ -92,7 +97,8 @@ class VerifiedRelease:
     source_commit: str
 
 
-def verify_envelope(data: bytes, public_key_text: str, *, system: str, architecture: str) -> VerifiedRelease:
+def verify_envelope(data: bytes, public_key_text: str, *, system: str, architecture: str,
+                    expected_product: str = PRODUCT) -> VerifiedRelease:
     if len(data) > MAX_MANIFEST_BYTES:
         raise UpdateError("The update manifest exceeds the allowed size.")
     try:
@@ -104,7 +110,7 @@ def verify_envelope(data: bytes, public_key_text: str, *, system: str, architect
         release = envelope["release"]
         required = {"schema_version", "product", "platform", "architecture", "version", "published_at",
                     "source_commit", "artifact_url", "artifact_bytes", "artifact_sha256", "filename"}
-        if set(release) != required or release["schema_version"] != 1 or release["product"] != PRODUCT:
+        if set(release) != required or release["schema_version"] != 1 or release["product"] != expected_product:
             raise ValueError
         key, key_id = decode_public_key(public_key_text)
         if envelope["key_id"] != key_id:

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "product": "AisleSignals",
+  "update_product": "AisleSignals",
+  "version": "0.1.0",
+  "publisher": "AisleSignals",
+  "support_url": "https://aislesignals.ie/support",
+  "macos": {
+    "bundle_identifier": "ie.aislesignals.desktop",
+    "minimum_version": "13.0",
+    "architectures": ["arm64"]
+  },
+  "windows": {
+    "app_id": "DD026687-3AF5-459A-AE9D-187B0482E933",
+    "minimum_build": "10.0.17763",
+    "architectures": ["x86_64"]
+  }
+}

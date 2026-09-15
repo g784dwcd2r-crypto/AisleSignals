@@ -601,11 +601,16 @@ test("cached laptop source expires offline and removes the unsaved review form",
   context,
   installation,
 }) => {
+  // Install the synthetic clock before the app creates its idle-session guard.
+  // Installing it later can move Date.now() a few milliseconds behind the
+  // guard's last-activity timestamp and correctly trigger the clock-rollback
+  // safety lock, which is unrelated to this source-expiry scenario.
+  const now = Date.now();
+  await page.clock.install({ time: new Date(now) });
   await bootstrap(page, installation);
   const branch = await addPharmacy(page, "Synthetic Harbour");
   const laptop = await enrolLaptop(page, installation, branch);
   // Use the real server's accepted deadline while advancing only the browser clock.
-  const now = Date.now();
   const response = await page.request.post(
     installation.url + "/device-api/sync/v1/observations",
     {
@@ -621,7 +626,6 @@ test("cached laptop source expires offline and removes the unsaved review form",
     },
   );
   expect(response.status()).toBe(201);
-  await page.clock.install({ time: new Date(now) });
   await navigate(page, "Alerts");
   await page
     .getByRole("row")

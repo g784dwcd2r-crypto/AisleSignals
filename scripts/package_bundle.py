@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -15,6 +15,7 @@ import tempfile
 import zipfile
 
 MANIFEST = "release-manifest.json"
+MIN_ZIP_EPOCH = 315532800
 
 
 def digest(path: Path) -> str:
@@ -47,6 +48,60 @@ def verify_inventory(bundle: Path) -> None:
     expected = json.loads((bundle / MANIFEST).read_text(encoding="utf-8"))["files"]
     if inventory(bundle) != expected:
         raise ValueError("Bundle files, links or executable permissions differ from the release manifest")
+
+
+def source_epoch(root: Path) -> int:
+    supplied = os.environ.get("SOURCE_DATE_EPOCH")
+    try:
+        value = int(supplied) if supplied is not None else int(subprocess.check_output(
+            ["git", "show", "-s", "--format=%ct", "HEAD"], cwd=root, text=True).strip())
+    except (ValueError, OSError, subprocess.CalledProcessError):
+        raise ValueError("SOURCE_DATE_EPOCH or the release commit timestamp is required.") from None
+    if not 0 <= value <= 4_102_444_800:
+        raise ValueError("The release source epoch is out of range.")
+    return value
+
+
+def deterministic_archive(bundle: Path, destination: Path, archive_format: str, epoch: int) -> Path:
+    """Archive already-built bytes deterministically; it does not make a compiler reproducible."""
+    if archive_format not in {"zip", "gztar"} or destination.exists():
+        raise ValueError("Choose a new supported deterministic archive destination.")
+    paths = [bundle, *sorted(bundle.rglob("*"), key=lambda item: item.relative_to(bundle).as_posix())]
+    if archive_format == "zip":
+        stamp = __import__("time").gmtime(max(epoch, MIN_ZIP_EPOCH))[:6]
+        with zipfile.ZipFile(destination, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as output:
+            for path in paths:
+                relative = Path(bundle.name) / path.relative_to(bundle)
+                name = relative.as_posix() + ("/" if path.is_dir() else "")
+                info = zipfile.ZipInfo(name, stamp)
+                mode = path.lstat().st_mode
+                info.create_system = 3
+                info.external_attr = (mode & 0xFFFF) << 16
+                if path.is_dir():
+                    data = b""
+                elif path.is_symlink():
+                    info.external_attr = (0o120777 << 16)
+                    data = os.readlink(path).encode()
+                else:
+                    data = path.read_bytes()
+                output.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    else:
+        with destination.open("xb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch,
+                               compresslevel=9) as compressed:
+                with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as output:
+                    for path in paths:
+                        relative = (Path(bundle.name) / path.relative_to(bundle)).as_posix()
+                        info = output.gettarinfo(str(path), arcname=relative)
+                        info.uid = info.gid = 0
+                        info.uname = info.gname = ""
+                        info.mtime = epoch
+                        if info.isfile():
+                            with path.open("rb") as source:
+                                output.addfile(info, source)
+                        else:
+                            output.addfile(info)
+    return destination
 
 
 def main() -> None:
@@ -84,7 +139,8 @@ def main() -> None:
     verify_inventory(bundle)
     filename = root / "dist" / f"{args.bundle_name}-{platform.system()}-{platform.machine()}-unsigned"
     archive_format = "zip" if sys.platform == "win32" else "gztar"
-    archive = Path(shutil.make_archive(str(filename), archive_format, root_dir=bundle.parent, base_dir=bundle.name))
+    suffix = ".zip" if archive_format == "zip" else ".tar.gz"
+    archive = deterministic_archive(bundle, Path(str(filename) + suffix), archive_format, source_epoch(root))
     archive.with_name(archive.name + ".sha256").write_text(f"{digest(archive)}  {archive.name}\n", encoding="ascii")
     if args.smoke:
         with tempfile.TemporaryDirectory(prefix="aislesignals-archive-") as directory:
