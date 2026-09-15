@@ -513,6 +513,9 @@ def create_app(db_path=None, web_dist=None, mode=None):
     from .xai_verifier import install_xai_verifier
     install_xai_verifier(application, context, problem)
 
+    from .layout_calibration import install_layout_calibration
+    install_layout_calibration(application, context, problem)
+
     @application.exception_handler(Problem)
     async def handle_problem(request, exc):
         return JSONResponse({"error": exc.error}, status_code=exc.status)
