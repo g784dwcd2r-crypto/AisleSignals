@@ -525,3 +525,80 @@ test("drawing a camera area crops actual pose pixels and changing it requires a 
   await expect(page.locator(".ld-track")).toHaveCount(0);
   await page.getByRole("button",{name:"Stop detection",exact:true}).click();
 });
+test("manager draws and saves a branch-scoped pharmacy map without granting alarm authority", async ({
+  page,
+}) => {
+  let submitted: any = null;
+  await page.route("**/api/layout-calibration", async (route) => {
+    if (route.request().method() === "PUT") {
+      submitted = route.request().postDataJSON();
+      await route.fulfill({
+        json: {
+          ...submitted,
+          id: "layout-calibration-synthetic",
+          version: 1,
+          updated_at: new Date().toISOString(),
+          updated_by: "Demo Manager",
+        readiness: {
+          status: "INCOMPLETE",
+          missing_required_kinds: [],
+          uncalibrated_camera_indices: [1, 2, 3],
+          warnings: ["Mark visible coverage on cameras 2, 3 and 4."],
+            alarm_authority: false,
+          },
+        },
+      });
+    } else
+      await route.fulfill({
+        json: {
+          schema_version: "1.0",
+          version: 0,
+          layout: null,
+          source_label: "",
+          cameras: [],
+          readiness: {
+            status: "INCOMPLETE",
+            missing_required_kinds: ["ENTRANCE", "EXIT", "CASHIER", "SHELF"],
+            uncalibrated_camera_indices: [],
+            warnings: ["Confirm a layout."],
+            alarm_authority: false,
+          },
+        },
+      });
+  });
+  await fixture(page, "2x2");
+  await confirm(page);
+  const panel = page.locator(".layout-calibration");
+  await panel.getByRole("button", { name: "Start map for 4 cameras" }).click();
+  await expect(panel.getByRole("combobox", { name: "Camera" })).toHaveCount(1);
+  await expect(panel.getByRole("option")).toHaveCount(10); // 4 cameras + 6 zone types.
+  for (const [index, kind] of [
+    "ENTRANCE",
+    "EXIT",
+    "CASHIER",
+    "SHELF",
+  ].entries()) {
+    await panel.getByRole("combobox", { name: "Area type" }).selectOption(kind);
+    await panel.getByLabel("Area name").fill(`Mapped ${kind.toLowerCase()}`);
+    await panel.getByRole("button", { name: "Draw area" }).click();
+    const preview = panel.locator(".layout-calibration-preview");
+    const box = await preview.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + 30 + index * 15, box!.y + 30 + index * 10);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + 130 + index * 15, box!.y + 110 + index * 10);
+    await page.mouse.up();
+  }
+  await panel.getByRole("button", { name: "Save pharmacy map" }).click();
+  await expect(panel).toContainText("alarm authority off");
+  expect(submitted.layout).toBe("2x2");
+  expect(submitted.cameras).toHaveLength(4);
+  expect(submitted.cameras[0].zones.map((zone: any) => zone.kind)).toEqual([
+    "ENTRANCE",
+    "EXIT",
+    "CASHIER",
+    "SHELF",
+  ]);
+  expect(submitted).not.toHaveProperty("site_id");
+  expect(submitted).not.toHaveProperty("alarm_authority");
+});

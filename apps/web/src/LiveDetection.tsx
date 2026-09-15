@@ -1,4 +1,11 @@
 import CameraContextDetails from "./CameraContextDetails";
+import LayoutCalibrationPanel from "./LayoutCalibrationPanel";
+import {
+  applyLayoutObservationGuard,
+  calibrationMatchesLayout,
+  cameraIndexForCrop,
+  type LayoutCalibration,
+} from "./layoutCalibration";
 import { validateCameraContext, cameraContextId } from "./cameraContext";
 import type { CameraContext } from "./cameraContext";
 import type { ConfirmedCameraLayout } from "./CameraLayoutPicker";
@@ -99,11 +106,13 @@ export default function LiveDetection({
   branchName,
   branchId = "",
   organisationId = "",
+  manager = false,
   onOpenInteractionCase,
 }: {
   branchName: string;
   branchId?: string;
   organisationId?: string;
+  manager?: boolean;
   onOpenInteractionCase?: (id: string) => Promise<void>;
 }) {
   const health = useSyncExternalStore(
@@ -120,6 +129,9 @@ export default function LiveDetection({
   const allModeRef = useRef(false);
   const [confirmedLayout, setConfirmedLayout] =
     useState<ConfirmedCameraLayout | null>(null);
+  const [layoutCalibration, setLayoutCalibration] =
+    useState<LayoutCalibration | null>(null);
+  const layoutCalibrationRef = useRef<LayoutCalibration | null>(null);
   const layoutRef = useRef<ConfirmedCameraLayout | null>(null);
   const [allRun, setAllRun] = useState<AllCameraRun | null>(null);
   const allPoseStop = useRef<(() => void) | null>(null);
@@ -199,6 +211,7 @@ export default function LiveDetection({
   const busy =
     phase === "loading" || phase === "running" || phase === "degraded";
   soundOptions.current = { muted, volume, movementAlarmEnabled };
+  layoutCalibrationRef.current = layoutCalibration;
 
   function sound() {
     return (soundRef.current ??= new BrowserAttentionSound());
@@ -622,6 +635,48 @@ export default function LiveDetection({
       context.fillStyle = "#ffdb9d";
       context.fillText("Restricted zone", zone.x * w + 5, zone.y * h + 20);
     }
+    if (
+      layoutCalibration &&
+      confirmedLayout &&
+      calibrationMatchesLayout(layoutCalibration, confirmedLayout)
+    ) {
+      const selectedIndex = allMode
+        ? null
+        : cameraIndexForCrop(
+            layoutCalibration,
+            confirmedLayout.tiles,
+            camera?.crop ?? null,
+          );
+      // A saved map belongs to confirmed camera tiles. Until one tile is
+      // selected, do not paint it onto an undivided recorder screen.
+      const mappedCameras =
+        !allMode && selectedIndex === null ? [] : layoutCalibration.cameras;
+      for (const mapped of mappedCameras) {
+        if (selectedIndex !== null && mapped.camera_index !== selectedIndex)
+          continue;
+        const tile = confirmedLayout.tiles.find(
+          (item) => item.index === mapped.camera_index,
+        );
+        if (!tile) continue;
+        for (const mappedZone of mapped.zones) {
+          context.beginPath();
+          mappedZone.points.forEach((point, index) => {
+            const x = (tile.crop.x + point.x * tile.crop.width) * w;
+            const y = (tile.crop.y + point.y * tile.crop.height) * h;
+            if (index === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          });
+          context.closePath();
+          const mask =
+            mappedZone.kind === "BLIND" || mappedZone.kind === "IGNORE";
+          context.fillStyle = mask ? "rgba(0,0,0,.42)" : "rgba(70,196,130,.10)";
+          context.strokeStyle = mask ? "#ffbc67" : "#8ef0bc";
+          context.lineWidth = 2;
+          context.fill();
+          context.stroke();
+        }
+      }
+    }
     for (const track of tracks) {
       const color =
         track.status === "alert"
@@ -684,6 +739,8 @@ export default function LiveDetection({
     selectedCamera,
     source,
     allMode,
+    layoutCalibration,
+    confirmedLayout,
   ]);
 
   function chooseFile(file: File | undefined) {
@@ -1092,10 +1149,15 @@ export default function LiveDetection({
                 const abort = () => assignedDetector.close();
                 ticket.signal.addEventListener("abort", abort, { once: true });
                 try {
-                  const persons = await assignedDetector.detect(
+                  const detectedPersons = await assignedDetector.detect(
                     video,
                     now,
                     state.camera.crop,
+                  );
+                  const persons = applyLayoutObservationGuard(
+                    detectedPersons,
+                    layoutCalibrationRef.current,
+                    state.camera.camera_index,
                   );
                   const accepted = scheduler.settle(ticket, "completed");
                   if (
@@ -1217,7 +1279,17 @@ export default function LiveDetection({
         const mediaTime = presented.mediaTime;
         lastSequence = presented.sequence;
         try {
-          const poses = await detector!.detect(video, now, crop);
+          const detectedPersons = await detector!.detect(video, now, crop);
+          const cameraIndex = cameraIndexForCrop(
+            layoutCalibrationRef.current,
+            layoutRef.current?.tiles ?? [],
+            camera?.crop ?? null,
+          );
+          const poses = applyLayoutObservationGuard(
+            detectedPersons,
+            layoutCalibrationRef.current,
+            cameraIndex,
+          );
           if (
             !runtimeHealth.canMonitor() ||
             !runningRef.current ||
@@ -1924,6 +1996,13 @@ export default function LiveDetection({
         onMonitorStatus={setProductStatus}
         onCameraSelection={chooseTrackingCamera}
         onOpenInteractionCase={onOpenInteractionCase}
+      />
+      <LayoutCalibrationPanel
+        confirmedLayout={confirmedLayout}
+        videoRef={videoRef}
+        sourceKey={source?.url ?? source?.stream?.id ?? ""}
+        manager={manager}
+        onCalibration={setLayoutCalibration}
       />
       <section className="ld-event-panel" aria-labelledby="ld-events-heading">
         <div className="ld-event-heading">
