@@ -13,9 +13,12 @@ python3 scripts/release_preflight.py --platform Darwin --update-private-key-file
 [ -d "$app" ] || { echo "The macOS application bundle is missing." >&2; exit 1; }
 [ ! -e "$dmg" ] || { echo "Refusing to replace an existing DMG." >&2; exit 1; }
 
-stage=$(mktemp -d "${TMPDIR:-/tmp}/aislesignals-release.XXXXXX")
-trap 'rm -rf "$stage"' EXIT HUP INT TERM
+work_root=$(mktemp -d "${TMPDIR:-/tmp}/aislesignals-release.XXXXXX")
+trap 'rm -rf "$work_root"' EXIT HUP INT TERM
+stage="$work_root/stage"
+mkdir "$stage"
 release_app="$stage/AisleSignals.app"
+release_dmg="$work_root/AisleSignals.dmg"
 # Sign a private copy. The reviewed input bundle remains byte-for-byte intact,
 # so a failed notarisation can never turn it into an ambiguous partial output.
 cp -R "$app" "$release_app"
@@ -36,10 +39,13 @@ printf '%s\n' "$signing_info" | grep -Fxq "TeamIdentifier=$AISLESIGNALS_APPLE_TE
 spctl --assess --type execute --verbose=2 "$release_app"
 
 ln -s /Applications "$stage/Applications"
-hdiutil create -quiet -volname AisleSignals -srcfolder "$stage" -format UDZO "$dmg"
-codesign --force --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$dmg"
-xcrun notarytool submit "$dmg" --keychain-profile "$AISLESIGNALS_APPLE_NOTARY_PROFILE" --wait
-xcrun stapler staple "$dmg"
-xcrun stapler validate "$dmg"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+hdiutil create -quiet -volname AisleSignals -srcfolder "$stage" -format UDZO "$release_dmg"
+codesign --force --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$release_dmg"
+xcrun notarytool submit "$release_dmg" --keychain-profile "$AISLESIGNALS_APPLE_NOTARY_PROFILE" --wait
+xcrun stapler staple "$release_dmg"
+xcrun stapler validate "$release_dmg"
+spctl --assess --type open --context context:primary-signature --verbose=2 "$release_dmg"
+# Publish atomically only after every signature, notarisation and Gatekeeper
+# check passed. Failure leaves no ambiguous artifact at the requested path.
+mv "$release_dmg" "$dmg"
 echo "$dmg"

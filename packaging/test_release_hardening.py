@@ -199,6 +199,7 @@ def test_macos_signer_preserves_input_and_checks_signed_team():
     assert 'find "$release_app/Contents"' in script
     assert 'codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$release_app"' in script
     assert 'grep -Fxq "TeamIdentifier=$AISLESIGNALS_APPLE_TEAM_ID"' in script
+    assert 'mv "$release_dmg" "$dmg"' in script
     assert 'codesign --force --deep --options runtime --timestamp --sign "$AISLESIGNALS_APPLE_DEVELOPER_ID" "$app"' not in script
 
 
