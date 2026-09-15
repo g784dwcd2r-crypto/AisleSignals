@@ -37,6 +37,12 @@ def _private_key(path: Path) -> Ed25519PrivateKey:
             raise ValueError
         if os.name != "nt" and info.st_mode & 0o077:
             raise ValueError
+        if os.name == "nt":
+            try:
+                from cloud_private_windows import validate_path
+            except ModuleNotFoundError:
+                from scripts.cloud_private_windows import validate_path
+            validate_path(path)
         key = serialization.load_pem_private_key(path.read_bytes(), password=None)
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError

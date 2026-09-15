@@ -166,6 +166,7 @@ def test_update_feed_refuses_empty_and_oversized_artifacts(tmp_path):
                           artifact_url="https://updates.aislesignals.ie/AisleSignals.dmg")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows ACL behavior is covered by cloud_private_windows tests")
 def test_update_private_key_must_be_owner_only(tmp_path):
     key = Ed25519PrivateKey.generate()
     path = tmp_path / "update-key.pem"

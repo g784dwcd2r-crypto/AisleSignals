@@ -8,16 +8,14 @@ import os
 from pathlib import Path
 import re
 import shutil
-import stat
 import subprocess
 import sys
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
 try:
+    from release_feed import FeedError, _private_key
     from release_identity import ROOT, SHA, ReleaseIdentityError, load_identity, validate_repository_versions
 except ModuleNotFoundError:
+    from scripts.release_feed import FeedError, _private_key
     from scripts.release_identity import ROOT, SHA, ReleaseIdentityError, load_identity, validate_repository_versions
 
 
@@ -55,21 +53,10 @@ def exact_source(root: Path = ROOT, *, environment=os.environ) -> str:
 
 
 def private_update_key(path: Path) -> None:
-    path = path.expanduser().absolute()
     try:
-        info = path.lstat()
-    except OSError:
-        raise PreflightError("The update signing key file is missing.") from None
-    if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
-        raise PreflightError("The update signing key must be a bounded regular file.")
-    if os.name != "nt" and info.st_mode & 0o077:
-        raise PreflightError("The update signing key must be owner-only.")
-    try:
-        key = serialization.load_pem_private_key(path.read_bytes(), password=None)
-    except (OSError, ValueError, TypeError):
-        raise PreflightError("The update signing key must be an unencrypted Ed25519 PEM key.") from None
-    if not isinstance(key, Ed25519PrivateKey):
-        raise PreflightError("The update signing key must be an unencrypted Ed25519 PEM key.")
+        _private_key(path)
+    except FeedError:
+        raise PreflightError("The update signing key must be an owner-only unencrypted Ed25519 PEM key.") from None
 
 
 def signing(platform_name: str, *, environment=os.environ, which=shutil.which) -> dict:
