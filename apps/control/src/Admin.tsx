@@ -21,6 +21,7 @@ import {
 import type {
   Collection,
   OneTimeToken,
+  PendingInvitation,
   Pharmacy,
   Role,
   Session,
@@ -417,12 +418,52 @@ function UserForm({
   );
 }
 
+function RevokeInvitation({
+  invitation,
+  changed,
+}: {
+  invitation: PendingInvitation;
+  changed: () => void;
+}) {
+  const mutation = useMutation(changed);
+  return (
+    <div>
+      <Button
+        className="secondary"
+        busy={mutation.busy}
+        onClick={() =>
+          void mutation.run((signal) =>
+            client.delete(`/invitations/${encodeURIComponent(invitation.id)}`, {
+              signal,
+            }),
+          )
+        }
+      >
+        Revoke
+      </Button>
+      {Boolean(mutation.error) && <ErrorNotice error={mutation.error} />}
+    </div>
+  );
+}
+
 export function Users(props: WorkspaceProps) {
   const resource = useResource<Collection<User>>("/users", props.revision);
+  const invitations = useResource<Collection<PendingInvitation>>(
+    "/invitations",
+    props.revision,
+  );
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("ALL");
   const [selected, setSelected] = useState<User | "new" | null>(null);
   const items = (resource.data?.items || []).filter(
+    (item) =>
+      (!props.scope ||
+        item.role === "OWNER" ||
+        item.pharmacy_ids.includes(props.scope)) &&
+      (filter === "ALL" || item.role === filter) &&
+      `${item.name} ${item.email}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  const pending = (invitations.data?.items || []).filter(
     (item) =>
       (!props.scope ||
         item.role === "OWNER" ||
@@ -444,6 +485,62 @@ export function Users(props: WorkspaceProps) {
           Invite team member
         </Button>
       </div>
+      {(pending.length > 0 || invitations.error) && (
+        <section className="panel">
+          <div className="section-heading compact">
+            <div>
+              <h2>Pending invitations</h2>
+              <p>These people have been invited but have not joined yet.</p>
+            </div>
+          </div>
+          {Boolean(invitations.error) && (
+            <ErrorNotice
+              error={invitations.error}
+              retry={invitations.refresh}
+            />
+          )}
+          {pending.length > 0 && (
+            <Table
+              rows={pending}
+              rowKey={(item) => item.id}
+              columns={[
+                {
+                  title: "Invited person",
+                  cell: (item) => (
+                    <div className="record-title">
+                      <span className="avatar">
+                        {item.name.slice(0, 1).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{item.name}</strong>
+                        <small>{item.email}</small>
+                      </div>
+                    </div>
+                  ),
+                },
+                { title: "Role", cell: (item) => label(item.role) },
+                {
+                  title: "Status",
+                  cell: () => <Badge value="PENDING" />,
+                },
+                {
+                  title: "Expires",
+                  cell: (item) => when(item.expires_at),
+                },
+                {
+                  title: "Action",
+                  cell: (item) => (
+                    <RevokeInvitation
+                      invitation={item}
+                      changed={props.changed}
+                    />
+                  ),
+                },
+              ]}
+            />
+          )}
+        </section>
+      )}
       <section className="panel">
         <Toolbar search={search} setSearch={setSearch}>
           <select
@@ -516,8 +613,8 @@ export function Users(props: WorkspaceProps) {
         ) : (
           !resource.error && (
             <Empty title="No matching team members">
-              Try another name, email or role. Invitations appear here after
-              they are accepted.
+              Accepted team accounts appear here. Pending invitations are shown
+              above.
             </Empty>
           )
         )}
