@@ -139,9 +139,10 @@ def audit(base_url: str, web_dist: Path, *, expected_sha: str | None = None,
     status, headers, body = _request(client, origin, "/control-api/setup/status")
     _security(headers, "/control-api/setup/status")
     setup = _json(body, "/control-api/setup/status")
-    if (status != 200 or type(setup) is not dict or type(setup.get("configured")) is not bool
+    if (status != 200 or type(setup) is not dict or set(setup) != {"configured", "needs_setup"}
+            or type(setup.get("configured")) is not bool
             or type(setup.get("needs_setup")) is not bool
-            or setup["configured"] == setup["needs_setup"]):
+            or (setup["needs_setup"] and not setup["configured"])):
         raise AuditFailure("Deployment setup status has an invalid shape.")
     if require_configured and setup != {"configured": True, "needs_setup": False}:
         raise AuditFailure("Deployment has not completed named-owner setup.")
