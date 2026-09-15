@@ -36,7 +36,9 @@ const platforms = [
 ] as const;
 
 const MACOS_PILOT_URL =
-  "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-macos-v0.1.0/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg";
+  "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-v0.1.0-c9d34fd1/AisleSignalsPilot-macOS-arm64-v0.1.0-unsigned.dmg";
+const WINDOWS_PILOT_URL =
+  "https://github.com/g784dwcd2r-crypto/AisleSignals/releases/download/pilot-v0.1.0-c9d34fd1/AisleSignalsPilot-Windows-x86_64-v0.1.0-unsigned-pilot-setup.exe";
 
 export default function Downloads({ session, navigate }: DownloadsProps) {
   const canConnect = session.user.role !== "REVIEWER";
@@ -47,8 +49,8 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
           <span className="eyebrow">PHARMACY LAPTOP SOFTWARE</span>
           <h1>Download AisleSignals</h1>
           <p>
-            Install the Mac pilot application, then connect the laptop to its
-            pharmacy workspace.
+            Install the Mac or Windows pilot application, then connect the
+            laptop to its pharmacy workspace.
           </p>
         </div>
         {canConnect && (
@@ -103,12 +105,54 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
         </small>
       </article>
 
+      <article className="download-card featured-download">
+        <header>
+          <span className="download-platform-icon">
+            <Monitor size={25} />
+          </span>
+          <div>
+            <span className="download-state pilot">Unsigned pilot</span>
+            <h2>Windows pilot application</h2>
+          </div>
+        </header>
+        <p>
+          A real AisleSignals installer for the attended local monitoring and
+          staff-review application. It does not require a separate Python
+          installation.
+        </p>
+        <dl className="download-details">
+          <div>
+            <dt>Installation file</dt>
+            <dd>.exe</dd>
+          </div>
+          <div>
+            <dt>Windows processor</dt>
+            <dd>64-bit (x64)</dd>
+          </div>
+          <div>
+            <dt>Version</dt>
+            <dd>0.1.0 pilot</dd>
+          </div>
+        </dl>
+        <a
+          className="button primary download-action"
+          href={WINDOWS_PILOT_URL}
+          download
+        >
+          <Download size={17} />
+          Download Windows pilot (.exe)
+        </a>
+        <small className="download-caution">
+          This pilot is not Windows-signed. Use it only under your
+          organisation&apos;s installation policy. Cloud pairing still uses the
+          separate connection utility below.
+        </small>
+      </article>
+
       <div className="downloads-subheading">
         <span className="eyebrow">CLOUD CONNECTION UTILITY</span>
         <h2>Connect the laptop to this dashboard</h2>
-        <p>
-          Download this separately after installing the Mac pilot application.
-        </p>
+        <p>Download this separately after installing the pilot application.</p>
       </div>
 
       <div className="downloads-availability" role="status">
@@ -235,8 +279,8 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
               Production installers are not released yet
             </h2>
             <p>
-              The downloadable Mac pilot is unsigned. Customer-ready signed
-              macOS and Windows installers still need signing, automatic updates
+              The downloadable Mac and Windows pilots are unsigned.
+              Customer-ready installers still need signing, automatic updates
               and branch-laptop acceptance.
             </p>
           </div>
@@ -246,7 +290,7 @@ export default function Downloads({ session, navigate }: DownloadsProps) {
             <TerminalSquare size={16} /> Signed macOS .dmg: pending
           </span>
           <span>
-            <ShieldCheck size={16} /> Windows .msi: not released
+            <ShieldCheck size={16} /> Signed Windows .exe: pending
           </span>
         </div>
       </section>
