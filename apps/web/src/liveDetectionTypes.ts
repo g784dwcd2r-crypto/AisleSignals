@@ -13,6 +13,15 @@ export type DetectionRect = {
   width: number;
   height: number;
 };
+export type DetectedPerson = {
+  /** Full detector box in the selected camera frame, normalised to 0..1. */
+  box: DetectionRect;
+  detectorScore: number;
+  subjectPixels: number;
+  visibilityState: "sufficient" | "edge_truncated" | "too_small";
+  /** Null means the person detector succeeded but the gated pose did not. */
+  landmarks: PosePoint[] | null;
+};
 export type LiveEventCode = "REPEATED_HAND_TO_WAIST" | "RESTRICTED_ZONE_ENTRY";
 export type LiveSourceKind = "SCREEN_CAPTURE" | "CAMERA" | "RECORDED_VIDEO";
 export type LiveDetectionSettings = {
@@ -26,6 +35,9 @@ export type LiveTrack = {
   status: "normal" | "watch" | "alert";
   label: string;
   quality: number;
+  detectorScore?: number;
+  trackingState?: "observed" | "recovered" | "ambiguous";
+  visibilityState?: DetectedPerson["visibilityState"];
 };
 export type LiveBehaviourEvent = {
   id: string;
@@ -44,10 +56,11 @@ export type PoseDetector = {
     video: HTMLVideoElement,
     timestampMs: number,
     crop?: DetectionRect | null,
-  ) => Promise<PosePoint[][]>;
+  ) => Promise<DetectedPerson[]>;
   close: () => void;
 };
-export const LIVE_MODEL_VERSION = "mediapipe-pose-lite-f16-v1";
+export const LIVE_MODEL_VERSION =
+  "mediapipe-efficientdet-lite0-u8-v1+pose-lite-f16-v1";
 export const LIVE_RULE_VERSION = "pose-rules-v2";
 
 export type LiveEventInput = {
@@ -64,9 +77,13 @@ export type LiveEventInput = {
   rule_version: typeof LIVE_RULE_VERSION;
   sound_requested: boolean;
 };
-export type SavedLiveEvent = Omit<LiveEventInput, "rule_version"> & {
+export type SavedLiveEvent = Omit<
+  LiveEventInput,
+  "model_version" | "rule_version"
+> & {
   camera_id?: string;
   camera_label?: string;
+  model_version: "mediapipe-pose-lite-f16-v1" | typeof LIVE_MODEL_VERSION;
   rule_version: "pose-rules-v1" | typeof LIVE_RULE_VERSION;
   id: string;
   label: string;

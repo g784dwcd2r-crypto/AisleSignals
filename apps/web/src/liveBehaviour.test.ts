@@ -395,7 +395,18 @@ describe("crowded-view display stability without joined behaviour", () => {
     let expected: number[] | undefined;
     for (let now = 0; now <= 5000; now += 250) {
       const phase = now % 1500 < 750 ? "reach" : "waist";
-      const people = [pose(phase, "down", 0.45), pose(phase, "down", 0.55)];
+      const people = [0.45, 0.55].map((center) => ({
+        box: {
+          x: center - 0.16,
+          y: 0.08,
+          width: 0.32,
+          height: 0.9,
+        },
+        detectorScore: 0.95,
+        subjectPixels: 40_000,
+        visibilityState: "sufficient" as const,
+        landmarks: pose(phase, "down", center),
+      }));
       const reversed = now % 500 !== 0;
       const result = engine.update(reversed ? people.reverse() : people, now);
       const ids = result.tracks.map((track) => track.id);
@@ -455,6 +466,124 @@ describe("crowded-view display stability without joined behaviour", () => {
       engine.update([pose()], 2600);
       expect(cycle(engine, 2800)).toEqual([]);
     }
+  });
+});
+
+describe("dedicated person detector gate", () => {
+  it("renders the detector box even when gated pose is unavailable", () => {
+    const engine = new LiveBehaviourEngine();
+    const box = { x: 0.12, y: 0.08, width: 0.31, height: 0.82 };
+    const result = engine.update(
+      [
+        {
+          box,
+          detectorScore: 0.91,
+          subjectPixels: 32000,
+          visibilityState: "sufficient",
+          landmarks: null,
+        },
+      ],
+      0,
+    );
+    expect(result.events).toEqual([]);
+    expect(result.tracks[0]).toMatchObject({
+      box,
+      detectorScore: 0.91,
+      label: "Person detected · pose unavailable",
+    });
+  });
+
+  it("does not accept a pose without a person-detector assertion", () => {
+    const engine = new LiveBehaviourEngine();
+    expect(
+      engine.update(
+        [
+          {
+            box: { x: 0.1, y: 0.1, width: 0.4, height: 0.8 },
+            detectorScore: 0.39,
+            subjectPixels: 32_000,
+            visibilityState: "sufficient",
+            landmarks: pose(),
+          },
+        ],
+        0,
+      ),
+    ).toEqual({ tracks: [], events: [] });
+  });
+
+  it("uses the full detector box rather than pose landmark bounds", () => {
+    const engine = new LiveBehaviourEngine();
+    const box = { x: 0.05, y: 0.02, width: 0.7, height: 0.95 };
+    const track = engine.update(
+      [
+        {
+          box,
+          detectorScore: 0.88,
+          subjectPixels: 32000,
+          visibilityState: "sufficient",
+          landmarks: pose(),
+        },
+      ],
+      0,
+    ).tracks[0];
+    expect(track.box).toEqual(box);
+  });
+
+  it.each(["edge_truncated", "too_small"] as const)(
+    "displays %s people but blocks pose behavior evidence",
+    (visibilityState) => {
+      const engine = new LiveBehaviourEngine();
+      const result = engine.update(
+        [
+          {
+            box: { x: 0, y: 0.1, width: 0.3, height: 0.8 },
+            detectorScore: 0.9,
+            subjectPixels: 20_000,
+            visibilityState,
+            landmarks: pose("reach"),
+          },
+        ],
+        0,
+      );
+      expect(result.tracks).toHaveLength(1);
+      expect(result.tracks[0].visibilityState).toBe(visibilityState);
+      expect(result.events).toEqual([]);
+      expect(result.tracks[0].label).toMatch(/paused/);
+    },
+  );
+
+  it("rejects non-finite detector scores", () => {
+    expect(
+      new LiveBehaviourEngine().update(
+        [
+          {
+            box: { x: 0.1, y: 0.1, width: 0.3, height: 0.8 },
+            detectorScore: Number.NaN,
+            subjectPixels: 20_000,
+            visibilityState: "sufficient",
+            landmarks: null,
+          },
+        ],
+        0,
+      ),
+    ).toEqual({ tracks: [], events: [] });
+  });
+
+  it("shows but does not use a pose whose torso conflicts with its detector box", () => {
+    const result = new LiveBehaviourEngine().update(
+      [
+        {
+          box: { x: 0.02, y: 0.05, width: 0.24, height: 0.9 },
+          detectorScore: 0.9,
+          subjectPixels: 20_000,
+          visibilityState: "sufficient",
+          landmarks: pose("reach", "down", 0.75),
+        },
+      ],
+      0,
+    );
+    expect(result.tracks[0].label).toBe("Person detected · pose unavailable");
+    expect(result.events).toEqual([]);
   });
 });
 

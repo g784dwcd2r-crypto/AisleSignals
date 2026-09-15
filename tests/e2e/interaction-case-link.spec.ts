@@ -109,7 +109,7 @@ async function open(page: Page, installation: Installation) {
             data:
               request.type === "init"
                 ? { type: "ready" }
-                : { type: "result", id: request.id, poses: [] },
+                : { type: "result", id: request.id, persons: [] },
           }),
         );
       }

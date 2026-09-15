@@ -54,6 +54,47 @@ function one(tickets: readonly CameraWorkTicket[]) {
 }
 
 describe("bounded multi-camera work scheduling", () => {
+  it("services six cameras in bounded parallel pairs without a starvation gap", () => {
+    const r = rig(6, { maxInFlight: 2 });
+    const seen = new Map<string, number[]>();
+    for (let batch = 0; batch < 6; batch++) {
+      r.at(batch * 100);
+      const tickets = r.scheduler.dispatch(r.context, r.frame()).tickets;
+      expect(tickets).toHaveLength(2);
+      for (const ticket of tickets) {
+        const times = seen.get(ticket.camera.id) ?? [];
+        times.push(batch * 100);
+        seen.set(ticket.camera.id, times);
+        r.scheduler.settle(ticket, "completed");
+      }
+    }
+    expect(seen.size).toBe(6);
+    for (const times of seen.values())
+      expect(times.length === 2 && times[1] - times[0] <= 300).toBe(true);
+    expect(
+      r.scheduler
+        .snapshot()
+        .cameras.every(
+          (camera) =>
+            camera.revisitP95Ms === 300 && camera.continuityResets === 0,
+        ),
+    ).toBe(true);
+  });
+
+  it("marks a camera ticket when its measured revisit gap broke continuity", () => {
+    const r = rig(1, { maxCameraRevisitMs: 500 });
+    const first = one(r.scheduler.dispatch(r.context, r.frame()).tickets);
+    r.scheduler.settle(first, "completed");
+    r.at(600);
+    const resumed = one(r.scheduler.dispatch(r.context, r.frame()).tickets);
+    expect(resumed.continuityBroken).toBe(true);
+    r.scheduler.settle(resumed, "completed");
+    expect(r.scheduler.snapshot().cameras[0]).toMatchObject({
+      revisitP95Ms: 600,
+      continuityResets: 1,
+    });
+  });
+
   it.each([1, 4, 6] as const)(
     "fairly services %i cameras under sustained one-slot load",
     (count) => {
@@ -473,6 +514,7 @@ describe("bounded configuration", () => {
     { maxFrameAgeMs: 0 },
     { maxResultAgeMs: -1 },
     { maxClockGapMs: NaN },
+    { maxCameraRevisitMs: 99 },
   ])("refuses invalid scheduling options %j", (options) => {
     expect(() => new MultiCameraScheduler(options)).toThrow();
   });

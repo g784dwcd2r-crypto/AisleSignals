@@ -241,7 +241,10 @@ class LiveEventInput(Input):
         strict=True, allow_inf_nan=False, ge=0, le=43_200
     )
     detected_at: AwareDatetime
-    model_version: Literal["mediapipe-pose-lite-f16-v1"]
+    model_version: Literal[
+        "mediapipe-pose-lite-f16-v1",
+        "mediapipe-efficientdet-lite0-u8-v1+pose-lite-f16-v1",
+    ]
     rule_version: Literal["pose-rules-v1", "pose-rules-v2"]
     sound_requested: StrictBool
 

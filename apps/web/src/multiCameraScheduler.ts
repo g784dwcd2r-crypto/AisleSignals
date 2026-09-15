@@ -33,6 +33,8 @@ export type CameraWorkTicket = Readonly<{
   issuedAt: number;
   deadlineAt: number;
   signal: AbortSignal;
+  /** True when this camera exceeded the configured revisit gap. */
+  continuityBroken: boolean;
 }>;
 export type CameraStopReason =
   | "stopped"
@@ -62,6 +64,7 @@ export type CameraSchedulerOptions = {
   maxFrameAgeMs?: number;
   maxResultAgeMs?: number;
   maxClockGapMs?: number;
+  maxCameraRevisitMs?: number;
 };
 
 type CameraState = {
@@ -78,6 +81,8 @@ type CameraState = {
   capacityMissedSamples: number;
   lastStartedAt: number | null;
   lastCompletedAt: number | null;
+  revisitGaps: number[];
+  continuityResets: number;
 };
 type Run = {
   context: CameraRunContext;
@@ -166,6 +171,7 @@ export class MultiCameraScheduler {
   private readonly frameAge: number;
   private readonly resultAge: number;
   private readonly clockGap: number;
+  private readonly cameraRevisit: number;
   private run: Run | null = null;
   private epoch = 0;
   private nextId = 0;
@@ -179,6 +185,7 @@ export class MultiCameraScheduler {
     this.frameAge = options.maxFrameAgeMs ?? 1000;
     this.resultAge = options.maxResultAgeMs ?? 1500;
     this.clockGap = options.maxClockGapMs ?? 2000;
+    this.cameraRevisit = options.maxCameraRevisitMs ?? 1200;
     if (
       typeof this.now !== "function" ||
       !bounded(this.interval, 16, 60000) ||
@@ -186,7 +193,8 @@ export class MultiCameraScheduler {
       !bounded(this.limit, 1, 6) ||
       !bounded(this.frameAge, 16, 10000) ||
       !bounded(this.resultAge, 16, 60000) ||
-      !bounded(this.clockGap, 16, 60000)
+      !bounded(this.clockGap, 16, 60000) ||
+      !bounded(this.cameraRevisit, 100, 10000)
     )
       throw new Error("Choose bounded camera scheduling and freshness limits.");
   }
@@ -228,6 +236,8 @@ export class MultiCameraScheduler {
         capacityMissedSamples: 0,
         lastStartedAt: null,
         lastCompletedAt: null,
+        revisitGaps: [],
+        continuityResets: 0,
       })),
     };
     return context;
@@ -359,6 +369,10 @@ export class MultiCameraScheduler {
         throw new Error("Restart the application before scheduling more work.");
       }
       const controller = new AbortController();
+      const continuityBroken =
+        camera.lastCompletedAt !== null &&
+        now - camera.lastCompletedAt > this.cameraRevisit;
+      if (continuityBroken) camera.continuityResets++;
       const ticket: CameraWorkTicket = Object.freeze({
         id: ++this.nextId,
         context,
@@ -367,6 +381,7 @@ export class MultiCameraScheduler {
         issuedAt: now,
         deadlineAt: frame.observedAt + this.resultAge,
         signal: controller.signal,
+        continuityBroken,
       });
       camera.lastSlot = slot;
       camera.lastSequence = frame.sequence;
@@ -430,7 +445,14 @@ export class MultiCameraScheduler {
       work.camera.failed++;
       return { status: "failed" };
     }
+    if (now === null)
+      throw new Error("A completed ticket requires a valid clock.");
     work.camera.completed++;
+    if (work.camera.lastCompletedAt !== null) {
+      work.camera.revisitGaps.push(now - work.camera.lastCompletedAt);
+      if (work.camera.revisitGaps.length > 32)
+        work.camera.revisitGaps.splice(0, work.camera.revisitGaps.length - 32);
+    }
     work.camera.lastCompletedAt = now;
     return { status: "accepted", ticket };
   }
@@ -456,6 +478,7 @@ export class MultiCameraScheduler {
         const expectedSamples = slot + 1;
         const scheduledInClosedSlots =
           camera.started - Number(camera.lastSlot === slot);
+        const orderedGaps = [...camera.revisitGaps].sort((a, b) => a - b);
         return {
           id: camera.camera.id,
           expectedSamples,
@@ -475,6 +498,11 @@ export class MultiCameraScheduler {
             camera.lastCompletedAt === null
               ? null
               : at - camera.lastCompletedAt,
+          revisitP95Ms:
+            orderedGaps.length === 0
+              ? null
+              : orderedGaps[Math.ceil(orderedGaps.length * 0.95) - 1],
+          continuityResets: camera.continuityResets,
           pending: [...this.pending.values()].filter(
             (work) =>
               work.ticket.context === run.context && work.camera === camera,
